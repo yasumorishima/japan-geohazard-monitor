@@ -156,7 +156,7 @@ class TECCollector(BaseCollector):
                 # Try final product if predicted not available
                 today = date.today()
                 final_url = (
-                    f"{TEC_FTP_BASE}/2026/COD0OPSFIN_{today.year}"
+                    f"{TEC_FTP_BASE}/{today.year}/COD0OPSFIN_{today.year}"
                     f"{today_doy:03d}0000_01D_01H_GIM.INX.gz"
                 )
                 async with session.get(final_url) as resp2:

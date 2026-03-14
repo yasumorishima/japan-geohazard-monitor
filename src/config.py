@@ -46,4 +46,4 @@ SST_URL = ("https://coastwatch.pfeg.noaa.gov/erddap/griddap/jplMURSST41.json"
 
 # CODE IONEX TEC (predicted, updated daily)
 # File naming: COD0OPSPRD_{YYYY}{DOY}0000_01D_01H_GIM.INX.gz
-TEC_FTP_BASE = "ftp://ftp.aiub.unibe.ch/CODE"
+TEC_FTP_BASE = "http://ftp.aiub.unibe.ch/CODE"
