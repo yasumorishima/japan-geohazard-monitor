@@ -114,6 +114,45 @@ async def init_db():
             ON geomag_kp(time_tag)
         """)
 
+        # Phase 3: Volcano warnings
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS volcanoes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                volcano_code TEXT NOT NULL,
+                volcano_name_ja TEXT,
+                volcano_name_en TEXT,
+                latitude REAL NOT NULL,
+                longitude REAL NOT NULL,
+                alert_level INTEGER DEFAULT 1,
+                alert_code TEXT,
+                alert_name_ja TEXT,
+                report_datetime TEXT,
+                received_at TEXT NOT NULL,
+                UNIQUE(volcano_code)
+            )
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_volcano_code
+            ON volcanoes(volcano_code)
+        """)
+
+        # Phase 3: Sea surface temperature
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS sst (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                latitude REAL NOT NULL,
+                longitude REAL NOT NULL,
+                temperature_c REAL NOT NULL,
+                observed_at TEXT NOT NULL,
+                received_at TEXT NOT NULL,
+                UNIQUE(latitude, longitude, observed_at)
+            )
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sst_time
+            ON sst(observed_at)
+        """)
+
         await db.commit()
     logger.info("Database initialized: %s", DB_PATH)
 
@@ -146,14 +185,20 @@ async def purge_old_data(days: int = 90):
         )
         kp_deleted = result.rowcount
 
+        result = await db.execute(
+            "DELETE FROM sst WHERE observed_at < datetime('now', ? || ' days')",
+            (cutoff,),
+        )
+        sst_deleted = result.rowcount
+
         await db.execute(
             "DELETE FROM collector_status WHERE collected_at < datetime('now', '-7 days')"
         )
         await db.commit()
 
-    total = eq_deleted + amedas_deleted + goes_deleted + kp_deleted
+    total = eq_deleted + amedas_deleted + goes_deleted + kp_deleted + sst_deleted
     if total:
         logger.info(
-            "Purged: earthquakes=%d, amedas=%d, goes=%d, kp=%d",
-            eq_deleted, amedas_deleted, goes_deleted, kp_deleted,
+            "Purged: earthquakes=%d, amedas=%d, goes=%d, kp=%d, sst=%d",
+            eq_deleted, amedas_deleted, goes_deleted, kp_deleted, sst_deleted,
         )

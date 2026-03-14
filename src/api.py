@@ -64,6 +64,59 @@ async def earthquakes(hours: int = 24):
     return {"earthquakes": events, "count": len(events)}
 
 
+@app.get("/api/volcanoes")
+async def volcano_data():
+    """Return all volcanoes with current alert levels."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        rows = await db.execute_fetchall(
+            """SELECT volcano_code, volcano_name_ja, volcano_name_en,
+                      latitude, longitude, alert_level, alert_code,
+                      alert_name_ja, report_datetime
+               FROM volcanoes
+               ORDER BY alert_level DESC, volcano_code"""
+        )
+    volcanoes = [
+        {
+            "code": r["volcano_code"],
+            "name_ja": r["volcano_name_ja"],
+            "name_en": r["volcano_name_en"],
+            "lat": r["latitude"],
+            "lon": r["longitude"],
+            "alert_level": r["alert_level"],
+            "alert_code": r["alert_code"],
+            "alert_name_ja": r["alert_name_ja"],
+            "report_datetime": r["report_datetime"],
+        }
+        for r in rows
+    ]
+    elevated = sum(1 for v in volcanoes if v["alert_level"] >= 2)
+    return {"volcanoes": volcanoes, "count": len(volcanoes), "elevated": elevated}
+
+
+@app.get("/api/sst")
+async def sst_data():
+    """Return latest SST grid."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        latest = await db.execute_fetchall("SELECT MAX(observed_at) FROM sst")
+        latest_time = latest[0][0] if latest and latest[0][0] else None
+
+        if not latest_time:
+            return {"grid": [], "count": 0, "observed_at": None}
+
+        rows = await db.execute_fetchall(
+            """SELECT latitude, longitude, temperature_c
+               FROM sst WHERE observed_at = ?""",
+            (latest_time,),
+        )
+    grid = [
+        {"lat": r["latitude"], "lon": r["longitude"], "sst": r["temperature_c"]}
+        for r in rows
+    ]
+    return {"grid": grid, "count": len(grid), "observed_at": latest_time}
+
+
 @app.get("/api/amedas")
 async def amedas_data(metric: str = "pressure"):
     """Return latest AMeDAS snapshot as GeoJSON-like list.
@@ -197,6 +250,17 @@ async def stats():
         ))
         kp_val = kp_latest[0][0] if kp_latest else None
 
+        volcano_elevated = (await db.execute_fetchall(
+            "SELECT COUNT(*) FROM volcanoes WHERE alert_level >= 2"
+        ))[0][0]
+        volcano_total = (await db.execute_fetchall(
+            "SELECT COUNT(*) FROM volcanoes"
+        ))[0][0]
+
+        sst_latest = (await db.execute_fetchall(
+            "SELECT MAX(observed_at) FROM sst"
+        ))[0][0]
+
         # Latest collector status per source
         collectors = await db.execute_fetchall("""
             SELECT source, status, records_inserted, collected_at
@@ -211,6 +275,9 @@ async def stats():
         "amedas_stations": amedas_count,
         "amedas_latest": amedas_latest,
         "kp_latest": kp_val,
+        "volcano_total": volcano_total,
+        "volcano_elevated": volcano_elevated,
+        "sst_latest": sst_latest,
         "collectors": [
             {
                 "source": c[0],

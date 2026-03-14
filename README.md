@@ -35,12 +35,12 @@ The goal is to collect every publicly available geophysical data stream around J
 | NOAA GOES Magnetometer | `services.swpc.noaa.gov` JSON | None | 15 min |
 | Planetary Kp Index | `services.swpc.noaa.gov` JSON | None | 15 min |
 
-### Phase 3: Volcanoes + Ocean
+### Phase 3: Volcanoes + Ocean ✅
 
 | Source | Endpoint | Auth | Interval |
 |---|---|---|---|
-| 気象庁 火山警報 (111 volcanoes) | `xml.kishou.go.jp` Atom XML | None | 15 min |
-| NOAA ERDDAP SST | `coastwatch.pfeg.noaa.gov` JSON | None | 6 hours |
+| JMA Bosai 活火山 (120 volcanoes) | `jma.go.jp/bosai/volcano` JSON | None | 15 min |
+| NOAA ERDDAP MUR SST (0.5° grid) | `coastwatch.pfeg.noaa.gov` JSON | None | 6 hours |
 
 ### Phase 4: Crustal + Ionosphere
 
