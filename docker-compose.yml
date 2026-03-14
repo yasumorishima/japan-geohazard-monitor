@@ -1,0 +1,9 @@
+services:
+  geohazard-monitor:
+    build: .
+    container_name: geohazard-monitor
+    restart: unless-stopped
+    ports:
+      - "8003:8003"
+    volumes:
+      - ./data:/app/data

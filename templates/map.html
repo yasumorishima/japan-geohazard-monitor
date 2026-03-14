@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Japan Geohazard Monitor</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0a0a1a; color: #e0e0e0; }
+
+        #header {
+            background: linear-gradient(135deg, #0d1b2a 0%, #1b2838 100%);
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #2a3a4a;
+        }
+        #header h1 { font-size: 18px; font-weight: 600; }
+        #header h1 span { color: #ef5350; }
+        #stats {
+            display: flex;
+            gap: 24px;
+            font-size: 13px;
+        }
+        .stat-value { font-size: 20px; font-weight: 700; color: #ef5350; }
+        .stat-label { font-size: 11px; color: #888; text-transform: uppercase; }
+
+        #map { height: calc(100vh - 52px); width: 100%; }
+
+        .eq-popup {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+        .eq-popup .mag { font-size: 22px; font-weight: 700; margin-right: 8px; }
+        .eq-popup .location { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+        .eq-popup .intensity-badge {
+            display: inline-block;
+            padding: 1px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+            background: #e65100;
+            color: #fff;
+        }
+
+        .legend {
+            background: rgba(10, 10, 26, 0.92);
+            padding: 10px 14px;
+            border-radius: 6px;
+            font-size: 12px;
+            line-height: 1.8;
+            border: 1px solid #2a3a4a;
+        }
+        .legend-title { font-weight: 700; margin-bottom: 4px; font-size: 13px; color: #ef5350; }
+        .legend-item { display: flex; align-items: center; gap: 6px; }
+        .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>Japan <span>Geohazard Monitor</span></h1>
+        <div id="stats">
+            <div>
+                <div class="stat-value" id="eq-count-24h">--</div>
+                <div class="stat-label">Earthquakes (24h)</div>
+            </div>
+            <div>
+                <div class="stat-value" id="eq-count-7d">--</div>
+                <div class="stat-label">7 Days</div>
+            </div>
+            <div>
+                <div class="stat-value" id="total-records">--</div>
+                <div class="stat-label">Total Records</div>
+            </div>
+        </div>
+    </div>
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        function depthColor(depth) {
+            if (depth == null) return '#888';
+            if (depth < 10) return '#ff1744';
+            if (depth < 30) return '#ff5722';
+            if (depth < 70) return '#ff9800';
+            if (depth < 150) return '#ffc107';
+            if (depth < 300) return '#4fc3f7';
+            return '#1565c0';
+        }
+
+        function magRadius(mag) {
+            if (mag == null) return 4;
+            if (mag < 2) return 3;
+            if (mag < 3) return 4;
+            if (mag < 4) return 6;
+            if (mag < 5) return 9;
+            if (mag < 6) return 13;
+            if (mag < 7) return 18;
+            return 24;
+        }
+
+        function formatTime(iso) {
+            if (!iso) return '--';
+            const d = new Date(iso);
+            return d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+        }
+
+        const map = L.map('map', {
+            center: [36.0, 138.0],
+            zoom: 5,
+            zoomControl: true,
+        });
+
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; OpenStreetMap &copy; CARTO',
+            maxZoom: 18,
+        }).addTo(map);
+
+        // Depth legend
+        const legend = L.control({ position: 'bottomright' });
+        legend.onAdd = function() {
+            const div = L.DomUtil.create('div', 'legend');
+            div.innerHTML = '<div class="legend-title">Depth (km)</div>';
+            const levels = [
+                ['< 10', '#ff1744'],
+                ['10-30', '#ff5722'],
+                ['30-70', '#ff9800'],
+                ['70-150', '#ffc107'],
+                ['150-300', '#4fc3f7'],
+                ['> 300', '#1565c0'],
+            ];
+            levels.forEach(([label, color]) => {
+                div.innerHTML += `<div class="legend-item"><span class="legend-dot" style="background:${color}"></span>${label}</div>`;
+            });
+            return div;
+        };
+        legend.addTo(map);
+
+        let eqLayer = L.layerGroup().addTo(map);
+
+        async function loadEarthquakes() {
+            try {
+                const res = await fetch('/api/earthquakes?hours=168');
+                const data = await res.json();
+
+                eqLayer.clearLayers();
+                data.earthquakes.forEach(eq => {
+                    const color = depthColor(eq.depth);
+                    const radius = magRadius(eq.mag);
+
+                    const marker = L.circleMarker([eq.lat, eq.lon], {
+                        radius: radius,
+                        fillColor: color,
+                        color: '#fff',
+                        weight: 0.8,
+                        fillOpacity: 0.75,
+                    });
+
+                    const location = eq.location_ja || eq.location_en || '--';
+                    const intensityHtml = eq.intensity
+                        ? `<span class="intensity-badge">震度 ${eq.intensity}</span>`
+                        : '';
+
+                    marker.bindPopup(`
+                        <div class="eq-popup">
+                            <div>
+                                <span class="mag">M${eq.mag != null ? eq.mag.toFixed(1) : '?'}</span>
+                                ${intensityHtml}
+                            </div>
+                            <div class="location">${location}</div>
+                            <strong>深さ:</strong> ${eq.depth != null ? eq.depth.toFixed(1) + ' km' : '--'}<br>
+                            <strong>時刻:</strong> ${formatTime(eq.time)}<br>
+                            <strong>ソース:</strong> ${eq.source.toUpperCase()}
+                        </div>
+                    `);
+                    eqLayer.addLayer(marker);
+                });
+
+                // Stats
+                const statsRes = await fetch('/api/stats');
+                const stats = await statsRes.json();
+                document.getElementById('eq-count-24h').textContent = stats.earthquakes_24h;
+                document.getElementById('eq-count-7d').textContent = stats.earthquakes_7d;
+                document.getElementById('total-records').textContent =
+                    stats.total_records > 1000 ? (stats.total_records / 1000).toFixed(1) + 'K' : stats.total_records;
+
+            } catch (e) {
+                console.error('Failed to load earthquakes:', e);
+            }
+        }
+
+        loadEarthquakes();
+        setInterval(loadEarthquakes, 60000);
+    </script>
+</body>
+</html>
