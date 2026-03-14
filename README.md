@@ -19,7 +19,7 @@ The goal is to collect every publicly available geophysical data stream around J
 
 ## Data Sources
 
-### Phase 1: Earthquakes (3 sources)
+### Phase 1: Earthquakes (3 sources) ✅
 
 | Source | Endpoint | Auth | Interval |
 |---|---|---|---|
@@ -27,12 +27,13 @@ The goal is to collect every publicly available geophysical data stream around J
 | P2P地震情報 | `api.p2pquake.net/v2` JSON | None | 2 min |
 | 気象庁 Bosai | `jma.go.jp/bosai/quake` JSON | None | 3 min |
 
-### Phase 2: Atmospheric + Geomagnetic
+### Phase 2: Atmospheric + Geomagnetic ✅
 
 | Source | Endpoint | Auth | Interval |
 |---|---|---|---|
 | AMeDAS (~1,300 stations) | `jma.go.jp/bosai/amedas` JSON | None | 10 min |
-| INTERMAGNET (KAK/MMB/KNY) | `imag-data.bgs.ac.uk` IAGA-2002 | None | 30 min |
+| NOAA GOES Magnetometer | `services.swpc.noaa.gov` JSON | None | 15 min |
+| Planetary Kp Index | `services.swpc.noaa.gov` JSON | None | 15 min |
 
 ### Phase 3: Volcanoes + Ocean
 
@@ -54,12 +55,12 @@ The goal is to collect every publicly available geophysical data stream around J
 | Layer | Visualization | Color Scheme |
 |---|---|---|
 | Earthquakes | CircleMarker (magnitude ∝ radius) | Depth: shallow=red → deep=blue |
-| Volcanoes | Triangle markers | Alert level: 1=white → 5=purple |
-| AMeDAS Pressure | Heatmap overlay | Diverging from 1013 hPa |
-| Geomagnetism | Diamond markers → time-series chart | Click to view 24h X/Y/Z/F |
-| Ocean SST | Tile overlay | Cool-warm colormap |
-| GNSS Displacement | Arrow vectors | Magnitude-proportional length |
-| Ionosphere TEC | Grid overlay | Low=transparent → high=purple |
+| AMeDAS | CircleMarker per station (toggleable metric) | Temp/Pressure/Wind/Precip colormaps |
+| Kp Index | Header badge (real-time) | Green < 4, Orange 4-6, Red > 6 |
+| Volcanoes (Phase 3) | Triangle markers | Alert level: 1=white → 5=purple |
+| Ocean SST (Phase 3) | Tile overlay | Cool-warm colormap |
+| GNSS Displacement (Phase 4) | Arrow vectors | Magnitude-proportional length |
+| Ionosphere TEC (Phase 4) | Grid overlay | Low=transparent → high=purple |
 
 ## Correlation Panel
 

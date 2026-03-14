@@ -6,9 +6,11 @@ import logging
 import aiohttp
 import uvicorn
 
+from collectors.amedas import AMeDASCollector
 from collectors.earthquake_jma import JMACollector
 from collectors.earthquake_p2p import P2PQuakeCollector
 from collectors.earthquake_usgs import USGSCollector
+from collectors.geomag import GeomagCollector
 from db import init_db
 
 logging.basicConfig(
@@ -30,6 +32,8 @@ async def main():
         USGSCollector(),
         P2PQuakeCollector(),
         JMACollector(),
+        AMeDASCollector(),
+        GeomagCollector(),
     ]
 
     async with aiohttp.ClientSession() as session:

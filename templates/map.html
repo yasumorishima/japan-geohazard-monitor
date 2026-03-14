@@ -16,6 +16,8 @@
             justify-content: space-between;
             align-items: center;
             border-bottom: 1px solid #2a3a4a;
+            flex-wrap: wrap;
+            gap: 8px;
         }
         #header h1 { font-size: 18px; font-weight: 600; }
         #header h1 span { color: #ef5350; }
@@ -23,13 +25,17 @@
             display: flex;
             gap: 24px;
             font-size: 13px;
+            flex-wrap: wrap;
         }
         .stat-value { font-size: 20px; font-weight: 700; color: #ef5350; }
         .stat-label { font-size: 11px; color: #888; text-transform: uppercase; }
+        .stat-value.kp-low { color: #4caf50; }
+        .stat-value.kp-mid { color: #ff9800; }
+        .stat-value.kp-high { color: #f44336; }
 
         #map { height: calc(100vh - 52px); width: 100%; }
 
-        .eq-popup {
+        .eq-popup, .amedas-popup {
             font-family: 'Segoe UI', system-ui, sans-serif;
             font-size: 13px;
             line-height: 1.6;
@@ -45,6 +51,8 @@
             background: #e65100;
             color: #fff;
         }
+        .amedas-popup .station-name { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+        .amedas-popup .value-big { font-size: 20px; font-weight: 700; }
 
         .legend {
             background: rgba(10, 10, 26, 0.92);
@@ -57,6 +65,45 @@
         .legend-title { font-weight: 700; margin-bottom: 4px; font-size: 13px; color: #ef5350; }
         .legend-item { display: flex; align-items: center; gap: 6px; }
         .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+        .layer-control {
+            background: rgba(10, 10, 26, 0.92);
+            padding: 10px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            border: 1px solid #2a3a4a;
+        }
+        .layer-control label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            padding: 3px 0;
+        }
+        .layer-control .section-title {
+            font-weight: 700;
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+            margin-top: 6px;
+        }
+        .layer-control .section-title:first-child { margin-top: 0; }
+
+        .amedas-metric-select {
+            background: rgba(10, 10, 26, 0.92);
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid #2a3a4a;
+            font-size: 13px;
+        }
+        .amedas-metric-select select {
+            background: #1b2838;
+            color: #e0e0e0;
+            border: 1px solid #3a4a5a;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 13px;
+        }
     </style>
 </head>
 <body>
@@ -72,6 +119,14 @@
                 <div class="stat-label">7 Days</div>
             </div>
             <div>
+                <div class="stat-value" id="amedas-stations">--</div>
+                <div class="stat-label">AMeDAS Stations</div>
+            </div>
+            <div>
+                <div class="stat-value" id="kp-value">--</div>
+                <div class="stat-label">Kp Index</div>
+            </div>
+            <div>
                 <div class="stat-value" id="total-records">--</div>
                 <div class="stat-label">Total Records</div>
             </div>
@@ -81,6 +136,7 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
+        // === Color helpers ===
         function depthColor(depth) {
             if (depth == null) return '#888';
             if (depth < 10) return '#ff1744';
@@ -102,35 +158,124 @@
             return 24;
         }
 
+        function tempColor(t) {
+            if (t == null) return '#888';
+            if (t < -10) return '#1565c0';
+            if (t < 0) return '#42a5f5';
+            if (t < 10) return '#4fc3f7';
+            if (t < 20) return '#66bb6a';
+            if (t < 30) return '#ff9800';
+            return '#f44336';
+        }
+
+        function pressureColor(p) {
+            if (p == null) return '#888';
+            if (p < 1000) return '#7b1fa2';
+            if (p < 1005) return '#e040fb';
+            if (p < 1010) return '#42a5f5';
+            if (p < 1015) return '#66bb6a';
+            if (p < 1020) return '#ffeb3b';
+            if (p < 1025) return '#ff9800';
+            return '#f44336';
+        }
+
+        function precipColor(p) {
+            if (p == null || p === 0) return 'rgba(100,100,100,0.2)';
+            if (p < 1) return '#4fc3f7';
+            if (p < 5) return '#2196f3';
+            if (p < 10) return '#1565c0';
+            if (p < 20) return '#ff9800';
+            return '#f44336';
+        }
+
+        function windColor(w) {
+            if (w == null) return '#888';
+            if (w < 3) return '#66bb6a';
+            if (w < 7) return '#ffeb3b';
+            if (w < 12) return '#ff9800';
+            return '#f44336';
+        }
+
+        function getAmedasColor(metric, value) {
+            switch (metric) {
+                case 'temperature': return tempColor(value);
+                case 'pressure': return pressureColor(value);
+                case 'precipitation': return precipColor(value);
+                case 'wind': return windColor(value);
+                default: return '#888';
+            }
+        }
+
         function formatTime(iso) {
             if (!iso) return '--';
             const d = new Date(iso);
             return d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
         }
 
-        const map = L.map('map', {
-            center: [36.0, 138.0],
-            zoom: 5,
-            zoomControl: true,
-        });
+        const metricUnits = {
+            pressure: 'hPa', temperature: '°C', humidity: '%',
+            wind: 'm/s', precipitation: 'mm/h',
+        };
+
+        // === Map setup ===
+        const map = L.map('map', { center: [36.0, 138.0], zoom: 5, zoomControl: true });
 
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
             attribution: '&copy; OpenStreetMap &copy; CARTO',
             maxZoom: 18,
         }).addTo(map);
 
-        // Depth legend
+        // === Layers ===
+        let eqLayer = L.layerGroup().addTo(map);
+        let amedasLayer = L.layerGroup();
+        let currentAmedasMetric = 'temperature';
+
+        // === Layer control (top-right) ===
+        const layerControl = L.control({ position: 'topright' });
+        layerControl.onAdd = function() {
+            const div = L.DomUtil.create('div', 'layer-control');
+            div.innerHTML = `
+                <div class="section-title">Layers</div>
+                <label><input type="checkbox" id="chk-eq" checked> Earthquakes</label>
+                <label><input type="checkbox" id="chk-amedas"> AMeDAS</label>
+                <div class="section-title" style="margin-top:8px">AMeDAS Metric</div>
+                <select id="amedas-metric">
+                    <option value="temperature">Temperature</option>
+                    <option value="pressure">Pressure</option>
+                    <option value="wind">Wind Speed</option>
+                    <option value="precipitation">Precipitation</option>
+                </select>
+            `;
+            L.DomEvent.disableClickPropagation(div);
+            return div;
+        };
+        layerControl.addTo(map);
+
+        // Layer toggle handlers
+        document.addEventListener('change', function(e) {
+            if (e.target.id === 'chk-eq') {
+                e.target.checked ? map.addLayer(eqLayer) : map.removeLayer(eqLayer);
+            } else if (e.target.id === 'chk-amedas') {
+                if (e.target.checked) {
+                    map.addLayer(amedasLayer);
+                    loadAmedas();
+                } else {
+                    map.removeLayer(amedasLayer);
+                }
+            } else if (e.target.id === 'amedas-metric') {
+                currentAmedasMetric = e.target.value;
+                loadAmedas();
+            }
+        });
+
+        // === Depth legend (bottom-right) ===
         const legend = L.control({ position: 'bottomright' });
         legend.onAdd = function() {
             const div = L.DomUtil.create('div', 'legend');
             div.innerHTML = '<div class="legend-title">Depth (km)</div>';
             const levels = [
-                ['< 10', '#ff1744'],
-                ['10-30', '#ff5722'],
-                ['30-70', '#ff9800'],
-                ['70-150', '#ffc107'],
-                ['150-300', '#4fc3f7'],
-                ['> 300', '#1565c0'],
+                ['< 10', '#ff1744'], ['10-30', '#ff5722'], ['30-70', '#ff9800'],
+                ['70-150', '#ffc107'], ['150-300', '#4fc3f7'], ['> 300', '#1565c0'],
             ];
             levels.forEach(([label, color]) => {
                 div.innerHTML += `<div class="legend-item"><span class="legend-dot" style="background:${color}"></span>${label}</div>`;
@@ -139,8 +284,7 @@
         };
         legend.addTo(map);
 
-        let eqLayer = L.layerGroup().addTo(map);
-
+        // === Data loaders ===
         async function loadEarthquakes() {
             try {
                 const res = await fetch('/api/earthquakes?hours=168');
@@ -148,12 +292,9 @@
 
                 eqLayer.clearLayers();
                 data.earthquakes.forEach(eq => {
-                    const color = depthColor(eq.depth);
-                    const radius = magRadius(eq.mag);
-
                     const marker = L.circleMarker([eq.lat, eq.lon], {
-                        radius: radius,
-                        fillColor: color,
+                        radius: magRadius(eq.mag),
+                        fillColor: depthColor(eq.depth),
                         color: '#fff',
                         weight: 0.8,
                         fillOpacity: 0.75,
@@ -161,15 +302,11 @@
 
                     const location = eq.location_ja || eq.location_en || '--';
                     const intensityHtml = eq.intensity
-                        ? `<span class="intensity-badge">震度 ${eq.intensity}</span>`
-                        : '';
+                        ? `<span class="intensity-badge">震度 ${eq.intensity}</span>` : '';
 
                     marker.bindPopup(`
                         <div class="eq-popup">
-                            <div>
-                                <span class="mag">M${eq.mag != null ? eq.mag.toFixed(1) : '?'}</span>
-                                ${intensityHtml}
-                            </div>
+                            <div><span class="mag">M${eq.mag != null ? eq.mag.toFixed(1) : '?'}</span>${intensityHtml}</div>
                             <div class="location">${location}</div>
                             <strong>深さ:</strong> ${eq.depth != null ? eq.depth.toFixed(1) + ' km' : '--'}<br>
                             <strong>時刻:</strong> ${formatTime(eq.time)}<br>
@@ -178,22 +315,76 @@
                     `);
                     eqLayer.addLayer(marker);
                 });
-
-                // Stats
-                const statsRes = await fetch('/api/stats');
-                const stats = await statsRes.json();
-                document.getElementById('eq-count-24h').textContent = stats.earthquakes_24h;
-                document.getElementById('eq-count-7d').textContent = stats.earthquakes_7d;
-                document.getElementById('total-records').textContent =
-                    stats.total_records > 1000 ? (stats.total_records / 1000).toFixed(1) + 'K' : stats.total_records;
-
             } catch (e) {
                 console.error('Failed to load earthquakes:', e);
             }
         }
 
+        async function loadAmedas() {
+            try {
+                const res = await fetch(`/api/amedas?metric=${currentAmedasMetric}`);
+                const data = await res.json();
+                const unit = metricUnits[currentAmedasMetric] || '';
+
+                amedasLayer.clearLayers();
+                data.stations.forEach(s => {
+                    const color = getAmedasColor(currentAmedasMetric, s.value);
+                    const marker = L.circleMarker([s.lat, s.lon], {
+                        radius: 4,
+                        fillColor: color,
+                        color: color,
+                        weight: 1,
+                        fillOpacity: 0.85,
+                    });
+
+                    const displayVal = s.value != null ? s.value.toFixed(1) : '--';
+                    marker.bindPopup(`
+                        <div class="amedas-popup">
+                            <div class="station-name">${s.name || s.id}</div>
+                            <div class="value-big">${displayVal} ${unit}</div>
+                        </div>
+                    `);
+                    amedasLayer.addLayer(marker);
+                });
+            } catch (e) {
+                console.error('Failed to load AMeDAS:', e);
+            }
+        }
+
+        async function loadStats() {
+            try {
+                const res = await fetch('/api/stats');
+                const stats = await res.json();
+                document.getElementById('eq-count-24h').textContent = stats.earthquakes_24h;
+                document.getElementById('eq-count-7d').textContent = stats.earthquakes_7d;
+                document.getElementById('total-records').textContent =
+                    stats.total_records > 1000 ? (stats.total_records / 1000).toFixed(1) + 'K' : stats.total_records;
+
+                // AMeDAS station count
+                document.getElementById('amedas-stations').textContent = stats.amedas_stations || '--';
+
+                // Kp index with color coding
+                const kpEl = document.getElementById('kp-value');
+                if (stats.kp_latest != null) {
+                    kpEl.textContent = stats.kp_latest.toFixed(1);
+                    kpEl.className = 'stat-value ' +
+                        (stats.kp_latest < 4 ? 'kp-low' : stats.kp_latest < 6 ? 'kp-mid' : 'kp-high');
+                } else {
+                    kpEl.textContent = '--';
+                }
+            } catch (e) {
+                console.error('Failed to load stats:', e);
+            }
+        }
+
+        // === Initial load + polling ===
         loadEarthquakes();
-        setInterval(loadEarthquakes, 60000);
+        loadStats();
+        setInterval(() => { loadEarthquakes(); loadStats(); }, 60000);
+        // AMeDAS refresh every 10 min (matches collector interval)
+        setInterval(() => {
+            if (document.getElementById('chk-amedas')?.checked) loadAmedas();
+        }, 600000);
     </script>
 </body>
 </html>
