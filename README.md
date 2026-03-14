@@ -1,5 +1,7 @@
 # Japan Geohazard Monitor
 
+![Live Map](docs/screenshot.png)
+
 Real-time monitoring dashboard for Japan's geophysical activity — earthquakes, volcanoes, atmospheric pressure, geomagnetism, ocean temperature, ionosphere, and crustal deformation — all overlaid on a single dark-themed interactive map.
 
 The goal is to collect every publicly available geophysical data stream around Japan and visualize potential correlations with seismic activity.
