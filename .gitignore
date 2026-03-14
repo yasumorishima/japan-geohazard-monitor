@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+data/ais.db
+data/*.db
+*.egg-info/
+.venv/
