@@ -45,6 +45,8 @@ class VolcanoCollector(BaseCollector):
         # Build lookup: code → volcano info
         volcanoes = {}
         for v in volcano_list:
+            if "latlon" not in v:
+                continue  # Skip meta entries (900, 901, 902)
             code = v["code"]
             volcanoes[code] = {
                 "code": code,
