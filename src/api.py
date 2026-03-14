@@ -117,6 +117,34 @@ async def sst_data():
     return {"grid": grid, "count": len(grid), "observed_at": latest_time}
 
 
+@app.get("/api/tec")
+async def tec_data(hours: int = 24):
+    """Return TEC grid for the most recent epoch within the given window."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        latest = await db.execute_fetchall(
+            """SELECT MAX(epoch) FROM tec
+               WHERE epoch > datetime('now', ? || ' hours')""",
+            (f"-{hours}",),
+        )
+        latest_epoch = latest[0][0] if latest and latest[0][0] else None
+
+        if not latest_epoch:
+            return {"grid": [], "count": 0, "epoch": None}
+
+        rows = await db.execute_fetchall(
+            """SELECT latitude, longitude, tec_tecu, product_type
+               FROM tec WHERE epoch = ?""",
+            (latest_epoch,),
+        )
+    grid = [
+        {"lat": r["latitude"], "lon": r["longitude"],
+         "tec": r["tec_tecu"], "product": r["product_type"]}
+        for r in rows
+    ]
+    return {"grid": grid, "count": len(grid), "epoch": latest_epoch}
+
+
 @app.get("/api/amedas")
 async def amedas_data(metric: str = "pressure"):
     """Return latest AMeDAS snapshot as GeoJSON-like list.
@@ -261,6 +289,10 @@ async def stats():
             "SELECT MAX(observed_at) FROM sst"
         ))[0][0]
 
+        tec_latest = (await db.execute_fetchall(
+            "SELECT MAX(epoch) FROM tec"
+        ))[0][0]
+
         # Latest collector status per source
         collectors = await db.execute_fetchall("""
             SELECT source, status, records_inserted, collected_at
@@ -278,6 +310,7 @@ async def stats():
         "volcano_total": volcano_total,
         "volcano_elevated": volcano_elevated,
         "sst_latest": sst_latest,
+        "tec_latest": tec_latest,
         "collectors": [
             {
                 "source": c[0],

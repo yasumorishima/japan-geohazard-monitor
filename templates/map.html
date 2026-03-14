@@ -243,6 +243,7 @@
         let eqLayer = L.layerGroup().addTo(map);
         let volcanoLayer = L.layerGroup();
         let sstLayer = L.layerGroup();
+        let tecLayer = L.layerGroup();
         let amedasLayer = L.layerGroup();
         let currentAmedasMetric = 'temperature';
 
@@ -252,6 +253,17 @@
             if (level >= 3) return '#ff9800';
             if (level >= 2) return '#ffeb3b';
             return '#aaaaaa';
+        }
+
+        function tecColor(tec) {
+            // TEC in TECU: low=transparent, moderate=green, high=purple
+            if (tec == null) return 'rgba(0,0,0,0)';
+            if (tec < 10) return 'rgba(76,175,80,0.3)';
+            if (tec < 20) return 'rgba(76,175,80,0.5)';
+            if (tec < 30) return 'rgba(255,235,59,0.5)';
+            if (tec < 50) return 'rgba(255,152,0,0.6)';
+            if (tec < 80) return 'rgba(244,67,54,0.6)';
+            return 'rgba(156,39,176,0.7)';
         }
 
         function sstColor(t) {
@@ -274,6 +286,7 @@
                 <label><input type="checkbox" id="chk-eq" checked> Earthquakes</label>
                 <label><input type="checkbox" id="chk-volcano"> Volcanoes</label>
                 <label><input type="checkbox" id="chk-sst"> Sea Surface Temp</label>
+                <label><input type="checkbox" id="chk-tec"> Ionosphere TEC</label>
                 <label><input type="checkbox" id="chk-amedas"> AMeDAS</label>
                 <div class="section-title" style="margin-top:8px">AMeDAS Metric</div>
                 <select id="amedas-metric">
@@ -298,6 +311,9 @@
             } else if (e.target.id === 'chk-sst') {
                 if (e.target.checked) { map.addLayer(sstLayer); loadSST(); }
                 else map.removeLayer(sstLayer);
+            } else if (e.target.id === 'chk-tec') {
+                if (e.target.checked) { map.addLayer(tecLayer); loadTEC(); }
+                else map.removeLayer(tecLayer);
             } else if (e.target.id === 'chk-amedas') {
                 if (e.target.checked) { map.addLayer(amedasLayer); loadAmedas(); }
                 else map.removeLayer(amedasLayer);
@@ -443,6 +459,33 @@
                 });
             } catch (e) {
                 console.error('Failed to load SST:', e);
+            }
+        }
+
+        async function loadTEC() {
+            try {
+                const res = await fetch('/api/tec?hours=48');
+                const data = await res.json();
+
+                tecLayer.clearLayers();
+                data.grid.forEach(p => {
+                    const color = tecColor(p.tec);
+                    const rect = L.rectangle(
+                        [[p.lat - 1.25, p.lon - 2.5], [p.lat + 1.25, p.lon + 2.5]],
+                        { color: color, fillColor: color, fillOpacity: 0.6, weight: 0.5,
+                          interactive: true }
+                    );
+                    rect.bindPopup(`
+                        <div style="font-size:13px">
+                            <strong>TEC:</strong> ${p.tec.toFixed(1)} TECU<br>
+                            <strong>Lat:</strong> ${p.lat}° <strong>Lon:</strong> ${p.lon}°<br>
+                            <strong>Product:</strong> ${p.product}
+                        </div>
+                    `);
+                    tecLayer.addLayer(rect);
+                });
+            } catch (e) {
+                console.error('Failed to load TEC:', e);
             }
         }
 

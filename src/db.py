@@ -153,6 +153,24 @@ async def init_db():
             ON sst(observed_at)
         """)
 
+        # Phase 4: Ionosphere TEC (Total Electron Content)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS tec (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                latitude REAL NOT NULL,
+                longitude REAL NOT NULL,
+                tec_tecu REAL NOT NULL,
+                epoch TEXT NOT NULL,
+                product_type TEXT NOT NULL,
+                received_at TEXT NOT NULL,
+                UNIQUE(latitude, longitude, epoch)
+            )
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_tec_epoch
+            ON tec(epoch)
+        """)
+
         await db.commit()
     logger.info("Database initialized: %s", DB_PATH)
 
@@ -191,14 +209,20 @@ async def purge_old_data(days: int = 90):
         )
         sst_deleted = result.rowcount
 
+        result = await db.execute(
+            "DELETE FROM tec WHERE epoch < datetime('now', ? || ' days')",
+            (cutoff,),
+        )
+        tec_deleted = result.rowcount
+
         await db.execute(
             "DELETE FROM collector_status WHERE collected_at < datetime('now', '-7 days')"
         )
         await db.commit()
 
-    total = eq_deleted + amedas_deleted + goes_deleted + kp_deleted + sst_deleted
+    total = eq_deleted + amedas_deleted + goes_deleted + kp_deleted + sst_deleted + tec_deleted
     if total:
         logger.info(
-            "Purged: earthquakes=%d, amedas=%d, goes=%d, kp=%d, sst=%d",
-            eq_deleted, amedas_deleted, goes_deleted, kp_deleted, sst_deleted,
+            "Purged: eq=%d amedas=%d goes=%d kp=%d sst=%d tec=%d",
+            eq_deleted, amedas_deleted, goes_deleted, kp_deleted, sst_deleted, tec_deleted,
         )

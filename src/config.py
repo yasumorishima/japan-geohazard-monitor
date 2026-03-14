@@ -30,6 +30,7 @@ AMEDAS_DATA_URL = "https://www.jma.go.jp/bosai/amedas/data/map/{timestamp}.json"
 
 VOLCANO_INTERVAL = 900    # 15 min
 SST_INTERVAL = 21600      # 6 hours
+TEC_INTERVAL = 7200       # 2 hours
 
 # NOAA SWPC Geomagnetic URLs
 GOES_MAG_URL = "https://services.swpc.noaa.gov/json/goes/primary/magnetometers-1-day.json"
@@ -42,3 +43,7 @@ VOLCANO_WARNING_URL = "https://www.jma.go.jp/bosai/volcano/data/warning.json"
 # NOAA ERDDAP SST (MUR 0.01° daily, stride=50 → 0.5° grid)
 SST_URL = ("https://coastwatch.pfeg.noaa.gov/erddap/griddap/jplMURSST41.json"
            "?analysed_sst[(last)][(25):50:(45)][(125):50:(150)]")
+
+# CODE IONEX TEC (predicted, updated daily)
+# File naming: COD0OPSPRD_{YYYY}{DOY}0000_01D_01H_GIM.INX.gz
+TEC_FTP_BASE = "ftp://ftp.aiub.unibe.ch/CODE"
