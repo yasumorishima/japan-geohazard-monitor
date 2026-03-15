@@ -19,6 +19,32 @@ logger = logging.getLogger(__name__)
 JAPAN_BBOX = "minlatitude=20&maxlatitude=50&minlongitude=120&maxlongitude=155"
 
 
+MAX_RETRIES = 3
+TIMEOUT = aiohttp.ClientTimeout(total=60, connect=30)
+
+
+async def fetch_json_with_retry(session: aiohttp.ClientSession, url: str):
+    """Fetch JSON with exponential backoff retry."""
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            async with session.get(url, timeout=TIMEOUT) as resp:
+                if resp.status != 200:
+                    logger.warning("HTTP %d for %s", resp.status, url[:80])
+                    if attempt == MAX_RETRIES:
+                        return None
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                return await resp.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            if attempt == MAX_RETRIES:
+                logger.error("Failed after %d attempts: %s", MAX_RETRIES, e)
+                return None
+            wait = 2 ** attempt
+            logger.warning("Attempt %d/%d failed (%s), retrying in %ds...", attempt, MAX_RETRIES, e, wait)
+            await asyncio.sleep(wait)
+    return None
+
+
 async def main():
     await init_db()
     now = datetime.now(timezone.utc).isoformat()
@@ -36,11 +62,9 @@ async def main():
                     f"&minmagnitude={min_m}&maxmagnitude={max_m}"
                     f"&{JAPAN_BBOX}&orderby=time&limit=20000"
                 )
-                async with session.get(url) as resp:
-                    if resp.status != 200:
-                        logger.warning("%d M%.0f-%.0f: HTTP %d", year, min_m, max_m, resp.status)
-                        continue
-                    data = await resp.json()
+                data = await fetch_json_with_retry(session, url)
+                if data is None:
+                    continue
 
                 rows = []
                 for f in data["features"]:

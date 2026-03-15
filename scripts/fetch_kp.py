@@ -21,13 +21,32 @@ HOURS = [0, 3, 6, 9, 12, 15, 18, 21]
 START_YEAR = 2011
 
 
+MAX_RETRIES = 3
+TIMEOUT = aiohttp.ClientTimeout(total=60, connect=30)
+
+
+async def fetch_with_retry(session: aiohttp.ClientSession, url: str) -> str:
+    """Fetch URL with exponential backoff retry."""
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            async with session.get(url, timeout=TIMEOUT) as resp:
+                resp.raise_for_status()
+                return await resp.text()
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            if attempt == MAX_RETRIES:
+                raise
+            wait = 2 ** attempt
+            logger.warning("Attempt %d/%d failed (%s), retrying in %ds...", attempt, MAX_RETRIES, e, wait)
+            await asyncio.sleep(wait)
+    raise RuntimeError("Unreachable")
+
+
 async def main():
     await init_db()
     now = datetime.now(timezone.utc).isoformat()
 
     async with aiohttp.ClientSession() as session:
-        async with session.get(GFZ_URL) as resp:
-            text = await resp.text()
+        text = await fetch_with_retry(session, GFZ_URL)
 
     rows = []
     for line in text.split("\n"):
