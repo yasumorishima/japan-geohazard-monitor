@@ -160,7 +160,32 @@ Random dates also show TEC drops (n=34 too small to be definitive). Signal may n
 
 ### What's next
 
-Single-indicator approaches have been exhausted by decades of seismology research. The next step is **multi-indicator simultaneous anomaly detection** — looking for cases where b-value, TEC, Kp, and pressure all deviate simultaneously. This combinatorial approach has not been thoroughly tested with sufficient data.
+Single-indicator approaches have been exhausted by decades of seismology research. No one has achieved earthquake prediction because simple methods don't work. The path forward requires going beyond what existing papers have done.
+
+**1. Multi-indicator simultaneous anomaly detection** (highest priority)
+- Do b-value + TEC + Kp anomalies occurring *simultaneously* predict earthquakes better than any single indicator?
+- Threshold combination search: vary b<0.6/0.7/0.8, Kp>3/4/5, TEC σ<-0.5/-1.0/-1.5
+- Different time windows per indicator: b-value 90d + TEC 7d + Kp 48h
+
+**2. Data expansion**
+- TEC full-period backfill (currently only ±7d around M6.5+ events — random control n=34 is too small)
+- SST historical data via ERDDAP for pre-earthquake SST anomaly verification
+- GEONET F5 coordinates 2011-2025 for slow-slip detection before major earthquakes
+- GOES magnetometer historical data (alternative source needed)
+
+**3. Advanced analysis methods**
+- Spatial clustering: subduction zone vs. inland fault vs. volcanic — different mechanisms may have different precursors
+- Epicenter distance optimization: compare TEC at 1°/2°/5°/10° radius
+- Solar/seasonal/diurnal TEC correction before earthquake correlation
+- Nonlinear methods: Mutual Information, Transfer Entropy (Pearson only captures linear relationships)
+- Time-series pattern recognition: detect TEC/Kp "shape" patterns (e.g., sharp drop → recovery)
+- ML classification: all indicators as features → "M6+ within N days?" (extreme class imbalance challenge)
+
+**4. Dashboard improvements**
+- Add b-value time-series chart to correlation panel
+- Multi-indicator anomaly highlight display
+- Alert on simultaneous multi-indicator anomalies
+- Update screenshot (still shows Phase 1)
 
 ## Automated Analysis (GitHub Actions)
 
