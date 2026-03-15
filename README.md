@@ -2,9 +2,9 @@
 
 ![Live Map](docs/screenshot.png)
 
-Real-time monitoring dashboard for Japan's geophysical activity — earthquakes, volcanoes, atmospheric conditions, geomagnetism, ocean temperature, and ionosphere — all overlaid on a single dark-themed interactive map.
+Real-time monitoring dashboard for Japan's geophysical activity — earthquakes, volcanoes, atmospheric conditions, geomagnetism, ocean temperature, and ionosphere — all overlaid on a single dark-themed interactive map with a correlation analysis panel.
 
-8 async collectors run continuously on a Raspberry Pi 5, pulling data from 9 public APIs and storing it in SQLite. A FastAPI server renders a Leaflet.js dashboard with togglable layers.
+8 async collectors run continuously on a Raspberry Pi 5, pulling data from 9 public APIs and storing it in SQLite. A FastAPI server renders a Leaflet.js dashboard with togglable layers and a time-synchronized correlation panel for cross-domain anomaly detection.
 
 ## Live
 
@@ -16,11 +16,12 @@ Real-time monitoring dashboard for Japan's geophysical activity — earthquakes,
 8 async collectors (independent intervals per source)
     → BaseCollector (retry, batch insert, health tracking)
     → SQLite (WAL mode, auto-purge @ 90 days)
-    → FastAPI REST API (per-layer endpoints)
-    → Leaflet.js dark-themed map (togglable layers, auto-refresh)
+    → FastAPI REST API (per-layer + correlation endpoints)
+    → Leaflet.js dark-themed map (togglable layers)
+    → Chart.js correlation panel (5 time-aligned charts)
 ```
 
-**Stack**: Python 3.12 / asyncio + aiohttp / aiosqlite / FastAPI + Uvicorn / Leaflet.js / Docker
+**Stack**: Python 3.12 / asyncio + aiohttp / aiosqlite / FastAPI + Uvicorn / Leaflet.js + Chart.js / Docker
 
 ## Data Sources (9 APIs, 8 collectors)
 
@@ -46,6 +47,22 @@ Real-time monitoring dashboard for Japan's geophysical activity — earthquakes,
 | AMeDAS | toggle | CircleMarker per station | Metric-dependent colormap (4 selectable metrics) |
 | Kp Index | always | Header badge | Green < 4, Orange 4-6, Red > 6 |
 
+## Correlation Panel
+
+Right-side collapsible panel with 5 time-synchronized Chart.js charts for cross-domain anomaly detection:
+
+| Chart | Data | Resolution |
+|---|---|---|
+| Earthquake count | Hourly bar chart | 1 hour |
+| Kp index | Line chart | 3 hours |
+| GOES magnetic field | Hourly mean total field (nT) | 1 hour |
+| Ionosphere TEC | Mean TEC over Japan (TECU) | Per IONEX epoch |
+| Atmospheric pressure | Mean AMeDAS pressure (hPa) | 1 hour |
+
+Supports 3/7/14/30-day windows. Auto-refreshes every 5 minutes when open.
+
+**Use case**: Visual detection of precursor patterns — e.g., ionosphere TEC anomaly → geomagnetic disturbance → pressure change → earthquake sequence.
+
 ## API Endpoints
 
 | Endpoint | Description |
@@ -58,6 +75,7 @@ Real-time monitoring dashboard for Japan's geophysical activity — earthquakes,
 | `GET /api/amedas?metric=temperature` | Latest AMeDAS snapshot (pressure/temperature/wind/precipitation) |
 | `GET /api/geomag/goes?hours=24` | GOES magnetometer time series |
 | `GET /api/geomag/kp?days=7` | Kp index time series |
+| `GET /api/correlation?days=7` | Time-aligned multi-domain data for correlation panel |
 | `GET /api/stats` | Collector health, counts, latest Kp, volcano alerts |
 
 ## Database
@@ -88,8 +106,15 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 - **Phase 2** ✅ Atmospheric (AMeDAS 1,286 stations) + Geomagnetic (NOAA SWPC GOES + Kp)
 - **Phase 3** ✅ Volcanoes (JMA 117 active) + Ocean (NOAA ERDDAP MUR SST)
 - **Phase 4** ✅ Ionosphere TEC (CODE Bern predicted IONEX, Japan 2.5° × 5° grid)
-- **Remaining** 🔲 GEONET crustal deformation (GSI SFTP, registration required)
-- **Future** 🔲 Correlation panel (time-synchronized cross-domain anomaly detection)
+- **Correlation** ✅ Time-synchronized 5-chart panel (earthquake/Kp/GOES/TEC/pressure)
+
+### Not yet implemented
+
+| Data | Blocker |
+|---|---|
+| GEONET crustal deformation (1,300 GNSS stations) | GSI SFTP registration required — no public API |
+| Groundwater levels | No unified API. 国交省水文水質DB explicitly prohibits programmatic access. Prefecture data is fragmented with no standard format |
+| INTERMAGNET ground magnetometers (KAK/MMB/KNY) | BGS GIN API currently down — using NOAA SWPC GOES satellite data as alternative |
 
 ## Related
 
