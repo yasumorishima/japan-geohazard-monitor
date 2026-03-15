@@ -119,7 +119,8 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 - **Correlation** ✅ Time-synchronized 5-chart panel (earthquake/Kp/GOES/TEC/pressure)
 - **Analysis Phase 1** ✅ b-value, TEC, Kp, multi-indicator grid search → all negative (aftershock/sampling artifacts)
 - **Analysis Phase 2** ✅ Coulomb stress (lift 37.5 isolated), rate anomaly (lift 1.86), clustering (lift 4.12) — all survived aftershock isolation + prospective test (combined lift 20.66)
-- **Analysis Phase 3** 🔄 LURR (tidal response), Natural Time (criticality), Nowcasting (cycle counting), MODIS LST (thermal), Kakioka ULF (magnetic)
+- **Analysis Phase 3a** ✅ LURR (❌), Natural Time (❌), Nowcasting (⚠️ lift 1.31) — catalog-based methods exhausted
+- **Analysis Phase 3b** 🔄 MODIS thermal IR, Kakioka ULF, S-net pressure — independent physical observations
 - **Backfill** ✅ 2011-2026 M3+ earthquakes (29K), TEC (4M), Kp (44K), GCMT focal mechanisms
 - **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 120min timeout)
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
@@ -308,20 +309,39 @@ Combined score: count of (CFS>100, rate>2x, has foreshock) per event.
 
 Test period: 41.1% of M5+ events have score ≥ 2, vs 2.6% of random locations → **lift 20.66**. The model generalizes to unseen time periods.
 
-### Phase 3: Additional physical parameters (planned)
+### Phase 3a: Catalog-based methods — mostly negative
 
-With 3 validated signals, the next step is adding independent physical observables to strengthen the multi-parameter model:
+Three additional methods using existing earthquake catalog only (no new data). None added significant prediction power beyond Phase 2.
 
-| Priority | Parameter | Physical mechanism | Data source | New data needed? |
-|---|---|---|---|---|
-| **1** | **LURR (tidal stress response)** | Crust near failure responds differently to tidal loading | Existing catalog + tidal calculation | No |
-| **2** | **MODIS thermal IR anomaly** | Surface heating from stress-induced gas release | NASA MODIS LST (daily, 1km) | Yes (HTTP API) |
-| **3** | **ULF magnetic field** | Piezoelectric/electrokinetic effects from stressed rock | Kakioka Observatory (JMA) | Yes |
-| 4 | Natural Time Analysis | Critical phenomena detection in seismicity sequences | Existing catalog | No |
-| 5 | Earthquake Nowcasting | Bayesian estimation of time-to-next-large-event | Existing catalog | No |
-| 6 | GEONET GPS-TEC (per-station) | Point TEC directly above epicenters | GSI GEONET RINEX | Yes (FTP registration) |
-| 7 | S-net / DONET ocean bottom pressure | Slow-slip detection on subduction interface | NIED (150 + 51 stations) | Yes |
-| 8 | Radon / He isotopes | Direct fault degassing measurement | AIST monitoring | Limited access |
+**LURR (Load-Unload Response Ratio) — ❌ No signal**
+
+| Window | EQ LURR>1.5 | Random | Lift |
+|---|---|---|---|
+| 30 days | 26.3% | 55.0% | 0.48 |
+| 90 days | 31.6% | 36.9% | 0.86 |
+| 180 days | 28.3% | 30.2% | 0.94 |
+
+Tidal stress asymmetry shows no earthquake-specific pattern. Random locations have equal or higher LURR values.
+
+**Natural Time Analysis — ❌ No signal**
+
+κ1 variance near critical value (0.070) is equally common before M5+ events and at random times (lift 0.84-1.19 across all window sizes).
+
+**Earthquake Nowcasting — ⚠️ Weak signal (lift 1.31)**
+
+EPS > 70 before M5+ events: 26.8% vs 20.4% random (lift 1.31). Weak magnitude dependence (M7+: 35.7%). Insufficient for standalone prediction but may complement Phase 2 signals.
+
+### Phase 3b: Independent physical observations (in progress)
+
+The critical next step: **non-seismological data** that is physically independent from Phase 2's earthquake-catalog-based signals.
+
+| Parameter | Physical mechanism | Data source | Status |
+|---|---|---|---|
+| **MODIS thermal IR** | Stress → gas release → surface heating | ORNL DAAC API (no auth, 1km) | Fetching |
+| **ULF magnetic field** | Stress → piezoelectric/electrokinetic emission | WDC Kyoto (Kakioka, 1-min) | URL investigation |
+| **S-net ocean bottom pressure** | Slow-slip → seafloor displacement | NIED Hi-net portal (150 stations) | Registration needed |
+| GEONET GPS-TEC (per-station) | Point TEC above epicenters | GSI GEONET RINEX | FTP registration needed |
+| Radon / He isotopes | Fault degassing | AIST monitoring | Limited access |
 
 ## Automated Analysis (GitHub Actions)
 
