@@ -124,7 +124,8 @@ class GEONETCollector(BaseCollector):
                     for filename in sampled:
                         remote_path = f"{GSI_SFTP_PATH}/{year}/{filename}"
                         try:
-                            data = await sftp.read(remote_path)
+                            async with sftp.open(remote_path, "rb") as f:
+                                data = await f.read()
                             content = gzip.decompress(data).decode(
                                 "utf-8", errors="ignore"
                             )
@@ -140,7 +141,7 @@ class GEONETCollector(BaseCollector):
                                     r["dz_mm"] = (r["z"] - ref["z"]) * 1000
                                 all_records.extend(records)
                         except Exception as e:
-                            logger.debug("[geonet] Skip %s: %s", filename, e)
+                            logger.warning("[geonet] Skip %s: %s", filename, e)
 
                     self._last_fetch_date = today
                     logger.info("[geonet] Parsed %d records from %d stations",
