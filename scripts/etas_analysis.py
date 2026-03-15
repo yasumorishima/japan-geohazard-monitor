@@ -183,16 +183,20 @@ async def run_etas_analysis(min_mag_target: float = 5.0) -> dict:
     # 2. Observed count in preceding 7 days
     # 3. Rate ratio = observed / expected
 
+    import bisect
+    all_times = [t for t, m in events_td]
+
     def etas_expected_count(t_target, idx_in_catalog, window_days=7):
         """Approximate expected M3+ count in [t-window, t] by sampling ETAS rate."""
-        n_samples = 14
+        n_samples = 7  # Trapezoidal samples over 7-day window
         dt = window_days / n_samples
         total = 0.0
         for k in range(n_samples):
             t_sample = t_target - window_days + (k + 0.5) * dt
-            # Only use events before the sample time (up to 90 days back for efficiency)
+            # Use bisect for O(log N) cutoff instead of O(N) list comprehension
             t_cutoff = t_sample - 90
-            recent = [(t, m) for t, m in events_td[:idx_in_catalog] if t > t_cutoff]
+            cutoff_idx = bisect.bisect_left(all_times, t_cutoff)
+            recent = events_td[cutoff_idx:idx_in_catalog]
             rate = etas_rate(t_sample, recent, params)
             total += rate * dt
         return total
