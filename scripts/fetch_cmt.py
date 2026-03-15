@@ -52,69 +52,74 @@ def parse_ndk(text: str) -> list[dict]:
     i = 0
     while i + 4 < len(lines):
         try:
-            line1 = lines[i]
-            line2 = lines[i + 1]
-            line3 = lines[i + 2]
-            # line4 = lines[i + 3]  # eigenvalues - not needed
-            line5 = lines[i + 4]
+            line1 = lines[i]      # Hypocenter reference (PDE catalog)
+            line2 = lines[i + 1]  # CMT event name + data used
+            line3 = lines[i + 2]  # CENTROID: time_shift, lat, lon, depth
+            line4 = lines[i + 3]  # Moment tensor (exponent + 6 components)
+            line5 = lines[i + 4]  # Eigenvalues + nodal planes
             i += 5
 
             # Line 1: hypocenter reference
-            # Format: source date time lat lon depth mb ms location
             parts1 = line1.split()
             if len(parts1) < 6:
                 continue
 
-            # Line 2: CMT info
-            # Format: event_name time_shift half_duration lat lon depth
+            # Line 2: CMT event name
             parts2 = line2.split()
-            if len(parts2) < 7:
+            if len(parts2) < 2:
                 continue
-
             event_id = parts2[0].strip()
 
-            # Extract centroid location from line 2
-            # Centroid time shift, half duration, then lat/lon/depth
-            # Format varies but centroid lat/lon/depth are at fixed positions
-            # B:  event_name  time_shift  half_duration  lat  lon  depth  ...
+            # Line 3: CENTROID parameters
+            # Format: CENTROID: time_shift err lat err lon err depth err type timestamp
+            # Example: CENTROID:     -0.3 0.9  13.76 0.06  -89.08 0.09 162.8 12.5 FREE S-...
+            parts3 = line3.split()
+            if len(parts3) < 8:
+                continue
             try:
-                cent_lat = float(parts2[3])
-                cent_lon = float(parts2[4])
-                cent_depth = float(parts2[5])
+                # Skip "CENTROID:" prefix if present
+                offset = 1 if parts3[0].upper().startswith("CENTROID") else 0
+                cent_lat = float(parts3[offset + 2])   # lat
+                cent_lon = float(parts3[offset + 4])   # lon
+                cent_depth = float(parts3[offset + 6])  # depth
             except (ValueError, IndexError):
                 continue
 
-            # Line 3: moment tensor (Mrr, Mtt, Mpp, Mrt, Mrp, Mtp) in exponent notation
-            # First field is exponent, then 6 components
-            parts3 = line3.split()
-            if len(parts3) < 2:
+            # Line 4: Moment tensor exponent
+            parts4 = line4.split()
+            if len(parts4) < 2:
                 continue
             try:
-                exponent = float(parts3[0])
-                # Seismic moment from eigenvalues is more reliable, but
-                # we can compute from line 3 if needed
+                mt_exponent = int(parts4[0])
             except ValueError:
                 continue
 
-            # Line 5: nodal planes
-            # Format: strike1 dip1 rake1 strike2 dip2 rake2 moment_mantissa moment_exponent
+            # Line 5: Eigenvalues + scalar moment + nodal planes
+            # Format: V10 T_val T_plg T_azm N_val N_plg N_azm P_val P_plg P_azm
+            #         scalar_moment NP1_strike NP1_dip NP1_rake NP2_strike NP2_dip NP2_rake
+            # Indices: [0]  [1-3]      [4-6]      [7-9]
+            #          [10]         [11-13]              [14-16]
             parts5 = line5.split()
-            if len(parts5) < 8:
+            if len(parts5) < 17:
                 continue
 
             try:
-                strike1 = float(parts5[0])
-                dip1 = float(parts5[1])
-                rake1 = float(parts5[2])
-                strike2 = float(parts5[3])
-                dip2 = float(parts5[4])
-                rake2 = float(parts5[5])
-                # Scalar moment
-                moment_mantissa = float(parts5[6])
-                moment_exp = float(parts5[7])
-                moment_dyncm = moment_mantissa * (10 ** moment_exp)
+                scalar_moment_mantissa = float(parts5[10])
+                strike1 = float(parts5[11])
+                dip1 = float(parts5[12])
+                rake1 = float(parts5[13])
+                strike2 = float(parts5[14])
+                dip2 = float(parts5[15])
+                rake2 = float(parts5[16])
+
+                # Validate: dip should be 0-90
+                if not (0 <= dip1 <= 90 and 0 <= dip2 <= 90):
+                    continue
+
+                # Scalar moment uses same exponent as moment tensor (line 4)
+                moment_dyncm = scalar_moment_mantissa * (10 ** mt_exponent)
                 moment_nm = moment_dyncm * 1e-7  # dyne-cm to N-m
-                # Mw = (2/3) * log10(M0) - 6.07 (in N-m)
+
                 import math
                 mw = (2.0 / 3.0) * math.log10(max(moment_nm, 1e10)) - 6.07
             except (ValueError, IndexError):
@@ -124,7 +129,6 @@ def parse_ndk(text: str) -> list[dict]:
             try:
                 date_str = parts1[1]  # YYYY/MM/DD
                 time_str = parts1[2]  # HH:MM:SS.S
-                # Handle various date formats
                 if "/" in date_str:
                     year, month, day = date_str.split("/")
                 else:
@@ -164,7 +168,6 @@ def parse_ndk(text: str) -> list[dict]:
 
         except Exception as e:
             logger.debug("Skipping NDK block at line %d: %s", i, e)
-            # Try to resync to next block
             i += 1
             continue
 

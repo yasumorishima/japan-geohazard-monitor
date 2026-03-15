@@ -149,10 +149,6 @@ def okada_stress(
     dip_r = math.radians(dip_deg)
     rake_r = math.radians(rake_deg)
 
-    # Slip vector in fault-local coordinates
-    slip_strike = slip_m * math.cos(rake_r)  # along-strike component
-    slip_dip = slip_m * math.sin(rake_r)     # up-dip component
-
     # Fault normal vector (pointing into footwall)
     n = [
         -math.sin(dip_r) * math.sin(strike_r),
@@ -173,28 +169,26 @@ def okada_stress(
     dx_m, dy_m, dz_m = dx_km * 1000, dy_km * 1000, dz_km * 1000
     rhat = [dx_m / r_m, dy_m / r_m, dz_m / r_m]
 
-    # Stress tensor from point double-couple (simplified)
-    # sigma_ij = (M0 / (4*pi*r^3)) * radiation_pattern
-    prefactor = m0 / (4 * math.pi * r_m**3)
-
-    # Compute moment tensor M_ij = M0 * (n_i * d_j + n_j * d_i) / 2
-    M = [[0.0] * 3 for _ in range(3)]
+    # Normalized moment tensor m_ij = (n_i * d_j + n_j * d_i) / 2
+    # M0 is factored out into the prefactor (avoid double-counting)
+    m = [[0.0] * 3 for _ in range(3)]
     for i in range(3):
         for j in range(3):
-            M[i][j] = m0 * (n[i] * d[j] + n[j] * d[i])
+            m[i][j] = (n[i] * d[j] + n[j] * d[i]) / 2
 
-    # Stress from moment tensor (far-field, Dahlen & Tromp 1998)
-    # sigma_ij = (1/(4*pi*r^3)) * [3*(M_kl*rhat_k*rhat_l)*rhat_i*rhat_j - M_ij]
-    # + isotropic corrections for Poisson ratio
-    M_rr = sum(M[k][l] * rhat[k] * rhat[l] for k in range(3) for l in range(3))
+    # Far-field stress from point double-couple:
+    # sigma_ij = (M0 / (4*pi*r^3)) * [3*(m_kl*rhat_k*rhat_l)*rhat_i*rhat_j - m_ij]
+    prefactor = m0 / (4 * math.pi * r_m**3)
+
+    m_rr = sum(m[k][l] * rhat[k] * rhat[l] for k in range(3) for l in range(3))
 
     stress = [[0.0] * 3 for _ in range(3)]
     for i in range(3):
         for j in range(3):
             stress[i][j] = prefactor * (
-                3 * M_rr * rhat[i] * rhat[j]
-                - M[i][j]
-                - (1 if i == j else 0) * M_rr
+                3 * m_rr * rhat[i] * rhat[j]
+                - m[i][j]
+                - (1 if i == j else 0) * m_rr
             )
 
     # For CFS on optimally oriented fault (King et al., 1994):
