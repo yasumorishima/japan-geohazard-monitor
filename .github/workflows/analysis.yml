@@ -96,6 +96,36 @@ jobs:
         run: |
           python3 scripts/validate_phase2.py
 
+      - name: Run LURR analysis (tidal stress response)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/lurr_analysis.py
+
+      - name: Run Natural Time analysis (criticality detection)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/natural_time_analysis.py
+
+      - name: Run Earthquake Nowcasting
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/nowcast_analysis.py
+
+      - name: Fetch MODIS LST (thermal anomaly discovery)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_modis_lst.py || echo "MODIS LST discovery completed (may need Earthdata auth for full download)"
+
+      - name: Fetch Kakioka ULF magnetic data
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_kakioka_ulf.py || echo "ULF fetch completed (may need WDC registration for full access)"
+
       - name: Run analysis
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
