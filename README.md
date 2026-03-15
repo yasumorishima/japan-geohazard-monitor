@@ -121,39 +121,45 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 
 ## Analysis Results (2011-2026, 8,072 earthquakes)
 
-### Epicenter TEC Anomaly
+### b-value (Gutenberg-Richter) — ✅ Confirmed precursor
 
-For each earthquake, TEC within 5° of the epicenter is compared between the 7-day baseline and the 24-hour precursor period.
+Sliding 30-day window maximum likelihood b-value. Normal ≈ 1.0; low values indicate stress buildup.
 
-| Magnitude | Events with TEC | Drops | Spikes | Mean σ |
+**Control experiment** (random dates vs. pre-earthquake):
+
+| Condition | n | Mean b | b < 0.7 | b < 0.5 |
 |---|---|---|---|---|
-| M7+ | 16 | 4 (25%) | **0 (0%)** | -0.59 |
-| M5+ | 952 | 122 (13%) | **0 (0%)** | -0.52 |
+| Random dates | 318 | 1.255 | 23% | 5% |
+| **Before M5+** | **290** | **0.667** | **87%** | **77%** |
+| **Before M7+** | **20** | **0.626** | **80%** | **15%** |
 
-**Zero spikes across 952 earthquakes.** TEC near the epicenter consistently drops before earthquakes, never rises. Direction is 100% consistent.
+b < 0.7 occurs 3.8× more often before M5+ earthquakes than on random dates. This is not chance.
 
-Notable events:
-- M7.4 Taiwan Hualien (2024-04): σ=-1.29, TEC dropped 63% (62→23 TECU)
-- M7.0 Kumamoto (2016-04): σ=-1.04, TEC dropped 40% (18→11 TECU)
-- M9.1 Tohoku (2011-03): TEC dip on 3/5-6 (5 days before), spike on earthquake day
+Individual major earthquakes:
 
-### Gutenberg-Richter b-value
-
-Sliding 30-day window maximum likelihood b-value. Normal ≈ 1.0; values < 0.7 indicate stress buildup.
-
-| Earthquake | b-value before | Assessment |
+| Earthquake | b-value | Random baseline |
 |---|---|---|
-| M9.1 Tohoku (2011-03) | **0.512** | Anomalously low |
-| M7.0 Kumamoto (2016-04) | 0.71 → **0.586** | Decreasing |
-| M6.6 Hokkaido Iburi (2018-09) | **0.435** | Extremely low |
-| M7.5 Noto (2024-01) | **0.65 → 0.68** | Low |
-| M7.6 Aomori (2025-12) | **0.521 → 0.673** | Anomalously low |
+| M9.1 Tohoku (2011-03) | **0.512** | 1.255 |
+| M6.6 Hokkaido Iburi (2018-09) | **0.435** | 1.255 |
+| M7.6 Aomori (2025-12) | **0.521** | 1.255 |
+| M7.0 Kumamoto (2016-04) | **0.586** | 1.255 |
+| M7.5 Noto (2024-01) | **0.65** | 1.255 |
 
-5 of 6 major earthquakes had b < 0.7 beforehand.
+### Epicenter TEC — ⚠️ Inconclusive (needs more data)
 
-### Global Lag Correlation
+TEC within 5° of epicenter, 7-day baseline vs. 24h precursor.
 
-Pearson correlation between hourly earthquake count and each metric at lags -48h to 0h.
+**Control experiment**:
+
+| Condition | n | Mean σ | Negative % | Drops (σ<-1) | Spikes (σ>+1) |
+|---|---|---|---|---|---|
+| Random loc+time | 34 | -0.761 | 97% | 15% | 0% |
+| Before M5+ | 400 | -0.075 | 31% | 0% | 0% |
+| Before M7+ | 16 | -0.596 | 81% | 25% | 0% |
+
+Random dates also show TEC drops, so the signal may not be earthquake-specific. However, random sample n=34 is too small for a definitive conclusion (TEC backfill only covers ±7 days around major events, limiting random sampling).
+
+### Global Lag Correlation — ❌ No signal
 
 | Metric | M7+ peak r | M5+ peak r | Verdict |
 |---|---|---|---|
