@@ -171,6 +171,28 @@ async def init_db():
             ON tec(epoch)
         """)
 
+        # Phase 4: GEONET crustal deformation (F5 daily solutions)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS geonet (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                station_id TEXT NOT NULL,
+                station_name TEXT,
+                observed_at TEXT NOT NULL,
+                latitude REAL NOT NULL,
+                longitude REAL NOT NULL,
+                height_m REAL NOT NULL,
+                dx_mm REAL,
+                dy_mm REAL,
+                dz_mm REAL,
+                received_at TEXT NOT NULL,
+                UNIQUE(station_id, observed_at)
+            )
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_geonet_time
+            ON geonet(observed_at)
+        """)
+
         await db.commit()
     logger.info("Database initialized: %s", DB_PATH)
 

@@ -31,6 +31,7 @@ AMEDAS_DATA_URL = "https://www.jma.go.jp/bosai/amedas/data/map/{timestamp}.json"
 VOLCANO_INTERVAL = 900    # 15 min
 SST_INTERVAL = 21600      # 6 hours
 TEC_INTERVAL = 7200       # 2 hours
+GEONET_INTERVAL = 86400   # 24 hours (daily F5 solutions)
 
 # NOAA SWPC Geomagnetic URLs
 GOES_MAG_URL = "https://services.swpc.noaa.gov/json/goes/primary/magnetometers-1-day.json"
@@ -47,3 +48,8 @@ SST_URL = ("https://coastwatch.pfeg.noaa.gov/erddap/griddap/jplMURSST41.json"
 # CODE IONEX TEC (predicted, updated daily)
 # File naming: COD0OPSPRD_{YYYY}{DOY}0000_01D_01H_GIM.INX.gz
 TEC_FTP_BASE = "http://ftp.aiub.unibe.ch/CODE"
+
+# GEONET SFTP (GSI terras)
+GSI_SFTP_HOST = "terras.gsi.go.jp"
+GSI_SFTP_USER = "yasumori"
+GSI_SFTP_PATH = "/data/coordinates_F5/GPS"

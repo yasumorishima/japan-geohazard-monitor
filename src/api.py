@@ -117,6 +117,36 @@ async def sst_data():
     return {"grid": grid, "count": len(grid), "observed_at": latest_time}
 
 
+@app.get("/api/geonet")
+async def geonet_data(days: int = 7):
+    """Return GEONET displacement data for the latest available day."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        # Get latest observed_at per station
+        rows = await db.execute_fetchall(
+            """SELECT station_id, station_name, observed_at,
+                      latitude, longitude, height_m,
+                      dx_mm, dy_mm, dz_mm
+               FROM geonet
+               WHERE observed_at = (SELECT MAX(observed_at) FROM geonet)"""
+        )
+    stations = [
+        {
+            "id": r["station_id"],
+            "name": r["station_name"],
+            "time": r["observed_at"],
+            "lat": r["latitude"],
+            "lon": r["longitude"],
+            "height": r["height_m"],
+            "dx": r["dx_mm"],
+            "dy": r["dy_mm"],
+            "dz": r["dz_mm"],
+        }
+        for r in rows
+    ]
+    return {"stations": stations, "count": len(stations)}
+
+
 @app.get("/api/tec")
 async def tec_data(hours: int = 24):
     """Return TEC grid for the most recent epoch within the given window."""

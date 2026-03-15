@@ -11,6 +11,7 @@ from collectors.earthquake_jma import JMACollector
 from collectors.earthquake_p2p import P2PQuakeCollector
 from collectors.earthquake_usgs import USGSCollector
 from collectors.geomag import GeomagCollector
+from collectors.geonet import GEONETCollector
 from collectors.sst import SSTCollector
 from collectors.tec import TECCollector
 from collectors.volcano import VolcanoCollector
@@ -40,6 +41,7 @@ async def main():
         VolcanoCollector(),
         SSTCollector(),
         TECCollector(),
+        GEONETCollector(),
     ]
 
     async with aiohttp.ClientSession() as session:
