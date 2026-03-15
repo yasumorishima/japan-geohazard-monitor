@@ -256,6 +256,15 @@
                 <div class="corr-chart-box"><h3>GOES Magnetic Field (nT)</h3><canvas id="chart-goes"></canvas></div>
                 <div class="corr-chart-box"><h3>Ionosphere TEC (TECU)</h3><canvas id="chart-tec"></canvas></div>
                 <div class="corr-chart-box"><h3>Mean Pressure (hPa)</h3><canvas id="chart-pressure"></canvas></div>
+                <div class="corr-chart-box" id="anomaly-box" style="display:none">
+                    <h3>Detected Anomalies (±2σ)</h3>
+                    <div id="anomaly-list" style="font-size:12px;max-height:120px;overflow-y:auto;line-height:1.6"></div>
+                </div>
+                <div class="corr-chart-box" id="lag-box" style="display:none">
+                    <h3>Lag Correlation (metric → earthquake)</h3>
+                    <canvas id="chart-lag" style="height:100px !important"></canvas>
+                    <div id="lag-peaks" style="font-size:11px;margin-top:6px;color:#aaa"></div>
+                </div>
             </div>
         </div>
     </div>
@@ -530,18 +539,90 @@
             corrCharts.goes = makeChart('chart-goes', '#4fc3f7', 'B total');
             corrCharts.tec = makeChart('chart-tec', '#9c27b0', 'Mean TEC');
             corrCharts.pressure = makeChart('chart-pressure', '#66bb6a', 'Pressure');
+
+            // Lag correlation chart (non-time X axis)
+            const lagCtx = document.getElementById('chart-lag').getContext('2d');
+            corrCharts.lag = new Chart(lagCtx, {
+                type: 'line',
+                data: { datasets: [
+                    { data:[], borderColor:'#ff9800', label:'Kp', pointRadius:0, borderWidth:1.5, tension:0.3 },
+                    { data:[], borderColor:'#4fc3f7', label:'GOES', pointRadius:0, borderWidth:1.5, tension:0.3 },
+                    { data:[], borderColor:'#9c27b0', label:'TEC', pointRadius:0, borderWidth:1.5, tension:0.3 },
+                    { data:[], borderColor:'#66bb6a', label:'Pressure', pointRadius:0, borderWidth:1.5, tension:0.3 },
+                ] },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: true, labels: { color: '#888', font: { size: 10 } } } },
+                    scales: {
+                        x: { type: 'linear', title: { display: true, text: 'Lag (hours, negative = precursor)', color: '#888', font: { size: 10 } },
+                             ticks: { color: '#666', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                        y: { title: { display: true, text: 'Correlation (r)', color: '#888', font: { size: 10 } },
+                             ticks: { color: '#888', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.08)' },
+                             min: -1, max: 1 },
+                    },
+                },
+            });
         }
 
         async function loadCorrelation() {
             const days = document.getElementById('corr-days').value;
             try {
+                // Time-series data
                 const data = await (await fetch(`/api/correlation?days=${days}`)).json();
                 corrCharts.eq.data.datasets[0].data = data.earthquakes.map(d => ({ x: d.time, y: d.count }));
                 corrCharts.kp.data.datasets[0].data = data.kp.map(d => ({ x: d.time, y: d.kp }));
                 corrCharts.goes.data.datasets[0].data = data.goes.map(d => ({ x: d.time, y: d.total }));
                 corrCharts.tec.data.datasets[0].data = data.tec.map(d => ({ x: d.time, y: d.tec }));
                 corrCharts.pressure.data.datasets[0].data = data.pressure.map(d => ({ x: d.time, y: d.hpa }));
-                Object.values(corrCharts).forEach(c => c.update('none'));
+                ['eq','kp','goes','tec','pressure'].forEach(k => corrCharts[k].update('none'));
+
+                // Anomaly detection
+                const anomData = await (await fetch(`/api/anomalies?days=${days}`)).json();
+                const anomBox = document.getElementById('anomaly-box');
+                const anomList = document.getElementById('anomaly-list');
+                const allAnoms = [];
+                for (const [metric, info] of Object.entries(anomData)) {
+                    for (const a of (info.anomalies || [])) {
+                        allAnoms.push({ metric, ...a, unit: info.unit });
+                    }
+                }
+                allAnoms.sort((a, b) => b.time < a.time ? -1 : 1);
+                if (allAnoms.length > 0) {
+                    anomBox.style.display = 'block';
+                    const colors = { tec:'#9c27b0', kp:'#ff9800', goes:'#4fc3f7', pressure:'#66bb6a' };
+                    anomList.innerHTML = allAnoms.slice(0, 30).map(a => {
+                        const c = colors[a.metric] || '#888';
+                        const arrow = a.direction === 'high' ? '&#9650;' : '&#9660;';
+                        const t = new Date(a.time).toLocaleString('ja-JP', { timeZone:'Asia/Tokyo', month:'numeric', day:'numeric', hour:'numeric', minute:'numeric' });
+                        return `<div style="border-left:3px solid ${c};padding-left:6px;margin-bottom:3px">
+                            <span style="color:${c};font-weight:700">${a.metric.toUpperCase()}</span>
+                            ${arrow} ${a.value} ${a.unit} (${a.sigma > 0 ? '+' : ''}${a.sigma}σ) — ${t}</div>`;
+                    }).join('');
+                } else {
+                    anomBox.style.display = 'block';
+                    anomList.innerHTML = '<div style="color:#666">No anomalies detected in this period.</div>';
+                }
+
+                // Lag correlation
+                const lagData = await (await fetch(`/api/lag_correlation?days=${Math.max(days, 14)}`)).json();
+                const lagBox = document.getElementById('lag-box');
+                lagBox.style.display = 'block';
+                const metricOrder = ['kp', 'goes', 'tec', 'pressure'];
+                metricOrder.forEach((m, idx) => {
+                    const corrs = lagData[m]?.correlations || [];
+                    corrCharts.lag.data.datasets[idx].data = corrs.map(c => ({ x: c.lag, y: c.r }));
+                });
+                corrCharts.lag.update('none');
+
+                // Show peak correlations
+                const peaksEl = document.getElementById('lag-peaks');
+                const peakLabels = { kp:'Kp', goes:'GOES', tec:'TEC', pressure:'Pressure' };
+                peaksEl.innerHTML = metricOrder.map(m => {
+                    const peak = lagData[m]?.peak;
+                    if (!peak) return '';
+                    return `<strong>${peakLabels[m]}</strong>: r=${peak.r} at lag=${peak.lag}h`;
+                }).filter(Boolean).join(' | ');
+
             } catch (e) { console.error('Correlation:', e); }
         }
 

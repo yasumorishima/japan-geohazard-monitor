@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from analysis import compute_lag_correlation, detect_anomalies
 from config import DB_PATH
 
 app = FastAPI(title="Japan Geohazard Monitor")
@@ -346,6 +347,18 @@ async def correlation_data(days: int = 7):
         "tec": [{"time": r[0], "tec": r[1]} for r in tec_rows],
         "pressure": [{"time": r[0], "hpa": r[1]} for r in pressure_rows],
     }
+
+
+@app.get("/api/anomalies")
+async def anomalies(days: int = 7):
+    """Return detected anomalies across all metrics."""
+    return await detect_anomalies(days)
+
+
+@app.get("/api/lag_correlation")
+async def lag_correlation(days: int = 30, max_lag: int = 48):
+    """Return lagged cross-correlation between metrics and earthquake frequency."""
+    return await compute_lag_correlation(days, max_lag)
 
 
 @app.get("/api/stats")
