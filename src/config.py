@@ -1,6 +1,8 @@
 """Configuration constants for the Japan Geohazard Monitor."""
 
-DB_PATH = "/app/data/geohazard.db"
+import os
+
+DB_PATH = os.environ.get("GEOHAZARD_DB_PATH", "/app/data/geohazard.db")
 
 # Japan bounding box for filtering
 JAPAN_BBOX = {

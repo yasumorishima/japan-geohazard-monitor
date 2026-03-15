@@ -33,29 +33,28 @@ jobs:
         run: |
           pip install aiohttp aiosqlite
 
-      - name: Download latest data from RPi5
-        env:
-          RPI_HOST: ${{ secrets.RPI_SSH_HOST }}
-          RPI_USER: ${{ secrets.RPI_SSH_USER }}
-          RPI_KEY: ${{ secrets.RPI_SSH_KEY }}
-        run: |
-          # If RPi5 SSH is configured, download DB snapshot
-          # Otherwise, build DB from public APIs
-          echo "Building analysis database from public APIs..."
-
       - name: Fetch earthquake data (M3+, 2011-2026)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
+          mkdir -p data
           python3 scripts/fetch_earthquakes.py
 
       - name: Fetch TEC data (major events ±7 days)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
           python3 scripts/fetch_tec.py
 
       - name: Fetch Kp data (2011-2026)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
           python3 scripts/fetch_kp.py
 
       - name: Run analysis
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
           python3 scripts/run_analysis.py \
             --min-mag ${{ github.event.inputs.min_mag || '5.0' }} \
