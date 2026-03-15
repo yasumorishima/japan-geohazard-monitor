@@ -138,6 +138,12 @@ jobs:
         run: |
           python3 scripts/modis_lst_analysis.py
 
+      - name: Run prospective prediction analysis
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/prospective_analysis.py
+
       - name: Run analysis
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
