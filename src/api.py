@@ -252,6 +252,72 @@ async def geomag_kp(days: int = 7):
     }
 
 
+@app.get("/api/correlation")
+async def correlation_data(days: int = 7):
+    """Return time-aligned data for the correlation panel.
+
+    Returns hourly earthquake counts, 3-hourly Kp, hourly TEC mean,
+    and hourly mean pressure — all within the given day window.
+    """
+    cutoff = f"-{days}"
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Hourly earthquake count
+        eq_rows = await db.execute_fetchall(
+            """SELECT strftime('%Y-%m-%dT%H:00:00Z', occurred_at) as hour,
+                      COUNT(*) as count
+               FROM earthquakes
+               WHERE occurred_at > datetime('now', ? || ' days')
+               GROUP BY hour ORDER BY hour""",
+            (cutoff,),
+        )
+
+        # Kp index (already 3-hourly)
+        kp_rows = await db.execute_fetchall(
+            """SELECT time_tag, kp FROM geomag_kp
+               WHERE time_tag > datetime('now', ? || ' days')
+               ORDER BY time_tag""",
+            (cutoff,),
+        )
+
+        # GOES magnetic field total (hourly average)
+        goes_rows = await db.execute_fetchall(
+            """SELECT strftime('%Y-%m-%dT%H:00:00Z', time_tag) as hour,
+                      AVG(total) as avg_total
+               FROM geomag_goes
+               WHERE time_tag > datetime('now', ? || ' days')
+               GROUP BY hour ORDER BY hour""",
+            (cutoff,),
+        )
+
+        # TEC mean over Japan region (per epoch)
+        tec_rows = await db.execute_fetchall(
+            """SELECT epoch, AVG(tec_tecu) as avg_tec
+               FROM tec
+               WHERE epoch > datetime('now', ? || ' days')
+               GROUP BY epoch ORDER BY epoch""",
+            (cutoff,),
+        )
+
+        # Mean pressure (hourly, from AMeDAS stations that have pressure)
+        pressure_rows = await db.execute_fetchall(
+            """SELECT strftime('%Y-%m-%dT%H:00:00Z', observed_at) as hour,
+                      AVG(pressure_hpa) as avg_pressure
+               FROM amedas
+               WHERE observed_at > datetime('now', ? || ' days')
+                 AND pressure_hpa IS NOT NULL
+               GROUP BY hour ORDER BY hour""",
+            (cutoff,),
+        )
+
+    return {
+        "earthquakes": [{"time": r[0], "count": r[1]} for r in eq_rows],
+        "kp": [{"time": r[0], "kp": r[1]} for r in kp_rows],
+        "goes": [{"time": r[0], "total": r[1]} for r in goes_rows],
+        "tec": [{"time": r[0], "tec": r[1]} for r in tec_rows],
+        "pressure": [{"time": r[0], "hpa": r[1]} for r in pressure_rows],
+    }
+
+
 @app.get("/api/stats")
 async def stats():
     """Return basic statistics."""
