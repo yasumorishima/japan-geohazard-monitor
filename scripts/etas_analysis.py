@@ -1,20 +1,18 @@
-"""ETAS (Epidemic Type Aftershock Sequence) analysis.
+"""Seismicity rate anomaly analysis (model-free + constrained ETAS).
 
-Fits an ETAS model to the earthquake catalog and tests whether large
-earthquakes preferentially occur during periods of elevated seismicity
-rate relative to the ETAS expectation (i.e., anomalous quiescence or
-activation that the ETAS model doesn't explain).
+Two complementary approaches:
+1. Model-free: Compare observed M3+ rate before M5+ events with
+   the long-term regional average rate (no parameter fitting needed)
+2. Constrained ETAS: Use literature values for Japan (Ogata 1998)
+   to compute expected rate, then check residuals
 
-Model: λ(t,x,y) = μ(x,y) + Σ K * exp(α(Mi - Mc)) / (t - ti + c)^p
-  - μ: background rate
-  - K, α, c, p: aftershock productivity parameters
-  - Sum over all prior events i with ti < t
-
-Reference: Ogata (1988, 1998), Zhuang et al. (2002)
+Both test whether M5+ events are preceded by anomalous seismicity
+(activation or quiescence) that isn't explained by baseline rates.
 """
 
 import argparse
 import asyncio
+import bisect
 import json
 import logging
 import math
@@ -33,109 +31,25 @@ logger = logging.getLogger(__name__)
 
 RESULTS_DIR = Path(__file__).parent.parent / "results"
 
-# ETAS default parameters (Japan, Ogata 1998 estimates)
-DEFAULT_PARAMS = {
-    "mu": 0.5,      # background rate (events/day for M5+)
-    "K": 0.04,      # aftershock productivity
-    "alpha": 1.2,   # magnitude scaling
-    "c": 0.01,      # time offset (days)
-    "p": 1.1,       # temporal decay exponent (Omori)
-    "Mc": 3.0,      # completeness magnitude
+# Constrained ETAS parameters from Ogata (1998) / Ogata & Zhuang (2006)
+# for Japan M3+ catalog
+ETAS_PARAMS = {
+    "mu": None,  # Estimated from data (long-term average - aftershock fraction)
+    "K": 0.04,   # Aftershock productivity (literature range: 0.01-0.05)
+    "alpha": 1.0, # Magnitude scaling (literature: 0.8-1.2)
+    "c": 0.01,   # Omori offset in days (literature: 0.005-0.05)
+    "p": 1.1,    # Omori exponent (literature: 1.0-1.3, must be >1 for convergence)
+    "Mc": 3.0,
 }
 
 DEG_TO_KM = 111.32
 
 
-def etas_rate(t_days: float, events_before: list, params: dict) -> float:
-    """Compute ETAS conditional intensity at time t.
-
-    events_before: list of (time_days, magnitude) for events before t.
-    Returns: expected rate (events/day).
-    """
-    mu = params["mu"]
-    K = params["K"]
-    alpha = params["alpha"]
-    c = params["c"]
-    p = params["p"]
-    Mc = params["Mc"]
-
-    rate = mu
-    for ti, mi in events_before:
-        dt = t_days - ti
-        if dt <= 0:
-            continue
-        rate += K * math.exp(alpha * (mi - Mc)) / (dt + c) ** p
-
-    return rate
-
-
-def fit_etas_mle(events: list, params0: dict, max_iter: int = 50) -> dict:
-    """Fit ETAS parameters by approximate maximum likelihood.
-
-    Uses grid search over key parameters (K, alpha, c, p) with
-    fixed mu estimated from long-term average.
-
-    events: list of (time_days, magnitude) sorted by time.
-    """
-    if len(events) < 50:
-        return params0
-
-    # Estimate mu from data: events in first/last quarters (less aftershock contamination)
-    T = events[-1][0] - events[0][0]
-    if T < 30:
-        return params0
-
-    # Count events in quiet periods (background estimate)
-    quarter = T / 4
-    n_q1 = sum(1 for t, m in events if t < events[0][0] + quarter)
-    n_q4 = sum(1 for t, m in events if t > events[-1][0] - quarter)
-    mu_est = (n_q1 + n_q4) / (2 * quarter)
-
-    best_params = dict(params0)
-    best_params["mu"] = max(mu_est, 0.01)
-    best_ll = -1e18
-
-    # Grid search over (K, alpha, p) — c is less sensitive
-    K_grid = [0.01, 0.02, 0.04, 0.08, 0.15]
-    alpha_grid = [0.8, 1.0, 1.2, 1.5, 2.0]
-    p_grid = [0.9, 1.0, 1.1, 1.2, 1.3]
-
-    for K in K_grid:
-        for alpha in alpha_grid:
-            for p in p_grid:
-                params = {
-                    "mu": best_params["mu"],
-                    "K": K, "alpha": alpha,
-                    "c": 0.01, "p": p,
-                    "Mc": params0["Mc"],
-                }
-                # Log-likelihood (truncated for speed)
-                ll = 0.0
-                sample_step = max(1, len(events) // 200)
-                for idx in range(10, len(events), sample_step):
-                    ti, mi = events[idx]
-                    rate = etas_rate(ti, events[:idx], params)
-                    if rate > 0:
-                        ll += math.log(rate)
-                    else:
-                        ll -= 100  # penalty
-
-                if ll > best_ll:
-                    best_ll = ll
-                    best_params = dict(params)
-
-    logger.info("  ETAS fit: mu=%.3f K=%.3f α=%.1f c=%.3f p=%.1f (LL=%.1f)",
-                best_params["mu"], best_params["K"], best_params["alpha"],
-                best_params["c"], best_params["p"], best_ll)
-    return best_params
-
-
 async def run_etas_analysis(min_mag_target: float = 5.0) -> dict:
-    """Run ETAS analysis on earthquake catalog."""
-    logger.info("=== ETAS Analysis (target M%.1f+) ===", min_mag_target)
+    """Run seismicity rate anomaly analysis."""
+    logger.info("=== Seismicity Rate Anomaly Analysis (target M%.1f+) ===", min_mag_target)
 
     async with aiosqlite.connect(DB_PATH) as db:
-        # Load all M3+ events for ETAS fitting
         eq_rows = await db.execute_fetchall(
             "SELECT occurred_at, magnitude, latitude, longitude, depth_km "
             "FROM earthquakes WHERE magnitude >= 3.0 AND magnitude IS NOT NULL "
@@ -160,172 +74,235 @@ async def run_etas_analysis(min_mag_target: float = 5.0) -> dict:
         return {"error": "Insufficient data", "n": len(events)}
 
     t0 = events[0]["time"]
-    # Convert to days since first event
     for e in events:
         e["t_days"] = (e["time"] - t0).total_seconds() / 86400
 
-    events_td = [(e["t_days"], e["mag"]) for e in events]
-    T_total = events_td[-1][0] - events_td[0][0]
-
-    logger.info("  Catalog: %d M3+ events over %.0f days", len(events), T_total)
-
-    # Fit ETAS parameters
-    params = fit_etas_mle(events_td, DEFAULT_PARAMS)
-
-    # ---------------------------------------------------------------
-    # Compute ETAS rate and residuals at each M5+ event
-    # ---------------------------------------------------------------
+    T_total = events[-1]["t_days"] - events[0]["t_days"]
     target_events = [e for e in events if e["mag"] >= min_mag_target]
-    logger.info("  Target events (M%.1f+): %d", min_mag_target, len(target_events))
 
-    # For each target event, compute:
-    # 1. ETAS expected count in preceding 7 days (integral of rate)
-    # 2. Observed count in preceding 7 days
-    # 3. Rate ratio = observed / expected
+    logger.info("  Catalog: %d M3+ events over %.0f days, %d M%.1f+ targets",
+                len(events), T_total, len(target_events), min_mag_target)
 
-    import bisect
-    all_times = [t for t, m in events_td]
+    # Pre-compute time index for fast lookups
+    all_times = [e["t_days"] for e in events]
 
-    def etas_expected_count(t_target, idx_in_catalog, window_days=7):
-        """Approximate expected M3+ count in [t-window, t] by sampling ETAS rate."""
-        n_samples = 7  # Trapezoidal samples over 7-day window
-        dt = window_days / n_samples
-        total = 0.0
-        for k in range(n_samples):
-            t_sample = t_target - window_days + (k + 0.5) * dt
-            # Use bisect for O(log N) cutoff instead of O(N) list comprehension
-            t_cutoff = t_sample - 90
-            cutoff_idx = bisect.bisect_left(all_times, t_cutoff)
-            recent = events_td[cutoff_idx:idx_in_catalog]
-            rate = etas_rate(t_sample, recent, params)
-            total += rate * dt
-        return total
+    # ---------------------------------------------------------------
+    # Approach 1: Model-free regional rate comparison
+    # ---------------------------------------------------------------
+    logger.info("  --- Model-free rate analysis ---")
 
-    rate_ratios = []
-    for i, te in enumerate(target_events):
-        idx_in_catalog = next(
-            (j for j, e in enumerate(events) if e["time"] == te["time"]),
-            None
-        )
-        if idx_in_catalog is None or idx_in_catalog < 50:
+    # Long-term average M3+ rate (events/day, full catalog)
+    global_rate = len(events) / T_total
+
+    # For each M5+ event: count M3+ in preceding 7 and 30 days
+    # Compare with long-term rate in same spatial region (2° box)
+    def regional_rate(lat, lon, radius_deg=2.0):
+        """Long-term M3+ rate in a spatial box (events/day)."""
+        n = sum(1 for e in events
+                if abs(e["lat"] - lat) <= radius_deg
+                and abs(e["lon"] - lon) <= radius_deg)
+        return n / T_total
+
+    def observed_count(t_target, window_days, lat=None, lon=None, radius_deg=None):
+        """Count M3+ events in [t-window, t]."""
+        t_start = t_target - window_days
+        idx_start = bisect.bisect_left(all_times, t_start)
+        idx_end = bisect.bisect_left(all_times, t_target)
+        if lat is None:
+            return idx_end - idx_start
+        # Spatial filter
+        return sum(1 for i in range(idx_start, idx_end)
+                   if abs(events[i]["lat"] - lat) <= radius_deg
+                   and abs(events[i]["lon"] - lon) <= radius_deg)
+
+    rate_results_7d = []
+    rate_results_30d = []
+
+    for te in target_events:
+        if te["t_days"] < 35:  # Need at least 35 days of history
             continue
 
-        # ETAS expected count in preceding 7 days
-        expected = etas_expected_count(te["t_days"], idx_in_catalog)
+        # 7-day window, regional (2° box)
+        obs_7d = observed_count(te["t_days"], 7, te["lat"], te["lon"], 2.0)
+        exp_7d = regional_rate(te["lat"], te["lon"], 2.0) * 7
+        ratio_7d = obs_7d / max(exp_7d, 0.1)
 
-        # Observed count: M3+ events in preceding 7 days
-        t_start = te["t_days"] - 7
-        observed = sum(1 for t, m in events_td if t_start <= t < te["t_days"])
+        # 30-day window, regional
+        obs_30d = observed_count(te["t_days"], 30, te["lat"], te["lon"], 2.0)
+        exp_30d = regional_rate(te["lat"], te["lon"], 2.0) * 30
+        ratio_30d = obs_30d / max(exp_30d, 0.1)
 
-        # Rate ratio (observed / expected counts)
-        ratio = observed / max(expected, 0.1)
-
-        rate_ratios.append({
+        rate_results_7d.append({
             "time": te["time"].isoformat()[:16],
             "mag": te["mag"],
-            "lat": te["lat"],
-            "lon": te["lon"],
-            "etas_expected_7d": round(expected, 1),
-            "observed_7d": observed,
-            "rate_ratio": round(ratio, 3),
-            "log_ratio": round(math.log10(max(ratio, 0.001)), 3),
+            "observed": obs_7d,
+            "expected": round(exp_7d, 1),
+            "ratio": round(ratio_7d, 3),
+        })
+        rate_results_30d.append({
+            "ratio": round(ratio_30d, 3),
         })
 
-        if (i + 1) % 500 == 0:
-            logger.info("    Processed %d/%d target events", i + 1, len(target_events))
-
-    if not rate_ratios:
-        return {"error": "No rate ratios computed"}
-
-    # ---------------------------------------------------------------
-    # Random baseline: compute rate ratio at random times
-    # ---------------------------------------------------------------
+    # Random baseline
     random.seed(42)
-    random_ratios = []
-    for ri in range(500):
-        t_rand = events_td[0][0] + 100 + random.random() * (T_total - 200)
-        idx = next((j for j, (t, m) in enumerate(events_td) if t >= t_rand), len(events_td) - 1)
-        if idx < 50:
-            continue
+    rand_ratios_7d = []
+    rand_ratios_30d = []
+    for _ in range(500):
+        rt = 35 + random.random() * (T_total - 70)
+        rlat = 25 + random.random() * 20
+        rlon = 125 + random.random() * 25
 
-        expected = etas_expected_count(t_rand, idx)
-        t_start = t_rand - 7
-        observed = sum(1 for t, m in events_td if t_start <= t < t_rand)
-        ratio = observed / max(expected, 0.1)
-        random_ratios.append(round(ratio, 3))
+        obs_7d = observed_count(rt, 7, rlat, rlon, 2.0)
+        exp_7d = regional_rate(rlat, rlon, 2.0) * 7
+        ratio_7d = obs_7d / max(exp_7d, 0.1)
+        rand_ratios_7d.append(round(ratio_7d, 3))
 
-    # ---------------------------------------------------------------
-    # Statistical comparison
-    # ---------------------------------------------------------------
-    eq_ratios = [r["rate_ratio"] for r in rate_ratios]
+        obs_30d = observed_count(rt, 30, rlat, rlon, 2.0)
+        exp_30d = regional_rate(rlat, rlon, 2.0) * 30
+        ratio_30d = obs_30d / max(exp_30d, 0.1)
+        rand_ratios_30d.append(round(ratio_30d, 3))
 
-    def ratio_stats(values, label):
+    def ratio_stats(values):
         if not values:
             return {"n": 0}
         s = sorted(values)
         n = len(s)
-        mean = sum(s) / n
         return {
             "n": n,
-            "mean": round(mean, 3),
+            "mean": round(sum(s) / n, 3),
             "median": round(s[n // 2], 3),
             "p10": round(s[int(n * 0.1)], 3),
-            "p25": round(s[int(n * 0.25)], 3),
-            "p75": round(s[int(n * 0.75)], 3),
             "p90": round(s[int(n * 0.9)], 3),
-            "gt_1_pct": round(sum(1 for v in s if v > 1.0) / n * 100, 1),
             "gt_2_pct": round(sum(1 for v in s if v > 2.0) / n * 100, 1),
+            "gt_3_pct": round(sum(1 for v in s if v > 3.0) / n * 100, 1),
             "lt_05_pct": round(sum(1 for v in s if v < 0.5) / n * 100, 1),
+            "lt_03_pct": round(sum(1 for v in s if v < 0.3) / n * 100, 1),
         }
 
-    eq_stats = ratio_stats(eq_ratios, "earthquake")
-    rand_stats = ratio_stats(random_ratios, "random")
+    eq_7d_ratios = [r["ratio"] for r in rate_results_7d]
+    eq_30d_ratios = [r["ratio"] for r in rate_results_30d]
 
-    # Quiescence test: do large earthquakes follow periods of unusual quiet?
-    quiescence_eq = sum(1 for r in eq_ratios if r < 0.5) / len(eq_ratios) * 100
-    quiescence_rand = sum(1 for r in random_ratios if r < 0.5) / len(random_ratios) * 100 if random_ratios else 0
+    eq_7d_stats = ratio_stats(eq_7d_ratios)
+    rand_7d_stats = ratio_stats(rand_ratios_7d)
+    eq_30d_stats = ratio_stats(eq_30d_ratios)
+    rand_30d_stats = ratio_stats(rand_ratios_30d)
 
-    # Activation test: do large earthquakes follow periods of unusual activity?
-    activation_eq = sum(1 for r in eq_ratios if r > 2.0) / len(eq_ratios) * 100
-    activation_rand = sum(1 for r in random_ratios if r > 2.0) / len(random_ratios) * 100 if random_ratios else 0
+    # Activation lift
+    act_7d_lift = eq_7d_stats["gt_2_pct"] / max(rand_7d_stats["gt_2_pct"], 0.1)
+    qui_7d_lift = eq_7d_stats["lt_05_pct"] / max(rand_7d_stats["lt_05_pct"], 0.1)
 
+    logger.info("  7-day rate ratio — EQ: mean=%.2f >2=%.1f%% <0.5=%.1f%% | Rand: mean=%.2f >2=%.1f%% <0.5=%.1f%%",
+                eq_7d_stats["mean"], eq_7d_stats["gt_2_pct"], eq_7d_stats["lt_05_pct"],
+                rand_7d_stats["mean"], rand_7d_stats["gt_2_pct"], rand_7d_stats["lt_05_pct"])
+    logger.info("  Activation lift (>2x): %.2f | Quiescence lift (<0.5x): %.2f", act_7d_lift, qui_7d_lift)
+
+    # ---------------------------------------------------------------
+    # Approach 2: Constrained ETAS residuals
+    # ---------------------------------------------------------------
+    logger.info("  --- Constrained ETAS analysis ---")
+
+    # Estimate mu from data: total rate minus estimated aftershock fraction
+    # Aftershock fraction ~60-70% for Japan (Ogata 1998)
+    mu_est = global_rate * 0.35  # 35% background
+    params = dict(ETAS_PARAMS)
+    params["mu"] = mu_est
+
+    events_td = [(e["t_days"], e["mag"]) for e in events]
+
+    def etas_rate(t_days, recent_events):
+        """Compute ETAS rate at time t from recent events."""
+        rate = params["mu"]
+        K, alpha, c, p, Mc = params["K"], params["alpha"], params["c"], params["p"], params["Mc"]
+        for ti, mi in recent_events:
+            dt = t_days - ti
+            if dt <= 0:
+                continue
+            rate += K * math.exp(alpha * (mi - Mc)) / (dt + c) ** p
+        return rate
+
+    def etas_expected_7d(t_target, idx_in_catalog):
+        """Expected M3+ count in 7 days before target using ETAS."""
+        n_samples = 7
+        dt = 7.0 / n_samples
+        total = 0.0
+        for k in range(n_samples):
+            t_sample = t_target - 7 + (k + 0.5) * dt
+            t_cutoff = t_sample - 90
+            cutoff_idx = bisect.bisect_left(all_times, t_cutoff)
+            # Only use events before t_sample
+            sample_idx = bisect.bisect_left(all_times, t_sample)
+            recent = events_td[cutoff_idx:min(sample_idx, idx_in_catalog)]
+            rate = etas_rate(t_sample, recent)
+            total += rate * dt
+        return total
+
+    etas_ratios = []
+    for te in target_events:
+        if te["t_days"] < 100:
+            continue
+        idx = bisect.bisect_left(all_times, te["t_days"])
+        expected = etas_expected_7d(te["t_days"], idx)
+        t_start = te["t_days"] - 7
+        idx_start = bisect.bisect_left(all_times, t_start)
+        observed = idx - idx_start
+        ratio = observed / max(expected, 0.1)
+        etas_ratios.append(round(ratio, 3))
+
+    etas_rand_ratios = []
+    random.seed(99)
+    for _ in range(500):
+        rt = 100 + random.random() * (T_total - 200)
+        idx = bisect.bisect_left(all_times, rt)
+        if idx < 50:
+            continue
+        expected = etas_expected_7d(rt, idx)
+        t_start = rt - 7
+        idx_start = bisect.bisect_left(all_times, t_start)
+        observed = idx - idx_start
+        ratio = observed / max(expected, 0.1)
+        etas_rand_ratios.append(round(ratio, 3))
+
+    etas_eq_stats = ratio_stats(etas_ratios)
+    etas_rand_stats = ratio_stats(etas_rand_ratios)
+
+    logger.info("  ETAS ratio — EQ: mean=%.2f >2=%.1f%% <0.5=%.1f%% | Rand: mean=%.2f >2=%.1f%% <0.5=%.1f%%",
+                etas_eq_stats.get("mean", 0), etas_eq_stats.get("gt_2_pct", 0), etas_eq_stats.get("lt_05_pct", 0),
+                etas_rand_stats.get("mean", 0), etas_rand_stats.get("gt_2_pct", 0), etas_rand_stats.get("lt_05_pct", 0))
+
+    # ---------------------------------------------------------------
     # Magnitude dependence
-    mag_bins = {}
-    for r in rate_ratios:
-        bin_label = f"M{int(r['mag'])}"
-        mag_bins.setdefault(bin_label, []).append(r["rate_ratio"])
+    # ---------------------------------------------------------------
+    mag_bins_7d = {}
+    for r in rate_results_7d:
+        label = f"M{int(r['mag'])}"
+        mag_bins_7d.setdefault(label, []).append(r["ratio"])
 
     results = {
-        "etas_params": params,
         "catalog_stats": {
             "n_m3_plus": len(events),
             "n_target": len(target_events),
             "duration_days": round(T_total, 1),
-            "background_rate_per_day": round(params["mu"], 3),
+            "global_rate_per_day": round(global_rate, 3),
         },
-        "rate_ratio_earthquakes": eq_stats,
-        "rate_ratio_random": rand_stats,
-        "quiescence_test": {
-            "description": "Fraction of events preceded by unusually low rate (ratio < 0.5)",
-            "earthquake_pct": round(quiescence_eq, 1),
-            "random_pct": round(quiescence_rand, 1),
-            "lift": round(quiescence_eq / max(quiescence_rand, 0.1), 2),
+        "model_free_7d": {
+            "description": "Regional rate ratio: observed M3+ in 7d (2deg box) / long-term regional rate * 7d",
+            "earthquake_locations": eq_7d_stats,
+            "random_locations": rand_7d_stats,
+            "activation_lift_gt2": round(act_7d_lift, 2),
+            "quiescence_lift_lt05": round(qui_7d_lift, 2),
         },
-        "activation_test": {
-            "description": "Fraction of events preceded by unusually high rate (ratio > 2.0)",
-            "earthquake_pct": round(activation_eq, 1),
-            "random_pct": round(activation_rand, 1),
-            "lift": round(activation_eq / max(activation_rand, 0.1), 2),
+        "model_free_30d": {
+            "earthquake_locations": eq_30d_stats,
+            "random_locations": rand_30d_stats,
         },
-        "by_magnitude": {k: ratio_stats(v, k) for k, v in sorted(mag_bins.items())},
-        "sample_events": rate_ratios[:30],
+        "etas_constrained": {
+            "params": params,
+            "earthquake_locations": etas_eq_stats,
+            "random_locations": etas_rand_stats,
+        },
+        "by_magnitude": {k: ratio_stats(v) for k, v in sorted(mag_bins_7d.items())},
+        "sample_events": rate_results_7d[:20],
     }
-
-    logger.info("  Rate ratio — EQ: mean=%.2f, >1=%.0f%%, <0.5=%.0f%% | Rand: mean=%.2f, >1=%.0f%%, <0.5=%.0f%%",
-                eq_stats["mean"], eq_stats["gt_1_pct"], eq_stats["lt_05_pct"],
-                rand_stats["mean"], rand_stats["gt_1_pct"], rand_stats["lt_05_pct"])
-    logger.info("  Quiescence lift: %.2f | Activation lift: %.2f",
-                results["quiescence_test"]["lift"], results["activation_test"]["lift"])
 
     return results
 

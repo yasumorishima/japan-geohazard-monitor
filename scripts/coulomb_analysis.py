@@ -408,49 +408,71 @@ async def run_coulomb_analysis(min_mag: float = 5.0) -> dict:
     cfs_values = [e["cumulative_cfs_kpa"] for e in cfs_at_events]
     positive_pct = 100 * positive_cfs_count / total_computed
 
-    # Compare with random locations
+    # Compare with TWO baselines:
+    # 1. Uniform random locations (original)
+    # 2. Shifted locations: same earthquake but shifted 2-5° — controls for
+    #    spatial clustering (tests whether CFS predicts EXACT location, not
+    #    just "same general region where earthquakes happen")
     import random
-    random.seed(42)
-    random_cfs = []
-    n_random_positive = 0
-    n_random = min(500, total_computed)
 
-    for _ in range(n_random):
-        # Random location within Japan
+    def compute_random_cfs(locations, label):
+        """Compute CFS at a list of (lat, lon, depth, time_idx) locations."""
+        result_cfs = []
+        for rlat, rlon, rdepth, t_idx in locations:
+            target_time = events[t_idx]["time"]
+            cum_cfs = 0.0
+            n_src = 0
+            for j in range(t_idx):
+                source = events[j]
+                dlat = abs(rlat - source["lat"])
+                dlon = abs(rlon - source["lon"])
+                if dlat * DEG_TO_KM > MAX_DISTANCE_KM or dlon * DEG_TO_KM > MAX_DISTANCE_KM:
+                    continue
+                dt = (target_time - source["time"]).total_seconds()
+                if dt > 10 * 365.25 * 86400:
+                    continue
+                _, _, cfs = okada_stress(
+                    source["lat"], source["lon"], source["depth_km"],
+                    source["strike"], source["dip"], source["rake"],
+                    source["length_km"], source["width_km"], source["slip_m"],
+                    rlat, rlon, rdepth,
+                )
+                cum_cfs += cfs
+                n_src += 1
+            if n_src > 0:
+                result_cfs.append(round(cum_cfs / 1000, 3))
+        return result_cfs
+
+    # Baseline 1: Uniform random within Japan
+    random.seed(42)
+    uniform_locs = []
+    for _ in range(min(500, total_computed)):
         rlat = 25 + random.random() * 20
         rlon = 125 + random.random() * 25
         rdepth = 10 + random.random() * 50
-        # Pick random time within data range
         t_idx = random.randint(len(events) // 4, len(events) - 1)
-        target_time = events[t_idx]["time"]
+        uniform_locs.append((rlat, rlon, rdepth, t_idx))
+    random_cfs = compute_random_cfs(uniform_locs, "uniform")
 
-        cum_cfs = 0.0
-        n_src = 0
-        for j in range(t_idx):
-            source = events[j]
-            dlat = abs(rlat - source["lat"])
-            dlon = abs(rlon - source["lon"])
-            if dlat * DEG_TO_KM > MAX_DISTANCE_KM or dlon * DEG_TO_KM > MAX_DISTANCE_KM:
-                continue
-            dt = (target_time - source["time"]).total_seconds()
-            if dt > 10 * 365.25 * 86400:
-                continue
+    # Baseline 2: Shifted earthquake locations (2-5° random offset)
+    random.seed(99)
+    shifted_locs = []
+    for e in cfs_at_events[:500]:
+        # Random shift 2-5° in random direction
+        angle = random.random() * 2 * math.pi
+        dist_deg = 2 + random.random() * 3  # 2-5 degrees
+        slat = e["lat"] + dist_deg * math.sin(angle)
+        slon = e["lon"] + dist_deg * math.cos(angle)
+        # Clamp to Japan bbox
+        slat = max(20, min(50, slat))
+        slon = max(120, min(155, slon))
+        idx = next((j for j, ev in enumerate(events) if ev["time_str"][:16] == e["time"]), len(events) // 2)
+        shifted_locs.append((slat, slon, e["depth_km"], idx))
+    shifted_cfs = compute_random_cfs(shifted_locs, "shifted")
 
-            _, _, cfs = okada_stress(
-                source["lat"], source["lon"], source["depth_km"],
-                source["strike"], source["dip"], source["rake"],
-                source["length_km"], source["width_km"], source["slip_m"],
-                rlat, rlon, rdepth,
-            )
-            cum_cfs += cfs
-            n_src += 1
+    logger.info("  Baselines: %d uniform, %d shifted", len(random_cfs), len(shifted_cfs))
 
-        if n_src > 0:
-            random_cfs.append(round(cum_cfs / 1000, 3))
-            if cum_cfs > 0:
-                n_random_positive += 1
-
-    random_positive_pct = 100 * n_random_positive / max(len(random_cfs), 1) if random_cfs else 0
+    random_positive_pct = sum(1 for v in random_cfs if v > 0) / max(len(random_cfs), 1) * 100
 
     # CFS distribution statistics
     def stats(values):
@@ -516,9 +538,24 @@ async def run_coulomb_analysis(min_mag: float = 5.0) -> dict:
             "friction_coefficient": MU_FRICTION,
         },
         "earthquake_locations": stats(cfs_values),
-        "random_locations": stats(random_cfs),
-        "lift_positive_cfs": round(lift, 2),
+        "random_uniform": stats(random_cfs),
+        "random_shifted_2_5deg": stats(shifted_cfs),
+        "lift_positive_cfs_vs_uniform": round(lift, 2),
+        "lift_positive_cfs_vs_shifted": round(
+            positive_pct / max(sum(1 for v in shifted_cfs if v > 0) / max(len(shifted_cfs), 1) * 100, 0.1), 2
+        ),
         "threshold_analysis": threshold_analysis,
+        "threshold_analysis_vs_shifted": {
+            f"gt_{t}kPa": {
+                "eq_pct": round(sum(1 for v in cfs_values if v > t) / max(len(cfs_values), 1) * 100, 1),
+                "shifted_pct": round(sum(1 for v in shifted_cfs if v > t) / max(len(shifted_cfs), 1) * 100, 1),
+                "lift": round(
+                    (sum(1 for v in cfs_values if v > t) / max(len(cfs_values), 1)) /
+                    max(sum(1 for v in shifted_cfs if v > t) / max(len(shifted_cfs), 1), 0.001), 2
+                ),
+            }
+            for t in thresholds_kpa
+        },
         "temporal_stability": {
             "early_half": stats(early_cfs),
             "late_half": stats(late_cfs),
