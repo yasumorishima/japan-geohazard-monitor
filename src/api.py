@@ -6,7 +6,12 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from analysis import compute_lag_correlation, detect_anomalies
+from analysis import (
+    analyze_epicenter_tec,
+    compute_bvalue,
+    compute_lag_correlation,
+    detect_anomalies,
+)
 from config import DB_PATH
 
 app = FastAPI(title="Japan Geohazard Monitor")
@@ -362,6 +367,18 @@ async def lag_correlation(days: int = 30, max_lag: int = 48, min_mag: float = 0.
     min_mag: only count earthquakes with magnitude >= this value.
     """
     return await compute_lag_correlation(days, max_lag, min_mag)
+
+
+@app.get("/api/epicenter_tec")
+async def epicenter_tec(min_mag: float = 6.0, radius: float = 5.0):
+    """Analyze TEC anomalies near earthquake epicenters."""
+    return await analyze_epicenter_tec(min_mag=min_mag, radius_deg=radius)
+
+
+@app.get("/api/bvalue")
+async def bvalue(days: int = 365, window: int = 30):
+    """Compute Gutenberg-Richter b-value time series."""
+    return await compute_bvalue(days=days, window_days=window)
 
 
 @app.get("/api/stats")
