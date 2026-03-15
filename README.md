@@ -116,40 +116,29 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 - **Phase 4** ✅ Ionosphere TEC (CODE Bern predicted IONEX) + GEONET crustal deformation (GSI SFTP, 218 stations)
 - **Correlation** ✅ Time-synchronized 5-chart panel (earthquake/Kp/GOES/TEC/pressure)
 - **Analysis** ✅ Anomaly detection (±2σ), lag correlation, epicenter TEC, b-value
-- **Backfill** ✅ 2011-2026 M5+ earthquakes (8,072), TEC (311K), Kp (18K)
+- **Backfill** ✅ 2011-2026 M3+ earthquakes (28,400), TEC (311K), Kp (18K)
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
 
-## Analysis Results (2011-2026, 8,072 earthquakes)
+## Analysis Results (2011-2026, 28,400 M3+ earthquakes)
 
-### b-value (Gutenberg-Richter) — ✅ Confirmed precursor
+No single indicator predicts earthquakes. This is consistent with the fact that no one has achieved earthquake prediction — if a single metric worked, it would already be in use.
 
-Sliding 30-day window maximum likelihood b-value. Normal ≈ 1.0; low values indicate stress buildup.
+### b-value (Gutenberg-Richter) — ❌ No signal with complete data
 
-**Control experiment** (random dates vs. pre-earthquake):
+Initial analysis with M5+-only data appeared to show b-value drops before earthquakes (87% b<0.7 vs 23% random). **This was an artifact of incomplete data.** With M3+ complete data (28,400 events), the signal disappears:
 
-| Condition | n | Mean b | b < 0.7 | b < 0.5 |
-|---|---|---|---|---|
-| Random dates | 318 | 1.255 | 23% | 5% |
-| **Before M5+** | **290** | **0.667** | **87%** | **77%** |
-| **Before M7+** | **20** | **0.626** | **80%** | **15%** |
+| Condition | n | Mean b | b < 0.7 |
+|---|---|---|---|
+| Random dates | 1,000 | 0.591 | 72% |
+| Before M4-4.9 | 300 | 0.600 | 74% |
+| Before M5-5.9 | 300 | 0.590 | 76% |
+| Before M7+ | 20 | 0.637 | 65% |
 
-b < 0.7 occurs 3.8× more often before M5+ earthquakes than on random dates. This is not chance.
+No statistically significant difference across any magnitude band. **Lesson: incomplete data produces false signals.**
 
-Individual major earthquakes:
-
-| Earthquake | b-value | Random baseline |
-|---|---|---|
-| M9.1 Tohoku (2011-03) | **0.512** | 1.255 |
-| M6.6 Hokkaido Iburi (2018-09) | **0.435** | 1.255 |
-| M7.6 Aomori (2025-12) | **0.521** | 1.255 |
-| M7.0 Kumamoto (2016-04) | **0.586** | 1.255 |
-| M7.5 Noto (2024-01) | **0.65** | 1.255 |
-
-### Epicenter TEC — ⚠️ Inconclusive (needs more data)
+### Epicenter TEC — ⚠️ Inconclusive
 
 TEC within 5° of epicenter, 7-day baseline vs. 24h precursor.
-
-**Control experiment**:
 
 | Condition | n | Mean σ | Negative % | Drops (σ<-1) | Spikes (σ>+1) |
 |---|---|---|---|---|---|
@@ -157,7 +146,7 @@ TEC within 5° of epicenter, 7-day baseline vs. 24h precursor.
 | Before M5+ | 400 | -0.075 | 31% | 0% | 0% |
 | Before M7+ | 16 | -0.596 | 81% | 25% | 0% |
 
-Random dates also show TEC drops, so the signal may not be earthquake-specific. However, random sample n=34 is too small for a definitive conclusion (TEC backfill only covers ±7 days around major events, limiting random sampling).
+Random dates also show TEC drops (n=34 too small to be definitive). Signal may not be earthquake-specific.
 
 ### Global Lag Correlation — ❌ No signal
 
@@ -167,6 +156,10 @@ Random dates also show TEC drops, so the signal may not be earthquake-specific. 
 | Kp | +0.02 | +0.04 | No signal |
 | GOES | insufficient data | -0.46 | Needs more data |
 | Pressure | insufficient data | insufficient data | No historical AMeDAS API |
+
+### What's next
+
+Single-indicator approaches have been exhausted by decades of seismology research. The next step is **multi-indicator simultaneous anomaly detection** — looking for cases where b-value, TEC, Kp, and pressure all deviate simultaneously. This combinatorial approach has not been thoroughly tested with sufficient data.
 
 ### Not yet implemented
 
