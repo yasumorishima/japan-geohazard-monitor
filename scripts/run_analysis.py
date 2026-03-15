@@ -771,6 +771,19 @@ def normalize_time_str(time_str: str) -> str:
     return normalized
 
 
+def sample_events_balanced(events: list, n: int = 500, seed: int = 42) -> list:
+    """Systematic sample of n events with uniform time coverage.
+
+    Avoids [:n] bias which over-samples early events
+    (e.g., 2011 Tohoku aftershock cluster dominates first 500).
+    """
+    if len(events) <= n:
+        return list(events)
+    sorted_events = sorted(events, key=lambda e: e["time"])
+    step = len(sorted_events) / n
+    return [sorted_events[int(i * step)] for i in range(n)]
+
+
 async def analyze_advanced(db: aiosqlite.Connection, min_mag: float) -> dict:
     """Advanced analyses beyond basic threshold comparison.
 
@@ -821,6 +834,51 @@ async def analyze_advanced(db: aiosqlite.Connection, min_mag: float) -> dict:
         rlat = 25 + random.random() * 20
         rlon = 125 + random.random() * 25
         random_points.append({"time": rt, "time_str": rt.isoformat(), "lat": rlat, "lon": rlon})
+
+    # ---------------------------------------------------------------
+    # Pre-compute isolation filter (used by multiple sections)
+    # ---------------------------------------------------------------
+    all_eq_with_loc = await db.execute_fetchall(
+        "SELECT occurred_at, latitude, longitude, magnitude FROM earthquakes "
+        "WHERE magnitude >= 3.0 ORDER BY occurred_at"
+    )
+    all_parsed_adv = []
+    for r in all_eq_with_loc:
+        try:
+            t = datetime.fromisoformat(r[0].replace("Z", "+00:00"))
+            all_parsed_adv.append((t, r[1], r[2], r[3]))
+        except (ValueError, TypeError):
+            continue
+
+    target_tuples_adv = [
+        (e["time"], e["lat"], e["lon"], e["mag"]) for e in target_events
+    ]
+    isolated_set_adv = set(
+        (t.isoformat(), lat, lon)
+        for t, lat, lon, mag in filter_isolated(target_tuples_adv, all_parsed_adv)
+    )
+    isolated_events = [
+        e for e in target_events
+        if (e["time"].isoformat(), e["lat"], e["lon"]) in isolated_set_adv
+    ]
+    logger.info(
+        "  Pre-computed isolation: %d / %d events are isolated (%.0f%%)",
+        len(isolated_events), len(target_events),
+        100 * len(isolated_events) / max(len(target_events), 1),
+    )
+
+    # Balanced sample across full time range (avoid 2011 Tohoku bias)
+    sampled_events = sample_events_balanced(target_events, 500)
+    sampled_isolated = [
+        e for e in sampled_events
+        if (e["time"].isoformat(), e["lat"], e["lon"]) in isolated_set_adv
+    ]
+    logger.info(
+        "  Balanced sample: %d events (%d isolated), range: %s to %s",
+        len(sampled_events), len(sampled_isolated),
+        sampled_events[0]["time_str"][:10] if sampled_events else "?",
+        sampled_events[-1]["time_str"][:10] if sampled_events else "?",
+    )
 
     results = {}
 
@@ -876,12 +934,20 @@ async def analyze_advanced(db: aiosqlite.Connection, min_mag: float) -> dict:
         p_mean = sum(precursor) / len(precursor)
         return (p_mean - b_mean) / b_std
 
-    # Earthquake TEC (detrended)
+    # Earthquake TEC (detrended) — balanced sample with isolation tracking
     eq_sigmas_dt = []
-    for e in target_events[:500]:
+    eq_sigmas_dt_isolated = []
+    eq_sigmas_dt_non_isolated = []
+    for e in sampled_events:
         s = await get_sigma_detrended(e["lat"], e["lon"], e["time_str"])
+        is_iso = (e["time"].isoformat(), e["lat"], e["lon"]) in isolated_set_adv
         if s is not None:
-            eq_sigmas_dt.append(round(s, 3))
+            s_r = round(s, 3)
+            eq_sigmas_dt.append(s_r)
+            if is_iso:
+                eq_sigmas_dt_isolated.append(s_r)
+            else:
+                eq_sigmas_dt_non_isolated.append(s_r)
 
     # Random TEC (detrended)
     rand_sigmas_dt = []
@@ -901,17 +967,42 @@ async def analyze_advanced(db: aiosqlite.Connection, min_mag: float) -> dict:
             "spikes_pct": round(sum(1 for x in vals if x > 1) / len(vals) * 100, 1),
         }
 
+    # Bootstrap CI for key metric (mean_sigma difference: eq vs random)
+    def bootstrap_ci(eq_vals, rand_vals, n_boot=1000, ci=95):
+        """Bootstrap confidence interval for mean difference."""
+        if len(eq_vals) < 10 or len(rand_vals) < 10:
+            return {"error": "insufficient data"}
+        rng = random.Random(777)
+        diffs = []
+        for _ in range(n_boot):
+            eq_sample = [rng.choice(eq_vals) for _ in range(len(eq_vals))]
+            rand_sample = [rng.choice(rand_vals) for _ in range(len(rand_vals))]
+            diffs.append(sum(eq_sample) / len(eq_sample) - sum(rand_sample) / len(rand_sample))
+        diffs.sort()
+        lo = (100 - ci) / 2
+        hi = 100 - lo
+        return {
+            "n_bootstrap": n_boot,
+            "mean_diff": round(sum(diffs) / len(diffs), 3),
+            f"ci_{ci}_lower": round(percentile(diffs, lo), 3),
+            f"ci_{ci}_upper": round(percentile(diffs, hi), 3),
+            "p_value_approx": round(sum(1 for d in diffs if d <= 0) / len(diffs), 4),
+        }
+
     results["tec_detrended"] = {
         "random": tec_summary(rand_sigmas_dt),
-        "pre_earthquake": tec_summary(eq_sigmas_dt),
-        "comparison_raw_vs_detrended": {
-            "note": "Compare with 'tec' results to see if detrending changes the picture",
-        },
+        "pre_earthquake_all": tec_summary(eq_sigmas_dt),
+        "pre_earthquake_isolated": tec_summary(eq_sigmas_dt_isolated),
+        "pre_earthquake_non_isolated": tec_summary(eq_sigmas_dt_non_isolated),
+        "bootstrap_ci_all_vs_random": bootstrap_ci(eq_sigmas_dt, rand_sigmas_dt),
+        "bootstrap_ci_isolated_vs_random": bootstrap_ci(eq_sigmas_dt_isolated, rand_sigmas_dt),
     }
     logger.info(
-        "    Detrended TEC — Random: n=%d, mean_σ=%.3f | Pre-EQ: n=%d, mean_σ=%.3f",
+        "    Detrended TEC — Random: n=%d, σ=%.3f | All: n=%d, σ=%.3f | Isolated: n=%d, σ=%.3f | Non-iso: n=%d, σ=%.3f",
         len(rand_sigmas_dt), sum(rand_sigmas_dt) / max(len(rand_sigmas_dt), 1),
         len(eq_sigmas_dt), sum(eq_sigmas_dt) / max(len(eq_sigmas_dt), 1),
+        len(eq_sigmas_dt_isolated), sum(eq_sigmas_dt_isolated) / max(len(eq_sigmas_dt_isolated), 1),
+        len(eq_sigmas_dt_non_isolated), sum(eq_sigmas_dt_non_isolated) / max(len(eq_sigmas_dt_non_isolated), 1),
     )
 
     # ---------------------------------------------------------------
@@ -931,9 +1022,9 @@ async def analyze_advanced(db: aiosqlite.Connection, min_mag: float) -> dict:
         )
         return rows[0][0] if rows and rows[0][0] is not None else None
 
-    # Earthquake Kp profile
+    # Earthquake Kp profile (balanced sample)
     eq_profiles_kp = {h: [] for h in lead_hours}
-    for e in target_events[:500]:
+    for e in sampled_events:
         for h in lead_hours:
             kp = await get_kp_at(e["time_str"], h)
             if kp is not None:
@@ -1000,9 +1091,10 @@ async def analyze_advanced(db: aiosqlite.Connection, min_mag: float) -> dict:
 
     radii = [1.0, 2.0, 5.0, 10.0]
     radius_results = {}
+    sampled_200 = sample_events_balanced(target_events, 200, seed=99)
     for radius in radii:
         eq_s = []
-        for e in target_events[:200]:  # Limit for speed
+        for e in sampled_200:
             s = await get_sigma_radius(e["lat"], e["lon"], e["time_str"], radius)
             if s is not None:
                 eq_s.append(s)
@@ -1175,31 +1267,6 @@ async def analyze_advanced(db: aiosqlite.Connection, min_mag: float) -> dict:
     # 5. Kp temporal profile — ISOLATED events only
     # ---------------------------------------------------------------
     logger.info("  --- Kp temporal profile (isolated only) ---")
-
-    # Build isolation filter for target events
-    all_eq_with_loc = await db.execute_fetchall(
-        "SELECT occurred_at, latitude, longitude, magnitude FROM earthquakes "
-        "WHERE magnitude >= 3.0 ORDER BY occurred_at"
-    )
-    all_parsed_adv = []
-    for r in all_eq_with_loc:
-        try:
-            t = datetime.fromisoformat(r[0].replace("Z", "+00:00"))
-            all_parsed_adv.append((t, r[1], r[2], r[3]))
-        except (ValueError, TypeError):
-            continue
-
-    target_tuples_adv = [
-        (e["time"], e["lat"], e["lon"], e["mag"]) for e in target_events
-    ]
-    isolated_set_adv = set(
-        (t.isoformat(), lat, lon)
-        for t, lat, lon, mag in filter_isolated(target_tuples_adv, all_parsed_adv)
-    )
-    isolated_events = [
-        e for e in target_events
-        if (e["time"].isoformat(), e["lat"], e["lon"]) in isolated_set_adv
-    ]
     logger.info("    Isolated events: %d / %d", len(isolated_events), len(target_events))
 
     iso_profiles_kp = {h: [] for h in lead_hours}
@@ -1240,7 +1307,7 @@ async def analyze_advanced(db: aiosqlite.Connection, min_mag: float) -> dict:
 
     # For each earthquake: get both detrended TEC sigma and Kp at -12h
     combined_eq = []
-    for e in target_events[:500]:
+    for e in sampled_events:
         tec_s = await get_sigma_detrended(e["lat"], e["lon"], e["time_str"])
         kp_12h = await get_kp_at(e["time_str"], 12)
         is_iso = (e["time"].isoformat(), e["lat"], e["lon"]) in isolated_set_adv
@@ -1320,8 +1387,20 @@ async def analyze_advanced(db: aiosqlite.Connection, min_mag: float) -> dict:
 
     split_date = datetime(2019, 1, 1, tzinfo=timezone.utc)
 
-    early_eq = [e for e in target_events[:500] if e["time"] < split_date]
-    late_eq = [e for e in target_events[:500] if e["time"] >= split_date]
+    # Use ALL target events (no [:500] cap) — split by period
+    all_early_eq = [e for e in target_events if e["time"] < split_date]
+    all_late_eq = [e for e in target_events if e["time"] >= split_date]
+    # Subsample each period to max 300 for performance
+    early_eq = sample_events_balanced(all_early_eq, 300, seed=51)
+    late_eq = sample_events_balanced(all_late_eq, 300, seed=52)
+    logger.info(
+        "    Temporal split: early=%d (sampled %d), late=%d (sampled %d)",
+        len(all_early_eq), len(early_eq), len(all_late_eq), len(late_eq),
+    )
+
+    # Also split random points by period
+    early_rand = [r for r in random_points if r["time"] < split_date]
+    late_rand = [r for r in random_points if r["time"] >= split_date]
 
     async def kp_profile_for_group(events, label):
         profiles = {h: [] for h in [24, 12, 6]}
@@ -1344,28 +1423,53 @@ async def analyze_advanced(db: aiosqlite.Connection, min_mag: float) -> dict:
                             label, h, mean_v, result[f"-{h}h"]["high_pct"], len(vals))
         return result
 
-    async def tec_dt_for_group(events, label):
-        sigmas = []
+    async def tec_dt_for_group(events, rand_group, label):
+        """TEC detrended for a group, with isolation breakdown and bootstrap CI."""
+        sigmas_all = []
+        sigmas_iso = []
+        sigmas_non_iso = []
         for e in events:
             s = await get_sigma_detrended(e["lat"], e["lon"], e["time_str"])
+            is_iso = (e["time"].isoformat(), e["lat"], e["lon"]) in isolated_set_adv
             if s is not None:
-                sigmas.append(s)
-        summary = tec_summary(sigmas)
-        logger.info("    [%s] TEC detrended: n=%d, mean_σ=%.3f, spikes%%=%.1f",
-                     label, summary.get("n", 0), summary.get("mean_sigma", 0),
-                     summary.get("spikes_pct", 0))
+                sigmas_all.append(s)
+                if is_iso:
+                    sigmas_iso.append(s)
+                else:
+                    sigmas_non_iso.append(s)
+        rand_sigmas = []
+        for r in rand_group:
+            s = await get_sigma_detrended(r["lat"], r["lon"], r["time_str"])
+            if s is not None:
+                rand_sigmas.append(s)
+        summary = {
+            "all": tec_summary(sigmas_all),
+            "isolated": tec_summary(sigmas_iso),
+            "non_isolated": tec_summary(sigmas_non_iso),
+            "random": tec_summary(rand_sigmas),
+            "bootstrap_ci_iso_vs_rand": bootstrap_ci(sigmas_iso, rand_sigmas),
+        }
+        logger.info(
+            "    [%s] TEC dt — all: n=%d σ=%.3f | iso: n=%d σ=%.3f | rand: n=%d σ=%.3f",
+            label,
+            summary["all"].get("n", 0), summary["all"].get("mean_sigma", 0),
+            summary["isolated"].get("n", 0), summary["isolated"].get("mean_sigma", 0),
+            summary["random"].get("n", 0), summary["random"].get("mean_sigma", 0),
+        )
         return summary
 
     results["temporal_stability"] = {
         "2011_2018": {
-            "n_events": len(early_eq),
+            "n_events_total": len(all_early_eq),
+            "n_events_sampled": len(early_eq),
             "kp_profile": await kp_profile_for_group(early_eq, "2011-2018"),
-            "tec_detrended": await tec_dt_for_group(early_eq, "2011-2018"),
+            "tec_detrended": await tec_dt_for_group(early_eq, early_rand, "2011-2018"),
         },
         "2019_2026": {
-            "n_events": len(late_eq),
+            "n_events_total": len(all_late_eq),
+            "n_events_sampled": len(late_eq),
             "kp_profile": await kp_profile_for_group(late_eq, "2019-2026"),
-            "tec_detrended": await tec_dt_for_group(late_eq, "2019-2026"),
+            "tec_detrended": await tec_dt_for_group(late_eq, late_rand, "2019-2026"),
         },
     }
 
@@ -1382,49 +1486,156 @@ async def analyze_advanced(db: aiosqlite.Connection, min_mag: float) -> dict:
 
     mag_results = {}
     for label, m_min, m_max in mag_groups:
-        group = [e for e in target_events[:500] if m_min <= e["mag"] < m_max]
-        if len(group) < 5:
-            mag_results[label] = {"n": len(group), "note": "too few events"}
+        # Use ALL events for magnitude analysis (no [:500] bias)
+        group_all = [e for e in target_events if m_min <= e["mag"] < m_max]
+        group_iso = [
+            e for e in group_all
+            if (e["time"].isoformat(), e["lat"], e["lon"]) in isolated_set_adv
+        ]
+        # Subsample if too many
+        group_sampled = sample_events_balanced(group_all, 300, seed=70)
+        group_iso_sampled = sample_events_balanced(group_iso, 300, seed=71)
+
+        if len(group_sampled) < 5:
+            mag_results[label] = {
+                "n_total": len(group_all),
+                "n_isolated": len(group_iso),
+                "note": "too few events",
+            }
             continue
 
-        # Kp at -12h
-        kp_vals = []
-        for e in group:
-            kp = await get_kp_at(e["time_str"], 12)
-            if kp is not None:
-                kp_vals.append(kp)
+        async def mag_kp_tec(events, sublabel):
+            kp_vals = []
+            tec_vals = []
+            for e in events:
+                kp = await get_kp_at(e["time_str"], 12)
+                if kp is not None:
+                    kp_vals.append(kp)
+                s = await get_sigma_detrended(e["lat"], e["lon"], e["time_str"])
+                if s is not None:
+                    tec_vals.append(s)
+            kp_mean = sum(kp_vals) / len(kp_vals) if kp_vals else None
+            tec_mean = sum(tec_vals) / len(tec_vals) if tec_vals else None
+            return {
+                "n": len(events),
+                "kp_12h": {
+                    "n": len(kp_vals),
+                    "mean": round(kp_mean, 3) if kp_mean else None,
+                    "high_pct": round(sum(1 for v in kp_vals if v > 3) / max(len(kp_vals), 1) * 100, 1),
+                },
+                "tec_detrended": {
+                    "n": len(tec_vals),
+                    "mean_sigma": round(tec_mean, 3) if tec_mean else None,
+                    "spikes_pct": round(sum(1 for v in tec_vals if v > 1) / max(len(tec_vals), 1) * 100, 1),
+                },
+            }
 
-        # TEC detrended
-        tec_vals = []
-        for e in group:
-            s = await get_sigma_detrended(e["lat"], e["lon"], e["time_str"])
-            if s is not None:
-                tec_vals.append(s)
-
-        kp_mean = sum(kp_vals) / len(kp_vals) if kp_vals else None
-        tec_mean = sum(tec_vals) / len(tec_vals) if tec_vals else None
+        all_result = await mag_kp_tec(group_sampled, f"{label}_all")
+        iso_result = await mag_kp_tec(group_iso_sampled, f"{label}_iso") if len(group_iso_sampled) >= 5 else {"n": len(group_iso_sampled), "note": "too few isolated events"}
 
         mag_results[label] = {
-            "n": len(group),
-            "kp_12h": {
-                "n": len(kp_vals),
-                "mean": round(kp_mean, 3) if kp_mean else None,
-                "high_pct": round(sum(1 for v in kp_vals if v > 3) / max(len(kp_vals), 1) * 100, 1),
-            },
-            "tec_detrended": {
-                "n": len(tec_vals),
-                "mean_sigma": round(tec_mean, 3) if tec_mean else None,
-                "spikes_pct": round(sum(1 for v in tec_vals if v > 1) / max(len(tec_vals), 1) * 100, 1),
-            },
+            "n_total": len(group_all),
+            "n_isolated": len(group_iso),
+            "all_events": all_result,
+            "isolated_events": iso_result,
         }
         logger.info(
-            "    %s (n=%d): Kp_12h=%.2f (high=%.0f%%) TEC_dt=%.2f (spike=%.0f%%)",
-            label, len(group),
-            kp_mean or 0, mag_results[label]["kp_12h"]["high_pct"],
-            tec_mean or 0, mag_results[label]["tec_detrended"]["spikes_pct"],
+            "    %s — all(n=%d): Kp=%.2f TEC=%.2f | iso(n=%d): Kp=%s TEC=%s",
+            label, all_result["n"],
+            all_result["kp_12h"].get("mean") or 0,
+            all_result["tec_detrended"].get("mean_sigma") or 0,
+            iso_result.get("n", 0),
+            iso_result.get("kp_12h", {}).get("mean", "N/A"),
+            iso_result.get("tec_detrended", {}).get("mean_sigma", "N/A"),
         )
 
     results["magnitude_dependence"] = mag_results
+
+    # ---------------------------------------------------------------
+    # 9. Alternative detrending: 30-day rolling average
+    # ---------------------------------------------------------------
+    logger.info("  --- TEC rolling average detrending (validation) ---")
+
+    async def get_sigma_rolling(lat, lon, time_str, radius=5.0):
+        """TEC sigma using 30-day rolling average instead of monthly-hourly climatology.
+
+        Uses a wider window (30 days before the 7-day baseline window) as
+        the climatology reference. This is independent of the global
+        monthly-hourly climatology used in the primary analysis.
+        """
+        norm = normalize_time_str(time_str)
+        # Get 37 days of data: 30-day rolling context + 7-day baseline
+        rows = await db.execute_fetchall(
+            "SELECT epoch, AVG(tec_tecu) FROM tec "
+            "WHERE ABS(latitude - ?) <= ? AND ABS(longitude - ?) <= ? "
+            "AND epoch BETWEEN datetime(?, '-888 hours') AND datetime(?, '+24 hours') "
+            "GROUP BY epoch ORDER BY epoch",
+            (lat, radius, lon, radius, norm, norm),
+        )
+        if len(rows) < 20:
+            return None
+
+        values = [r[1] for r in rows]
+        if len(values) <= 8:
+            return None
+
+        # Split: rolling_context | baseline (7d) | precursor (24h)
+        precursor = values[-8:]
+        baseline = values[-16:-8] if len(values) >= 16 else values[:-8]
+        rolling_context = values[:-16] if len(values) > 16 else []
+
+        if not rolling_context or len(rolling_context) < 8:
+            # Fall back: use all pre-precursor as baseline
+            all_pre = values[:-8]
+            if len(all_pre) < 8:
+                return None
+            b_mean = sum(all_pre) / len(all_pre)
+            b_std = (sum((v - b_mean) ** 2 for v in all_pre) / len(all_pre)) ** 0.5
+        else:
+            # Use rolling context as climatology, compare baseline+precursor
+            b_mean = sum(rolling_context) / len(rolling_context)
+            b_std = (sum((v - b_mean) ** 2 for v in rolling_context) / len(rolling_context)) ** 0.5
+
+        if b_std < 0.01:
+            return None
+        p_mean = sum(precursor) / len(precursor)
+        return (p_mean - b_mean) / b_std
+
+    # Compute rolling detrend for sampled events (with isolation)
+    rolling_eq_all = []
+    rolling_eq_iso = []
+    rolling_eq_non_iso = []
+    for e in sampled_events:
+        s = await get_sigma_rolling(e["lat"], e["lon"], e["time_str"])
+        is_iso = (e["time"].isoformat(), e["lat"], e["lon"]) in isolated_set_adv
+        if s is not None:
+            s_r = round(s, 3)
+            rolling_eq_all.append(s_r)
+            if is_iso:
+                rolling_eq_iso.append(s_r)
+            else:
+                rolling_eq_non_iso.append(s_r)
+
+    rolling_rand = []
+    for r in random_points:
+        s = await get_sigma_rolling(r["lat"], r["lon"], r["time_str"])
+        if s is not None:
+            rolling_rand.append(round(s, 3))
+
+    results["tec_rolling_detrend"] = {
+        "method": "30-day rolling average as climatology (independent of monthly-hourly)",
+        "random": tec_summary(rolling_rand),
+        "pre_earthquake_all": tec_summary(rolling_eq_all),
+        "pre_earthquake_isolated": tec_summary(rolling_eq_iso),
+        "pre_earthquake_non_isolated": tec_summary(rolling_eq_non_iso),
+        "bootstrap_ci_iso_vs_random": bootstrap_ci(rolling_eq_iso, rolling_rand),
+    }
+    logger.info(
+        "    Rolling detrend — rand: n=%d σ=%.3f | all: n=%d σ=%.3f | iso: n=%d σ=%.3f",
+        len(rolling_rand), sum(rolling_rand) / max(len(rolling_rand), 1),
+        len(rolling_eq_all), sum(rolling_eq_all) / max(len(rolling_eq_all), 1),
+        len(rolling_eq_iso), sum(rolling_eq_iso) / max(len(rolling_eq_iso), 1),
+    )
 
     return results
 
