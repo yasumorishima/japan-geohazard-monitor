@@ -738,13 +738,450 @@ async def analyze_multi(db: aiosqlite.Connection, min_mag: float) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Advanced analysis: TEC detrending, Kp profile, multi-radius, MI
+# ---------------------------------------------------------------------------
+
+def mutual_information(x_bins: list, y_bins: list) -> float:
+    """Compute mutual information between two discretized variables (bits)."""
+    from collections import Counter
+
+    n = len(x_bins)
+    if n == 0:
+        return 0.0
+
+    joint = Counter(zip(x_bins, y_bins))
+    x_counts = Counter(x_bins)
+    y_counts = Counter(y_bins)
+
+    mi = 0.0
+    for (x, y), count in joint.items():
+        p_xy = count / n
+        p_x = x_counts[x] / n
+        p_y = y_counts[y] / n
+        if p_xy > 0 and p_x > 0 and p_y > 0:
+            mi += p_xy * math.log2(p_xy / (p_x * p_y))
+    return mi
+
+
+def normalize_time_str(time_str: str) -> str:
+    """Normalize ISO time string for SQLite datetime()."""
+    normalized = time_str.replace("T", " ").replace("Z", "")
+    if "+" in normalized:
+        normalized = normalized.split("+")[0]
+    return normalized
+
+
+async def analyze_advanced(db: aiosqlite.Connection, min_mag: float) -> dict:
+    """Advanced analyses beyond basic threshold comparison.
+
+    1. TEC with seasonal/diurnal detrending
+    2. Kp temporal profile at multiple lead times
+    3. TEC at multiple epicenter radii (1°, 2°, 5°, 10°)
+    4. Mutual Information between daily indicators and earthquake occurrence
+    """
+    logger.info("=== Advanced analysis (min_mag=%.1f) ===", min_mag)
+
+    # ---------------------------------------------------------------
+    # Shared data loading
+    # ---------------------------------------------------------------
+    eq_rows = await db.execute_fetchall(
+        "SELECT occurred_at, latitude, longitude, magnitude FROM earthquakes "
+        "WHERE magnitude >= ? ORDER BY occurred_at",
+        (min_mag,),
+    )
+
+    target_events = []
+    for r in eq_rows:
+        try:
+            t = datetime.fromisoformat(r[0].replace("Z", "+00:00"))
+            target_events.append({"time": t, "time_str": r[0], "lat": r[1], "lon": r[2], "mag": r[3]})
+        except (ValueError, TypeError):
+            continue
+
+    # Random baseline dates
+    random.seed(123)  # Different seed from multi for independence
+    all_eq = await db.execute_fetchall(
+        "SELECT occurred_at, magnitude FROM earthquakes "
+        "WHERE magnitude >= 3.0 ORDER BY occurred_at"
+    )
+    events_all = []
+    for r in all_eq:
+        try:
+            t = datetime.fromisoformat(r[0].replace("Z", "+00:00"))
+            events_all.append((t, r[1]))
+        except (ValueError, TypeError):
+            continue
+
+    t_min = events_all[0][0] + timedelta(days=91)
+    t_max = events_all[-1][0]
+
+    random_points = []
+    for _ in range(500):
+        rt = t_min + timedelta(seconds=random.randint(0, int((t_max - t_min).total_seconds())))
+        rlat = 25 + random.random() * 20
+        rlon = 125 + random.random() * 25
+        random_points.append({"time": rt, "time_str": rt.isoformat(), "lat": rlat, "lon": rlon})
+
+    results = {}
+
+    # ---------------------------------------------------------------
+    # 1. TEC with seasonal/diurnal detrending
+    # ---------------------------------------------------------------
+    logger.info("  --- TEC detrended analysis ---")
+
+    # Build monthly-hourly climatology (global Japan average)
+    clim_rows = await db.execute_fetchall(
+        "SELECT CAST(strftime('%m', epoch) AS INTEGER), "
+        "CAST(strftime('%H', epoch) AS INTEGER), "
+        "AVG(tec_tecu), COUNT(*) "
+        "FROM tec GROUP BY 1, 2"
+    )
+    monthly_hourly_mean = {}
+    for month, hour, mean_tec, n in clim_rows:
+        monthly_hourly_mean[(month, hour)] = mean_tec
+    logger.info("    Climatology: %d month-hour bins", len(monthly_hourly_mean))
+
+    async def get_sigma_detrended(lat, lon, time_str, radius=5.0):
+        """Compute TEC sigma after removing seasonal/diurnal climatology."""
+        norm = normalize_time_str(time_str)
+        rows = await db.execute_fetchall(
+            "SELECT epoch, AVG(tec_tecu) FROM tec "
+            "WHERE ABS(latitude - ?) <= ? AND ABS(longitude - ?) <= ? "
+            "AND epoch BETWEEN datetime(?, '-168 hours') AND datetime(?, '+24 hours') "
+            "GROUP BY epoch ORDER BY epoch",
+            (lat, radius, lon, radius, norm, norm),
+        )
+        if len(rows) < 6:
+            return None
+
+        # Detrend each epoch by month+hour climatology
+        detrended = []
+        for epoch_str, avg_tec in rows:
+            try:
+                month = int(epoch_str[5:7])
+                hour = int(epoch_str[11:13])
+                clim = monthly_hourly_mean.get((month, hour), avg_tec)
+                detrended.append(avg_tec - clim)
+            except (ValueError, TypeError, IndexError):
+                detrended.append(avg_tec)
+
+        if len(detrended) <= 8:
+            return None
+        baseline = detrended[:-8]
+        precursor = detrended[-8:]
+        b_mean = sum(baseline) / len(baseline)
+        b_std = (sum((v - b_mean) ** 2 for v in baseline) / len(baseline)) ** 0.5
+        if b_std < 0.01:
+            return None
+        p_mean = sum(precursor) / len(precursor)
+        return (p_mean - b_mean) / b_std
+
+    # Earthquake TEC (detrended)
+    eq_sigmas_dt = []
+    for e in target_events[:500]:
+        s = await get_sigma_detrended(e["lat"], e["lon"], e["time_str"])
+        if s is not None:
+            eq_sigmas_dt.append(round(s, 3))
+
+    # Random TEC (detrended)
+    rand_sigmas_dt = []
+    for r in random_points:
+        s = await get_sigma_detrended(r["lat"], r["lon"], r["time_str"])
+        if s is not None:
+            rand_sigmas_dt.append(round(s, 3))
+
+    def tec_summary(vals):
+        if not vals:
+            return {"n": 0}
+        return {
+            "n": len(vals),
+            "mean_sigma": round(sum(vals) / len(vals), 3),
+            "negative_pct": round(sum(1 for x in vals if x < 0) / len(vals) * 100, 1),
+            "drops_pct": round(sum(1 for x in vals if x < -1) / len(vals) * 100, 1),
+            "spikes_pct": round(sum(1 for x in vals if x > 1) / len(vals) * 100, 1),
+        }
+
+    results["tec_detrended"] = {
+        "random": tec_summary(rand_sigmas_dt),
+        "pre_earthquake": tec_summary(eq_sigmas_dt),
+        "comparison_raw_vs_detrended": {
+            "note": "Compare with 'tec' results to see if detrending changes the picture",
+        },
+    }
+    logger.info(
+        "    Detrended TEC — Random: n=%d, mean_σ=%.3f | Pre-EQ: n=%d, mean_σ=%.3f",
+        len(rand_sigmas_dt), sum(rand_sigmas_dt) / max(len(rand_sigmas_dt), 1),
+        len(eq_sigmas_dt), sum(eq_sigmas_dt) / max(len(eq_sigmas_dt), 1),
+    )
+
+    # ---------------------------------------------------------------
+    # 2. Kp temporal profile at multiple lead times
+    # ---------------------------------------------------------------
+    logger.info("  --- Kp temporal profile ---")
+
+    lead_hours = [168, 120, 72, 48, 24, 12, 6, 3]  # Hours before earthquake
+
+    async def get_kp_at(time_str, lead_h):
+        """Get mean Kp in a 6h window centered at (event_time - lead_h)."""
+        norm = normalize_time_str(time_str)
+        rows = await db.execute_fetchall(
+            "SELECT AVG(kp) FROM geomag_kp "
+            "WHERE time_tag BETWEEN datetime(?, ? || ' hours') AND datetime(?, ? || ' hours')",
+            (norm, f"-{lead_h + 3}", norm, f"-{lead_h - 3}"),
+        )
+        return rows[0][0] if rows and rows[0][0] is not None else None
+
+    # Earthquake Kp profile
+    eq_profiles_kp = {h: [] for h in lead_hours}
+    for e in target_events[:500]:
+        for h in lead_hours:
+            kp = await get_kp_at(e["time_str"], h)
+            if kp is not None:
+                eq_profiles_kp[h].append(kp)
+
+    # Random Kp profile
+    rand_profiles_kp = {h: [] for h in lead_hours}
+    for r in random_points[:500]:
+        for h in lead_hours:
+            kp = await get_kp_at(r["time_str"], h)
+            if kp is not None:
+                rand_profiles_kp[h].append(kp)
+
+    kp_profile_result = {}
+    for h in lead_hours:
+        eq_vals = eq_profiles_kp[h]
+        rand_vals = rand_profiles_kp[h]
+        eq_mean = sum(eq_vals) / len(eq_vals) if eq_vals else None
+        rand_mean = sum(rand_vals) / len(rand_vals) if rand_vals else None
+        kp_profile_result[f"-{h}h"] = {
+            "eq_n": len(eq_vals),
+            "eq_mean_kp": round(eq_mean, 3) if eq_mean else None,
+            "rand_n": len(rand_vals),
+            "rand_mean_kp": round(rand_mean, 3) if rand_mean else None,
+            "diff": round(eq_mean - rand_mean, 3) if eq_mean and rand_mean else None,
+            "eq_high_pct": round(sum(1 for v in eq_vals if v > 3) / max(len(eq_vals), 1) * 100, 1),
+            "rand_high_pct": round(sum(1 for v in rand_vals if v > 3) / max(len(rand_vals), 1) * 100, 1),
+        }
+        if eq_mean and rand_mean:
+            logger.info(
+                "    Kp at %4dh before: eq=%.2f rand=%.2f diff=%+.3f",
+                h, eq_mean, rand_mean, eq_mean - rand_mean,
+            )
+
+    results["kp_temporal_profile"] = kp_profile_result
+
+    # ---------------------------------------------------------------
+    # 3. TEC at multiple epicenter radii
+    # ---------------------------------------------------------------
+    logger.info("  --- TEC multi-radius ---")
+
+    async def get_sigma_radius(lat, lon, time_str, radius):
+        norm = normalize_time_str(time_str)
+        rows = await db.execute_fetchall(
+            "SELECT epoch, AVG(tec_tecu) FROM tec "
+            "WHERE ABS(latitude - ?) <= ? AND ABS(longitude - ?) <= ? "
+            "AND epoch BETWEEN datetime(?, '-168 hours') AND datetime(?, '+24 hours') "
+            "GROUP BY epoch ORDER BY epoch",
+            (lat, radius, lon, radius, norm, norm),
+        )
+        if len(rows) < 6:
+            return None
+        values = [r[1] for r in rows]
+        if len(values) <= 8:
+            return None
+        baseline = values[:-8]
+        precursor = values[-8:]
+        b_mean = sum(baseline) / len(baseline)
+        b_std = (sum((v - b_mean) ** 2 for v in baseline) / len(baseline)) ** 0.5
+        if b_std < 0.1:
+            return None
+        p_mean = sum(precursor) / len(precursor)
+        return (p_mean - b_mean) / b_std
+
+    radii = [1.0, 2.0, 5.0, 10.0]
+    radius_results = {}
+    for radius in radii:
+        eq_s = []
+        for e in target_events[:200]:  # Limit for speed
+            s = await get_sigma_radius(e["lat"], e["lon"], e["time_str"], radius)
+            if s is not None:
+                eq_s.append(s)
+
+        rand_s = []
+        for r in random_points[:200]:
+            s = await get_sigma_radius(r["lat"], r["lon"], r["time_str"], radius)
+            if s is not None:
+                rand_s.append(s)
+
+        radius_results[f"{radius}deg"] = {
+            "eq": tec_summary(eq_s),
+            "random": tec_summary(rand_s),
+        }
+        logger.info(
+            "    Radius %.0f°: eq n=%d mean_σ=%.3f | rand n=%d mean_σ=%.3f",
+            radius,
+            len(eq_s), sum(eq_s) / max(len(eq_s), 1),
+            len(rand_s), sum(rand_s) / max(len(rand_s), 1),
+        )
+
+    results["tec_multi_radius"] = radius_results
+
+    # ---------------------------------------------------------------
+    # 4. Mutual Information: daily Kp/TEC vs earthquake occurrence
+    # ---------------------------------------------------------------
+    logger.info("  --- Mutual Information ---")
+
+    # Build daily earthquake count
+    daily_eq = await db.execute_fetchall(
+        "SELECT DATE(occurred_at), COUNT(*) FROM earthquakes "
+        "WHERE magnitude >= ? GROUP BY DATE(occurred_at)",
+        (min_mag,),
+    )
+    eq_by_day = {r[0]: r[1] for r in daily_eq}
+
+    # Build daily Kp
+    daily_kp = await db.execute_fetchall(
+        "SELECT DATE(time_tag), AVG(kp) FROM geomag_kp GROUP BY DATE(time_tag)"
+    )
+    kp_by_day = {r[0]: r[1] for r in daily_kp}
+
+    # Build daily mean TEC
+    daily_tec = await db.execute_fetchall(
+        "SELECT DATE(epoch), AVG(tec_tecu) FROM tec GROUP BY DATE(epoch)"
+    )
+    tec_by_day = {r[0]: r[1] for r in daily_tec}
+
+    # Align: all dates where we have at least Kp data
+    all_dates = sorted(set(kp_by_day.keys()))
+    if not all_dates:
+        results["mutual_information"] = {"error": "No daily data"}
+    else:
+        # For MI, we check: does Kp/TEC today predict earthquake tomorrow?
+        kp_bins = []
+        tec_bins = []
+        eq_bins = []
+        eq_bins_same_day = []
+
+        for i in range(len(all_dates) - 1):
+            d_today = all_dates[i]
+            d_tomorrow = all_dates[i + 1]
+
+            # Check that tomorrow is actually the next day
+            # (skip gaps)
+            try:
+                dt_today = datetime.strptime(d_today, "%Y-%m-%d")
+                dt_tomorrow = datetime.strptime(d_tomorrow, "%Y-%m-%d")
+                if (dt_tomorrow - dt_today).days != 1:
+                    continue
+            except ValueError:
+                continue
+
+            kp_val = kp_by_day.get(d_today)
+            tec_val = tec_by_day.get(d_today)
+            eq_tomorrow = 1 if eq_by_day.get(d_tomorrow, 0) > 0 else 0
+            eq_today = 1 if eq_by_day.get(d_today, 0) > 0 else 0
+
+            if kp_val is not None:
+                # Discretize Kp: low(<1.5), med(1.5-3), high(>3)
+                if kp_val < 1.5:
+                    kp_bin = "low"
+                elif kp_val < 3.0:
+                    kp_bin = "med"
+                else:
+                    kp_bin = "high"
+                kp_bins.append(kp_bin)
+                eq_bins.append(eq_tomorrow)
+                eq_bins_same_day.append(eq_today)
+
+            if tec_val is not None:
+                # Discretize TEC: low/med/high by terciles
+                tec_bins.append(("tec_day", d_today, tec_val, eq_tomorrow))
+
+        # Kp → earthquake tomorrow
+        mi_kp_tomorrow = mutual_information(kp_bins, eq_bins)
+        mi_kp_sameday = mutual_information(kp_bins, eq_bins_same_day)
+
+        # Shuffled baseline for significance
+        n_shuffle = 100
+        shuffled_mis_tomorrow = []
+        shuffled_mis_sameday = []
+        for _ in range(n_shuffle):
+            shuffled_eq = eq_bins.copy()
+            random.shuffle(shuffled_eq)
+            shuffled_mis_tomorrow.append(mutual_information(kp_bins, shuffled_eq))
+            shuffled_sd = eq_bins_same_day.copy()
+            random.shuffle(shuffled_sd)
+            shuffled_mis_sameday.append(mutual_information(kp_bins, shuffled_sd))
+
+        shuffle_mean_tmr = sum(shuffled_mis_tomorrow) / len(shuffled_mis_tomorrow) if shuffled_mis_tomorrow else 0
+        shuffle_mean_sd = sum(shuffled_mis_sameday) / len(shuffled_mis_sameday) if shuffled_mis_sameday else 0
+
+        # TEC MI (need to discretize by terciles)
+        tec_entries = [(d, v, eq) for _, d, v, eq in tec_bins if v is not None]
+        mi_tec_result = {"n": 0}
+        if len(tec_entries) > 100:
+            tec_vals = [v for _, v, _ in tec_entries]
+            tec_p33 = percentile(tec_vals, 33)
+            tec_p67 = percentile(tec_vals, 67)
+            tec_discrete = []
+            tec_eq = []
+            for _, v, eq in tec_entries:
+                if v < tec_p33:
+                    tec_discrete.append("low")
+                elif v < tec_p67:
+                    tec_discrete.append("med")
+                else:
+                    tec_discrete.append("high")
+                tec_eq.append(eq)
+
+            mi_tec = mutual_information(tec_discrete, tec_eq)
+            shuffled_mis_tec = []
+            for _ in range(n_shuffle):
+                s = tec_eq.copy()
+                random.shuffle(s)
+                shuffled_mis_tec.append(mutual_information(tec_discrete, s))
+            shuffle_mean_tec = sum(shuffled_mis_tec) / len(shuffled_mis_tec)
+
+            mi_tec_result = {
+                "n": len(tec_entries),
+                "mi_tec_eq_tomorrow": round(mi_tec, 6),
+                "shuffled_mean": round(shuffle_mean_tec, 6),
+                "ratio_vs_shuffled": round(mi_tec / max(shuffle_mean_tec, 1e-10), 2),
+            }
+
+        results["mutual_information"] = {
+            "n_days": len(kp_bins),
+            "base_rate_eq": round(sum(eq_bins) / max(len(eq_bins), 1) * 100, 1),
+            "kp_tomorrow": {
+                "mi": round(mi_kp_tomorrow, 6),
+                "shuffled_mean": round(shuffle_mean_tmr, 6),
+                "ratio_vs_shuffled": round(mi_kp_tomorrow / max(shuffle_mean_tmr, 1e-10), 2),
+            },
+            "kp_same_day": {
+                "mi": round(mi_kp_sameday, 6),
+                "shuffled_mean": round(shuffle_mean_sd, 6),
+                "ratio_vs_shuffled": round(mi_kp_sameday / max(shuffle_mean_sd, 1e-10), 2),
+            },
+            "tec_tomorrow": mi_tec_result,
+        }
+        logger.info(
+            "    MI(Kp→eq_tmr)=%.6f (shuffled=%.6f, ratio=%.1f) | MI(Kp→eq_same)=%.6f",
+            mi_kp_tomorrow, shuffle_mean_tmr,
+            mi_kp_tomorrow / max(shuffle_mean_tmr, 1e-10),
+            mi_kp_sameday,
+        )
+
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--min-mag", type=float, default=5.0)
-    parser.add_argument("--type", choices=["all", "bvalue", "tec", "lag", "multi"], default="all")
+    parser.add_argument("--type", choices=["all", "bvalue", "tec", "lag", "multi", "advanced"], default="all")
     args = parser.parse_args()
 
     RESULTS_DIR.mkdir(exist_ok=True)
@@ -771,6 +1208,9 @@ async def main():
 
         if args.type in ("all", "multi"):
             results["multi"] = await analyze_multi(db, args.min_mag)
+
+        if args.type in ("all", "advanced"):
+            results["advanced"] = await analyze_advanced(db, args.min_mag)
 
     out_path = RESULTS_DIR / f"analysis_{timestamp}.json"
     with open(out_path, "w") as f:

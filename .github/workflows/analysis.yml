@@ -13,7 +13,7 @@ on:
         required: false
         default: '5.0'
       analysis_type:
-        description: 'Analysis type: all | bvalue | tec | lag | multi'
+        description: 'Analysis type: all | bvalue | tec | lag | multi | advanced'
         required: false
         default: 'all'
 
