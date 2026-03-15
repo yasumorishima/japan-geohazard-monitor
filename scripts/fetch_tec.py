@@ -1,11 +1,18 @@
-"""Fetch TEC (IONEX) data around M6.5+ earthquakes from CODE (Bern)."""
+"""Fetch TEC (IONEX) data from CODE (Bern).
 
+Modes:
+  event  — Fetch around M6.5+ earthquakes ±7 days (existing)
+  random — Fetch random dates ±7 days for control baseline
+"""
+
+import argparse
 import asyncio
 import gzip
 import logging
+import random as random_mod
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import aiohttp
@@ -22,9 +29,10 @@ JAPAN_BBOX = "minlatitude=20&maxlatitude=50&minlongitude=120&maxlongitude=155"
 TEC_LAT_MIN, TEC_LAT_MAX = 25.0, 45.0
 TEC_LON_MIN, TEC_LON_MAX = 125.0, 150.0
 WINDOW_DAYS = 7
+MAX_CONCURRENT = 3
 
 
-async def get_major_earthquakes(session: aiohttp.ClientSession) -> list[str]:
+async def get_major_earthquakes(session: aiohttp.ClientSession) -> list[date]:
     """Get dates of M6.5+ earthquakes in Japan."""
     url = (
         "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson"
@@ -106,62 +114,149 @@ def parse_ionex_japan(content: str) -> list[tuple]:
     return rows
 
 
+async def download_ionex(session: aiohttp.ClientSession, d: date) -> str | None:
+    """Download and decompress IONEX file for a given date. Returns content or None."""
+    doy = d.timetuple().tm_yday
+    yr = d.year
+    yy = yr % 100
+
+    urls = [
+        f"http://ftp.aiub.unibe.ch/CODE/{yr}/COD0OPSFIN_{yr}{doy:03d}0000_01D_01H_GIM.INX.gz",
+        f"http://ftp.aiub.unibe.ch/CODE/{yr}/CODG{doy:03d}0.{yy:02d}I.Z",
+    ]
+
+    for url in urls:
+        try:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status != 200:
+                    continue
+                compressed = await resp.read()
+            if url.endswith(".gz"):
+                return gzip.decompress(compressed).decode("ascii", errors="ignore")
+            else:
+                proc = subprocess.run(
+                    ["uncompress", "-c"], input=compressed, capture_output=True
+                )
+                if proc.returncode == 0:
+                    return proc.stdout.decode("ascii", errors="ignore")
+        except Exception:
+            continue
+    return None
+
+
+async def download_and_parse(
+    session: aiohttp.ClientSession, d: date, sem: asyncio.Semaphore
+) -> tuple[date, list[tuple]]:
+    """Download, parse one date. Rate-limited by semaphore."""
+    async with sem:
+        content = await download_ionex(session, d)
+        await asyncio.sleep(0.3)  # Rate limiting
+        if not content:
+            return d, []
+        return d, parse_ionex_japan(content)
+
+
+async def get_existing_tec_dates(db: aiosqlite.Connection) -> set[str]:
+    """Get set of dates (YYYY-MM-DD) that already have TEC data in DB."""
+    rows = await db.execute_fetchall("SELECT DISTINCT DATE(epoch) FROM tec")
+    return {r[0] for r in rows if r[0]}
+
+
+def expand_with_window(anchor_dates: list[date], window: int = WINDOW_DAYS) -> list[date]:
+    """Expand anchor dates by ±window days and deduplicate."""
+    all_dates = set()
+    for d in anchor_dates:
+        for offset in range(-window, window + 1):
+            all_dates.add(d + timedelta(days=offset))
+    return sorted(all_dates)
+
+
 async def main():
+    parser = argparse.ArgumentParser(description="Fetch TEC IONEX data")
+    parser.add_argument(
+        "--mode", choices=["event", "random"], default="event",
+        help="event: M6.5+ earthquakes ±7d | random: random dates for baseline",
+    )
+    parser.add_argument(
+        "--n-dates", type=int, default=300,
+        help="Number of random anchor dates (random mode only)",
+    )
+    args = parser.parse_args()
+
     await init_db()
 
     async with aiohttp.ClientSession() as session:
-        dates = await get_major_earthquakes(session)
-        logger.info("TEC dates to fetch: %d (around %d+ events)", len(dates), len(dates) // 15)
+        # 1. Determine anchor dates
+        if args.mode == "event":
+            anchor_dates = await get_major_earthquakes(session)
+            logger.info("Event mode: %d anchor dates from M6.5+ earthquakes", len(anchor_dates))
+        else:
+            random_mod.seed(42)
+            start = date(2011, 1, 1)
+            end = date.today() - timedelta(days=8)  # Leave room for window
+            total_days = (end - start).days
+            anchors = set()
+            attempts = 0
+            while len(anchors) < args.n_dates and attempts < args.n_dates * 3:
+                anchors.add(start + timedelta(days=random_mod.randint(0, total_days)))
+                attempts += 1
+            anchor_dates = sorted(anchors)
+            logger.info("Random mode: %d anchor dates generated", len(anchor_dates))
 
+        # 2. Expand to full ±7 day windows
+        all_dates = expand_with_window(anchor_dates, WINDOW_DAYS)
+
+        # 3. Check which dates already exist in DB
+        async with aiosqlite.connect(DB_PATH) as db:
+            existing = await get_existing_tec_dates(db)
+
+        new_dates = [d for d in all_dates if d.isoformat() not in existing]
+        logger.info(
+            "Total dates: %d | Already in DB: %d | To download: %d",
+            len(all_dates), len(all_dates) - len(new_dates), len(new_dates),
+        )
+
+        if not new_dates:
+            logger.info("No new dates to fetch. Done.")
+            return
+
+        # 4. Download concurrently (semaphore limits parallelism)
+        sem = asyncio.Semaphore(MAX_CONCURRENT)
+        tasks = [download_and_parse(session, d, sem) for d in new_dates]
+
+        # Process in batches to show progress and commit periodically
+        batch_size = 50
         total = 0
         async with aiosqlite.connect(DB_PATH) as db:
-            for d in dates:
-                doy = d.timetuple().tm_yday
-                yr = d.year
-                yy = yr % 100
+            for batch_start in range(0, len(tasks), batch_size):
+                batch = tasks[batch_start:batch_start + batch_size]
+                results = await asyncio.gather(*batch, return_exceptions=True)
 
-                # Try new naming, then old
-                urls = [
-                    f"http://ftp.aiub.unibe.ch/CODE/{yr}/COD0OPSFIN_{yr}{doy:03d}0000_01D_01H_GIM.INX.gz",
-                    f"http://ftp.aiub.unibe.ch/CODE/{yr}/CODG{doy:03d}0.{yy:02d}I.Z",
-                ]
-
-                content = None
-                for url in urls:
-                    try:
-                        async with session.get(url) as resp:
-                            if resp.status != 200:
-                                continue
-                            compressed = await resp.read()
-                        if url.endswith(".gz"):
-                            content = gzip.decompress(compressed).decode("ascii", errors="ignore")
-                        else:
-                            proc = subprocess.run(
-                                ["uncompress", "-c"], input=compressed, capture_output=True
-                            )
-                            if proc.returncode == 0:
-                                content = proc.stdout.decode("ascii", errors="ignore")
-                        if content:
-                            break
-                    except Exception:
+                batch_count = 0
+                for r in results:
+                    if isinstance(r, Exception):
+                        logger.warning("Download error: %s", r)
                         continue
+                    d, rows = r
+                    if rows:
+                        await db.executemany(
+                            """INSERT OR IGNORE INTO tec
+                               (latitude, longitude, tec_tecu, epoch, product_type, received_at)
+                               VALUES (?, ?, ?, ?, ?, ?)""",
+                            rows,
+                        )
+                        batch_count += len(rows)
 
-                if not content:
-                    continue
+                await db.commit()
+                total += batch_count
+                logger.info(
+                    "Progress: %d/%d dates done, %d new TEC records this batch",
+                    min(batch_start + batch_size, len(new_dates)),
+                    len(new_dates),
+                    batch_count,
+                )
 
-                rows = parse_ionex_japan(content)
-                if rows:
-                    await db.executemany(
-                        """INSERT OR IGNORE INTO tec
-                           (latitude, longitude, tec_tecu, epoch, product_type, received_at)
-                           VALUES (?, ?, ?, ?, ?, ?)""",
-                        rows,
-                    )
-                    await db.commit()
-                    total += len(rows)
-                    logger.info("TEC %s: %d points", d.isoformat(), len(rows))
-
-        logger.info("Total TEC records: %d", total)
+        logger.info("Total new TEC records inserted: %d", total)
 
 
 if __name__ == "__main__":

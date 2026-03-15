@@ -20,7 +20,7 @@ on:
 jobs:
   analyze:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
 
     steps:
       - uses: actions/checkout@v4
@@ -32,6 +32,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install aiohttp aiosqlite
+          sudo apt-get install -y ncompress  # For .Z IONEX decompression
 
       - name: Fetch earthquake data (M3+, 2011-2026)
         env:
@@ -44,7 +45,13 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_tec.py
+          python3 scripts/fetch_tec.py --mode event
+
+      - name: Fetch TEC random baseline (±7 days around 300 random dates)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_tec.py --mode random --n-dates 300
 
       - name: Fetch Kp data (2011-2026)
         env:
