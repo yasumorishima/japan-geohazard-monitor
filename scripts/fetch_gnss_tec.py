@@ -193,12 +193,21 @@ def _extract_from_scipy(ds, epoch: str) -> list[tuple]:
 def _grid_to_rows(lats, lons, tec_data, epoch: str) -> list[tuple]:
     """Convert lat/lon/tec grids to row tuples, filtered to Japan bbox.
 
-    Subsample to 0.5° to manage data volume (every 2nd point from 0.25° grid).
+    Nagoya GNSS-TEC netCDF structure:
+        atec shape = (lat=360, lon=721, time=12)
+        Dimensions: (latitude, longitude, time)
+        Resolution: 0.5° spatial, 5-min temporal (12 steps per hour)
+        Missing value: 999.0
+
+    Subsample to 1.0° to manage data volume (every 2nd point from 0.5° grid).
+    Take time-averaged TEC (mean over 12 five-minute bins in the hour).
     """
     rows = []
-    stride = 2  # 0.25° × 2 = 0.5° effective resolution
+    stride = 2  # 0.5° × 2 = 1.0° effective resolution
+    MISSING = 999.0
 
     if tec_data.ndim == 2:
+        # (lat, lon) — simple 2D grid
         for i in range(0, len(lats), stride):
             lat = float(lats[i])
             if lat < JAPAN_BBOX["min_lat"] or lat > JAPAN_BBOX["max_lat"]:
@@ -208,12 +217,12 @@ def _grid_to_rows(lats, lons, tec_data, epoch: str) -> list[tuple]:
                 if lon < JAPAN_BBOX["min_lon"] or lon > JAPAN_BBOX["max_lon"]:
                     continue
                 tec = float(tec_data[i, j])
-                # Skip fill values and NaN
-                if tec < -900 or tec != tec or tec > 200:
+                if tec >= MISSING or tec < -100 or tec != tec or tec > 200:
                     continue
                 rows.append((lat, lon, tec, None, epoch))
     elif tec_data.ndim == 3:
-        # (time, lat, lon) — take first time step
+        # Nagoya format: (lat, lon, time) — NOT (time, lat, lon)
+        # Average over time axis (axis=2) for a single hourly value
         for i in range(0, len(lats), stride):
             lat = float(lats[i])
             if lat < JAPAN_BBOX["min_lat"] or lat > JAPAN_BBOX["max_lat"]:
@@ -222,10 +231,15 @@ def _grid_to_rows(lats, lons, tec_data, epoch: str) -> list[tuple]:
                 lon = float(lons[j])
                 if lon < JAPAN_BBOX["min_lon"] or lon > JAPAN_BBOX["max_lon"]:
                     continue
-                tec = float(tec_data[0, i, j])
-                if tec < -900 or tec != tec or tec > 200:
-                    continue
-                rows.append((lat, lon, tec, None, epoch))
+                # Average over time steps, excluding missing values
+                vals = []
+                for t in range(tec_data.shape[2]):
+                    v = float(tec_data[i, j, t])
+                    if v < MISSING and v > -100 and v == v and v <= 200:
+                        vals.append(v)
+                if vals:
+                    tec_mean = sum(vals) / len(vals)
+                    rows.append((lat, lon, round(tec_mean, 2), None, epoch))
 
     return rows
 
