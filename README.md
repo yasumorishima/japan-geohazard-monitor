@@ -83,7 +83,7 @@ Supports 3/7/14/30-day windows. Auto-refreshes every 5 minutes when open.
 
 ## Database
 
-SQLite with WAL mode. 8 tables:
+SQLite with WAL mode. 10 tables:
 
 - `earthquakes` — dedup by (source, event_id)
 - `amedas` — dedup by (station_id, observed_at)
@@ -93,8 +93,10 @@ SQLite with WAL mode. 8 tables:
 - `sst` — dedup by (lat, lon, observed_at)
 - `tec` — dedup by (lat, lon, epoch)
 - `geonet` — dedup by (station_id, observed_at)
+- `focal_mechanisms` — GCMT strike/dip/rake, dedup by (source, event_id)
+- `gnss_tec` — high-res 0.25° TEC from Nagoya Univ., dedup by (lat, lon, epoch, source)
 
-Auto-purge: records older than 90 days deleted on each collector cycle.
+Auto-purge: records older than 90 days deleted on each collector cycle (real-time tables only; analysis tables retained).
 
 ## Deployment
 
@@ -115,8 +117,9 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 - **Phase 3** ✅ Volcanoes (JMA 117 active) + Ocean (NOAA ERDDAP MUR SST)
 - **Phase 4** ✅ Ionosphere TEC (CODE Bern predicted IONEX) + GEONET crustal deformation (GSI SFTP, 218 stations)
 - **Correlation** ✅ Time-synchronized 5-chart panel (earthquake/Kp/GOES/TEC/pressure)
-- **Analysis** ✅ Anomaly detection (±2σ), lag correlation, epicenter TEC, b-value, multi-indicator grid search
-- **Backfill** ✅ 2011-2026 M3+ earthquakes (28K), TEC (728K + random baseline), Kp (44K)
+- **Analysis Phase 1** ✅ b-value, TEC, Kp, multi-indicator grid search → all negative (aftershock/sampling artifacts)
+- **Analysis Phase 2** 🔄 Coulomb stress, ETAS, clustering, high-res GNSS-TEC (running)
+- **Backfill** ✅ 2011-2026 M3+ earthquakes (29K), TEC (4M), Kp (44K), GCMT focal mechanisms
 - **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 120min timeout)
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
 
@@ -212,39 +215,59 @@ M6 is *weaker* than M5. No physically consistent magnitude scaling.
 3. **Low-resolution global indices cannot detect local precursors** — IONEX TEC (2.5°×5° grid) and Kp (global 3-hour average) spatially average away any local earthquake-related signal
 4. **Always validate with multiple independent methods** — the TEC signal survived aftershock filtering OR sampling correction alone, but collapsed under both simultaneously
 
-### What's next
+### Phase 2: New approaches (in progress)
 
-The fundamental limitation of this phase was **spatial resolution**. Global/regional averages dilute any local precursory signal below detection threshold. The path forward is higher-resolution, more localized data:
+Phase 1's fundamental limitation was **spatial resolution** — global indices dilute local signals below detection. Phase 2 attacks from 4 independent directions simultaneously:
 
-| Priority | Data | Why it could work | Source |
+| Approach | Method | What it tests | Status |
 |---|---|---|---|
-| **1** | **GEONET GPS-TEC** | 1,300 GPS stations → point TEC measurements directly above epicenters, no spatial averaging dilution. Orders of magnitude higher resolution than IONEX | GSI GEONET / NICT |
-| **2** | **Coulomb stress transfer** | Deterministic physics: each earthquake changes stress on surrounding faults. Computable from existing 28K catalog. Not statistical pattern matching — mechanical causation | Okada (1992) model |
-| 3 | OLR (Outgoing Longwave Radiation) | LAIC intermediate step: surface thermal anomaly before ionosphere change. Daily 2.5° grid, 1979-present | NOAA CDR |
-| 4 | GRACE-FO gravity anomalies | Subsurface mass redistribution from slow-slip/fluid migration. Monthly 1° grid | NASA JPL |
-| 5 | Solar wind (ACE/DSCOVR) | Control variable: separate solar-driven ionosphere changes from any earthquake-related changes | NOAA SWPC / NASA OMNI |
+| **Coulomb stress transfer** | Okada (1992) dislocation model + GCMT focal mechanisms + Wells & Coppersmith (1994) scaling | Do M5+ events occur preferentially in stress-enhanced zones from prior earthquakes? Physics-based causation, not statistical correlation | Running |
+| **ETAS rate anomaly** | Epidemic Type Aftershock Sequence model (Ogata 1988) fit to M3+ catalog | Are M5+ events preceded by anomalous activation or quiescence relative to ETAS expectation? | Running |
+| **Spatiotemporal clustering** | Zaliapin & Ben-Zion (2013) nearest-neighbor distance | Data-driven foreshock sequence detection — do M5+ events have more precursory cluster activity than random M4 events? | Running |
+| **High-resolution GNSS-TEC** | Nagoya University ISEE 0.25° grid (25x finer than CODE IONEX) | Re-test ionosphere anomaly hypothesis at resolution where local signals wouldn't be diluted | Running |
+
+**Future candidates:**
+
+| Data | Physical basis | Source |
+|---|---|---|
+| GEONET GPS-TEC (per-station) | Point TEC at each of 1,300 GPS stations — ultimate spatial resolution | GSI GEONET RINEX + gnss-tec |
+| OLR | LAIC intermediate step: surface thermal anomaly | NOAA CDR (daily, 2.5°, 1979-) |
+| GRACE-FO gravity | Subsurface mass redistribution | NASA JPL (monthly, 1°) |
+| InSAR crustal deformation | Wide-area strain pattern detection | ALOS-2 / Sentinel-1 |
+| Atmospheric gravity waves | Ionosphere coupling mechanism | COSMIC-2 (UCAR CDAAC) |
+| Earthquake waveform ML | Foreshock vs normal event classification | Hi-net (NIED) |
 
 ## Automated Analysis (GitHub Actions)
 
-Weekly analysis workflow fetches fresh data from public APIs and runs control experiments.
+Weekly analysis workflow fetches data from 4 public APIs, runs Phase 1 + Phase 2 analyses, and stores results as artifacts.
 
 ```bash
 # Manual trigger
 gh workflow run "Earthquake Correlation Analysis" \
   --repo yasumorishima/japan-geohazard-monitor \
-  -f memo="multi-indicator test" \
-  -f min_mag=5.0 \
-  -f analysis_type=all
+  -f memo="Phase 2 full suite"
 ```
 
-| Script | Purpose |
-|---|---|
-| `scripts/fetch_earthquakes.py` | M3+ earthquakes from USGS (yearly chunks) |
-| `scripts/fetch_kp.py` | Full Kp history from GFZ Potsdam |
-| `scripts/fetch_tec.py` | IONEX TEC from CODE (Bern) — `--mode event` (M6.5+ ±7d) or `--mode random` (baseline) |
-| `scripts/run_analysis.py` | b-value (with isolation filter), epicenter TEC, multi-indicator grid search (100 combos) |
+### Data fetch scripts
 
-Results saved as JSON artifact (90-day retention). Runs every Monday 12:00 JST or on demand.
+| Script | Source | Data |
+|---|---|---|
+| `fetch_earthquakes.py` | USGS GeoJSON | M3+ earthquakes (yearly chunks, retry with backoff) |
+| `fetch_kp.py` | GFZ Potsdam | Kp geomagnetic index (2011-present, retry with backoff) |
+| `fetch_tec.py` | CODE (Bern) IONEX | Ionosphere TEC 2.5°×5° grid (event ±7d + random baseline) |
+| `fetch_cmt.py` | GCMT NDK catalog | Focal mechanisms: strike/dip/rake for Japan M5+ (2011-present) |
+| `fetch_gnss_tec.py` | Nagoya Univ. ISEE | High-resolution GNSS-TEC 0.25° grid (M6.5+ ±3 days) |
+
+### Analysis scripts
+
+| Script | Method | Reference |
+|---|---|---|
+| `run_analysis.py` | Phase 1: b-value, TEC, multi-indicator grid search, TEC detrended (with isolation filter, balanced sampling, bootstrap CI, rolling detrend validation) | — |
+| `coulomb_analysis.py` | Coulomb Failure Stress from Okada dislocation model, earthquake vs random location comparison | Okada (1992), Toda & Stein (2011) |
+| `etas_analysis.py` | ETAS model fit + rate ratio analysis for anomalous activation/quiescence detection | Ogata (1988, 1998) |
+| `cluster_analysis.py` | Nearest-neighbor distance clustering for foreshock sequence detection | Zaliapin & Ben-Zion (2013) |
+
+Results saved as JSON artifacts (90-day retention). Runs every Monday 12:00 JST or on demand.
 
 ### Not yet implemented
 
@@ -256,10 +279,11 @@ Results saved as JSON artifact (90-day retention). Runs every Monday 12:00 JST o
 ## Data Attribution
 
 - Earthquake data: USGS, P2P地震情報, 気象庁
+- Focal mechanisms: Global CMT Project (Ekström et al., 2012)
 - AMeDAS / Volcano: 気象庁
-- Geomagnetic: NOAA Space Weather Prediction Center
+- Geomagnetic: NOAA Space Weather Prediction Center, GFZ Potsdam
 - SST: NASA JPL MUR SST v4.1 via NOAA ERDDAP
-- Ionosphere TEC: CODE, Astronomical Institute, University of Bern
+- Ionosphere TEC: CODE (Astronomical Institute, University of Bern), Nagoya University ISEE GNSS-TEC
 - GEONET: 国土地理院 (Geospatial Information Authority of Japan)
 
 ## Related
