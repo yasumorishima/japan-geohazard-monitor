@@ -486,6 +486,26 @@ async def run_coulomb_analysis(min_mag: float = 5.0) -> dict:
     # Lift calculation
     lift = positive_pct / max(random_positive_pct, 0.1)
 
+    # CFS threshold analysis: at what CFS levels do earthquakes outperform random?
+    thresholds_kpa = [1, 5, 10, 50, 100, 500, 1000]
+    threshold_analysis = {}
+    for thresh in thresholds_kpa:
+        eq_above = sum(1 for v in cfs_values if v > thresh) / max(len(cfs_values), 1) * 100
+        rand_above = sum(1 for v in random_cfs if v > thresh) / max(len(random_cfs), 1) * 100
+        threshold_analysis[f"gt_{thresh}kPa"] = {
+            "eq_pct": round(eq_above, 1),
+            "rand_pct": round(rand_above, 1),
+            "lift": round(eq_above / max(rand_above, 0.1), 2),
+        }
+    logger.info("  CFS threshold analysis:")
+    for k, v in threshold_analysis.items():
+        logger.info("    %s: eq=%.1f%% rand=%.1f%% lift=%.2f", k, v["eq_pct"], v["rand_pct"], v["lift"])
+
+    # Temporal stability
+    split_idx = len(events) // 2
+    early_cfs = [e["cumulative_cfs_kpa"] for e in cfs_at_events[:split_idx] if e["cumulative_cfs_kpa"] is not None]
+    late_cfs = [e["cumulative_cfs_kpa"] for e in cfs_at_events[split_idx:] if e["cumulative_cfs_kpa"] is not None]
+
     results = {
         "summary": {
             "n_events": total_computed,
@@ -498,6 +518,11 @@ async def run_coulomb_analysis(min_mag: float = 5.0) -> dict:
         "earthquake_locations": stats(cfs_values),
         "random_locations": stats(random_cfs),
         "lift_positive_cfs": round(lift, 2),
+        "threshold_analysis": threshold_analysis,
+        "temporal_stability": {
+            "early_half": stats(early_cfs),
+            "late_half": stats(late_cfs),
+        },
         "by_magnitude": {k: stats(v) for k, v in sorted(mag_bins.items())},
         "by_cmt_availability": {k: stats(v) for k, v in cfs_by_cmt.items()},
         "sample_events": cfs_at_events[:30],

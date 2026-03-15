@@ -337,6 +337,55 @@ async def run_cluster_analysis(min_mag_target: float = 5.0) -> dict:
         bin_label = f"M{int(s['mag'])}"
         mag_foreshock.setdefault(bin_label, []).append(s["n_foreshocks"])
 
+    # ---------------------------------------------------------------
+    # 6. Validation: temporal stability (2011-2018 vs 2019-2026)
+    # ---------------------------------------------------------------
+    split_date = datetime(2019, 1, 1, tzinfo=timezone.utc)
+    split_days = (split_date - t0).total_seconds() / 86400
+
+    early_fore = [s for s in foreshock_stats
+                  if datetime.fromisoformat(s["time"]).replace(tzinfo=timezone.utc) < split_date]
+    late_fore = [s for s in foreshock_stats
+                 if datetime.fromisoformat(s["time"]).replace(tzinfo=timezone.utc) >= split_date]
+
+    temporal_stability = {
+        "2011_2018": foreshock_summary(early_fore) if early_fore else {"n": 0},
+        "2019_2026": foreshock_summary(late_fore) if late_fore else {"n": 0},
+    }
+    logger.info("  Temporal: 2011-2018 fore=%.1f%% (n=%d) | 2019-2026 fore=%.1f%% (n=%d)",
+                temporal_stability["2011_2018"].get("has_foreshock_pct", 0),
+                temporal_stability["2011_2018"].get("n", 0),
+                temporal_stability["2019_2026"].get("has_foreshock_pct", 0),
+                temporal_stability["2019_2026"].get("n", 0))
+
+    # ---------------------------------------------------------------
+    # 7. Bootstrap CI for foreshock lift
+    # ---------------------------------------------------------------
+    eq_fore_flags = [1 if s["n_foreshocks"] > 0 else 0 for s in foreshock_stats]
+    rand_fore_flags = [1 if s["n_foreshocks"] > 0 else 0 for s in random_foreshock_stats]
+
+    bootstrap_lifts = []
+    rng = random.Random(777)
+    for _ in range(1000):
+        eq_sample = [rng.choice(eq_fore_flags) for _ in range(len(eq_fore_flags))]
+        rand_sample = [rng.choice(rand_fore_flags) for _ in range(len(rand_fore_flags))]
+        eq_rate = sum(eq_sample) / max(len(eq_sample), 1)
+        rand_rate = sum(rand_sample) / max(len(rand_sample), 1)
+        bootstrap_lifts.append(eq_rate / max(rand_rate, 0.001))
+
+    bootstrap_lifts.sort()
+    n_boot = len(bootstrap_lifts)
+    bootstrap_ci = {
+        "n_bootstrap": n_boot,
+        "mean_lift": round(sum(bootstrap_lifts) / n_boot, 2),
+        "ci_95_lower": round(bootstrap_lifts[int(n_boot * 0.025)], 2),
+        "ci_95_upper": round(bootstrap_lifts[int(n_boot * 0.975)], 2),
+        "p_value_approx": round(sum(1 for l in bootstrap_lifts if l <= 1.0) / n_boot, 4),
+    }
+    logger.info("  Bootstrap: lift=%.2f, 95%%CI=[%.2f, %.2f], p=%.4f",
+                bootstrap_ci["mean_lift"], bootstrap_ci["ci_95_lower"],
+                bootstrap_ci["ci_95_upper"], bootstrap_ci["p_value_approx"])
+
     results = {
         "catalog_stats": {
             "n_events": len(events),
@@ -354,7 +403,9 @@ async def run_cluster_analysis(min_mag_target: float = 5.0) -> dict:
             "m5_plus_events": eq_summary,
             "random_m4_events": rand_summary,
             "lift_has_foreshock": round(lift_has_fore, 2),
+            "bootstrap_ci": bootstrap_ci,
         },
+        "temporal_stability": temporal_stability,
         "by_magnitude": {
             k: {
                 "n": len(v),

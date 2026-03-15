@@ -179,9 +179,23 @@ async def run_etas_analysis(min_mag_target: float = 5.0) -> dict:
     logger.info("  Target events (M%.1f+): %d", min_mag_target, len(target_events))
 
     # For each target event, compute:
-    # 1. ETAS expected rate
-    # 2. Observed rate (simple count in ±7 days)
+    # 1. ETAS expected count in preceding 7 days (integral of rate)
+    # 2. Observed count in preceding 7 days
     # 3. Rate ratio = observed / expected
+
+    def etas_expected_count(t_target, idx_in_catalog, window_days=7):
+        """Approximate expected M3+ count in [t-window, t] by sampling ETAS rate."""
+        n_samples = 14
+        dt = window_days / n_samples
+        total = 0.0
+        for k in range(n_samples):
+            t_sample = t_target - window_days + (k + 0.5) * dt
+            # Only use events before the sample time (up to 90 days back for efficiency)
+            t_cutoff = t_sample - 90
+            recent = [(t, m) for t, m in events_td[:idx_in_catalog] if t > t_cutoff]
+            rate = etas_rate(t_sample, recent, params)
+            total += rate * dt
+        return total
 
     rate_ratios = []
     for i, te in enumerate(target_events):
@@ -189,30 +203,32 @@ async def run_etas_analysis(min_mag_target: float = 5.0) -> dict:
             (j for j, e in enumerate(events) if e["time"] == te["time"]),
             None
         )
-        if idx_in_catalog is None or idx_in_catalog < 20:
+        if idx_in_catalog is None or idx_in_catalog < 50:
             continue
 
-        # ETAS expected rate at this time
-        etas_lambda = etas_rate(te["t_days"], events_td[:idx_in_catalog], params)
+        # ETAS expected count in preceding 7 days
+        expected = etas_expected_count(te["t_days"], idx_in_catalog)
 
-        # Observed rate: M3+ events in preceding 7 days
+        # Observed count: M3+ events in preceding 7 days
         t_start = te["t_days"] - 7
         observed = sum(1 for t, m in events_td if t_start <= t < te["t_days"])
-        observed_rate = observed / 7.0
 
-        # Rate ratio
-        ratio = observed_rate / max(etas_lambda, 0.001)
+        # Rate ratio (observed / expected counts)
+        ratio = observed / max(expected, 0.1)
 
         rate_ratios.append({
             "time": te["time"].isoformat()[:16],
             "mag": te["mag"],
             "lat": te["lat"],
             "lon": te["lon"],
-            "etas_rate": round(etas_lambda, 3),
-            "observed_rate": round(observed_rate, 3),
+            "etas_expected_7d": round(expected, 1),
+            "observed_7d": observed,
             "rate_ratio": round(ratio, 3),
-            "excess": round(observed_rate - etas_lambda, 3),
+            "log_ratio": round(math.log10(max(ratio, 0.001)), 3),
         })
+
+        if (i + 1) % 500 == 0:
+            logger.info("    Processed %d/%d target events", i + 1, len(target_events))
 
     if not rate_ratios:
         return {"error": "No rate ratios computed"}
@@ -222,17 +238,16 @@ async def run_etas_analysis(min_mag_target: float = 5.0) -> dict:
     # ---------------------------------------------------------------
     random.seed(42)
     random_ratios = []
-    for _ in range(500):
+    for ri in range(500):
         t_rand = events_td[0][0] + 100 + random.random() * (T_total - 200)
         idx = next((j for j, (t, m) in enumerate(events_td) if t >= t_rand), len(events_td) - 1)
-        if idx < 20:
+        if idx < 50:
             continue
 
-        etas_lambda = etas_rate(t_rand, events_td[:idx], params)
+        expected = etas_expected_count(t_rand, idx)
         t_start = t_rand - 7
         observed = sum(1 for t, m in events_td if t_start <= t < t_rand)
-        observed_rate = observed / 7.0
-        ratio = observed_rate / max(etas_lambda, 0.001)
+        ratio = observed / max(expected, 0.1)
         random_ratios.append(round(ratio, 3))
 
     # ---------------------------------------------------------------
