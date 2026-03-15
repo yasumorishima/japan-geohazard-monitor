@@ -120,73 +120,96 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 - **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 120min timeout)
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
 
-## Analysis Results (2011-2026, 28,400 M3+ earthquakes)
+## Analysis Results (2011-2026, 28K M3+ earthquakes, 4M TEC, 44K Kp)
 
-No single indicator predicts earthquakes. This is consistent with the fact that no one has achieved earthquake prediction — if a single metric worked, it would already be in use.
+### Phase 1: Single indicators — all negative
 
-### b-value (Gutenberg-Richter) — ❌ No signal with complete data
+No single indicator predicts earthquakes when tested with proper controls (aftershock isolation filter, large random baseline).
 
-Initial analysis with M5+-only data appeared to show b-value drops before earthquakes (87% b<0.7 vs 23% random). **This was an artifact of incomplete data.** With M3+ complete data (28,400 events), the signal disappears:
+**b-value (Gutenberg-Richter) — ❌ Aftershock artifact**
 
-| Condition | n | Mean b | b < 0.7 |
+| Window | Random b<0.7 | All M5+ b<0.7 | Isolated M5+ b<0.7 |
 |---|---|---|---|
-| Random dates | 1,000 | 0.591 | 72% |
-| Before M4-4.9 | 300 | 0.600 | 74% |
-| Before M5-5.9 | 300 | 0.590 | 76% |
-| Before M7+ | 20 | 0.637 | 65% |
+| 7-day | 16.9% | 90.0% | **15.2%** (= random) |
+| 30-day | 42.6% | 91.6% | **39.5%** (= random) |
+| 90-day | 72.2% | 84.6% | **55.1%** (noise range) |
 
-No statistically significant difference across any magnitude band. **Lesson: incomplete data produces false signals.**
+The 90% "signal" without isolation was entirely aftershock clustering. With isolation filter: no difference from random.
 
-### Epicenter TEC — ⚠️ Inconclusive
+**Epicenter TEC (raw) — ❌ Systematic bias**
 
-TEC within 5° of epicenter, 7-day baseline vs. 24h precursor.
+| Condition | n | Mean σ |
+|---|---|---|
+| Random | 373 | -0.781 |
+| Before M5+ | 494 | -0.222 |
 
-| Condition | n | Mean σ | Negative % | Drops (σ<-1) | Spikes (σ>+1) |
-|---|---|---|---|---|---|
-| Random loc+time | 34 | -0.761 | 97% | 15% | 0% |
-| Before M5+ | 400 | -0.075 | 31% | 0% | 0% |
-| Before M7+ | 16 | -0.596 | 81% | 25% | 0% |
+Random TEC drops *more* than pre-earthquake TEC. The -0.781 bias comes from seasonal/diurnal/solar cycle patterns, not earthquakes.
 
-Random dates also show TEC drops (n=34 too small to be definitive). Signal may not be earthquake-specific.
+**Multi-indicator grid search (100 combos) — ❌ No signal**
 
-### Global Lag Correlation — ❌ No signal
+Best lift across 100 threshold combinations (b×5 × Kp×5 × TEC×4): 1.82 at n=17. Fixed threshold (b<0.7, Kp>2.5, TEC<-1): earthquake 22.1% vs random 21.4% — identical distributions.
 
-| Metric | M7+ peak r | M5+ peak r | Verdict |
+### Phase 2: Advanced analysis — two candidate signals found (validation in progress)
+
+**TEC with seasonal/diurnal correction — ⚠️ 3.6× lift (needs validation)**
+
+After removing monthly-hourly climatology bias, the TEC direction reverses:
+
+| Condition | Raw σ | Detrended σ | Spikes (σ>+1) |
 |---|---|---|---|
-| TEC (mean) | +0.01 | -0.05 | No signal (spatial averaging destroys it) |
-| Kp | +0.02 | +0.04 | No signal |
-| GOES | insufficient data | -0.46 | Needs more data |
-| Pressure | insufficient data | insufficient data | No historical AMeDAS API |
+| Random | -0.781 | +0.247 | 15.6% |
+| Before M5+ | -0.222 | **+0.942** | **56.5%** |
+
+Pre-earthquake TEC *increases* after detrending. Consistent with the LAIC (Lithosphere-Atmosphere-Ionosphere Coupling) model: radon emission → air ionization → electric field → ionosphere enhancement.
+
+**Kp temporal profile — ⚠️ 4.4× lift at -12h (needs aftershock filter validation)**
+
+| Lead time | Pre-EQ Kp | Random Kp | Kp > 3 |
+|---|---|---|---|
+| -7 days | 2.29 | 1.77 | 16% vs 14% |
+| -5 days | 1.49 | 1.83 | 2% vs 17% |
+| -3 days | 1.43 | 1.70 | 7% vs 13% |
+| **-24h** | **3.07** | 1.71 | **56% vs 14%** |
+| **-12h** | **3.41** | 1.72 | **62% vs 14%** |
+| -3h | 3.03 | 1.76 | 50% vs 16% |
+
+Kp normal/low 3-5 days before → rapid spike peaking at -12h. Needs aftershock isolation filter to confirm this isn't clustering contamination.
+
+**Mutual Information: TEC → next-day earthquake = 4.7× shuffled baseline**
+
+| Pair | MI | Shuffled mean | Ratio |
+|---|---|---|---|
+| Kp → next-day EQ | 0.000057 | 0.000242 | 0.24 |
+| **TEC → next-day EQ** | **0.002075** | **0.000440** | **4.71** |
+
+Nonlinear dependence between daily TEC and next-day M5+ earthquake occurrence. Linear correlation (Pearson) missed this entirely.
+
+### Validation in progress
+
+Four validation analyses are running to test whether the Phase 2 signals are real:
+
+1. **Kp profile with aftershock isolation** — does the -12h spike survive filtering?
+2. **TEC + Kp combined** — is simultaneous TEC spike + Kp elevation more predictive?
+3. **Temporal stability** — same pattern in 2011-2018 AND 2019-2026?
+4. **Magnitude dependence** — does signal strengthen for M6+, M7+?
 
 ### What's next
 
-Single-indicator approaches have been exhausted by decades of seismology research. No one has achieved earthquake prediction because simple methods don't work. The path forward requires going beyond what existing papers have done.
+**If validated:**
+- Solar flare (F10.7 index) covariate analysis for Kp signal
+- GEONET crustal deformation backfill (2011-2025) — slow-slip is a known physical precursor
+- Alternative TEC detrending methods (30-day rolling mean) for robustness
+- Bootstrap confidence intervals
+- Earthquake mechanism classification (thrust/normal/strike-slip)
 
-**1. Multi-indicator simultaneous anomaly detection** ✅ Implemented
-- b-value + TEC + Kp anomalies occurring *simultaneously* — do they predict earthquakes better than any single indicator?
-- Grid search over 100 threshold combinations (b×5 × Kp×5 × TEC×4), ranked by lift (pre-earthquake rate / random rate)
-- Aftershock isolation filter removes clustering contamination (3-day / 1.5° window)
-- Depth-based spatial binning (shallow <30km, intermediate 30-70km, deep >70km)
-- Per-indicator availability tracking and single-indicator percentile analysis
+**Data expansion needed:**
+- SST historical data via ERDDAP
+- GEONET F5 coordinates 2011-2025
+- GOES magnetometer historical data
 
-**2. Data expansion** (partially complete)
-- ✅ TEC random baseline (300 random dates ±7d for robust control, n→hundreds)
-- ✅ Kp full history 2011-2026 (44K records)
-- SST historical data via ERDDAP for pre-earthquake SST anomaly verification
-- GEONET F5 coordinates 2011-2025 for slow-slip detection before major earthquakes
-- GOES magnetometer historical data (alternative source needed)
-
-**3. Advanced analysis methods** (next phase)
-- Epicenter distance optimization: compare TEC at 1°/2°/5°/10° radius
-- Solar/seasonal/diurnal TEC correction before earthquake correlation
-- Nonlinear methods: Mutual Information, Transfer Entropy (Pearson only captures linear relationships)
-- Time-series pattern recognition: detect TEC/Kp "shape" patterns (e.g., sharp drop → recovery)
-- ML classification: all indicators as features → "M6+ within N days?" (extreme class imbalance challenge)
-
-**4. Dashboard improvements**
+**Dashboard:**
 - Add b-value time-series chart to correlation panel
 - Multi-indicator anomaly highlight display
-- Alert on simultaneous multi-indicator anomalies
 - Update screenshot (still shows Phase 1)
 
 ## Automated Analysis (GitHub Actions)
