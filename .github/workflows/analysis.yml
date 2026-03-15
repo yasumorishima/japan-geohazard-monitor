@@ -59,6 +59,18 @@ jobs:
         run: |
           python3 scripts/fetch_kp.py
 
+      - name: Fetch CMT focal mechanisms (GCMT, 2011-present)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_cmt.py
+
+      - name: Run Coulomb stress analysis
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/coulomb_analysis.py --min-mag 5.0
+
       - name: Run analysis
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db

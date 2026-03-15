@@ -193,6 +193,37 @@ async def init_db():
             ON geonet(observed_at)
         """)
 
+        # Phase 5: Focal mechanisms (CMT solutions)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS focal_mechanisms (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                occurred_at TEXT NOT NULL,
+                latitude REAL NOT NULL,
+                longitude REAL NOT NULL,
+                depth_km REAL NOT NULL,
+                magnitude REAL NOT NULL,
+                strike1 REAL NOT NULL,
+                dip1 REAL NOT NULL,
+                rake1 REAL NOT NULL,
+                strike2 REAL,
+                dip2 REAL,
+                rake2 REAL,
+                moment_nm REAL,
+                received_at TEXT NOT NULL,
+                UNIQUE(source, event_id)
+            )
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_fm_occurred
+            ON focal_mechanisms(occurred_at)
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_fm_location
+            ON focal_mechanisms(latitude, longitude)
+        """)
+
         await db.commit()
     logger.info("Database initialized: %s", DB_PATH)
 
