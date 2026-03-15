@@ -140,6 +140,72 @@
             background: #1b2838; color: #e0e0e0; border: 1px solid #3a4a5a;
             padding: 4px 8px; border-radius: 4px; font-size: 13px;
         }
+
+        /* === Mobile Responsive === */
+        @media (max-width: 768px) {
+            #header {
+                padding: 8px 12px;
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            #header h1 { font-size: 16px; }
+            #stats {
+                gap: 12px;
+                width: 100%;
+                justify-content: space-between;
+            }
+            .stat-value { font-size: 16px; }
+            .stat-label { font-size: 9px; }
+
+            #main-container {
+                flex-direction: column;
+                height: calc(100vh - 80px);
+            }
+            #map { min-height: 50vh; }
+
+            /* Correlation panel: bottom sheet on mobile */
+            #corr-panel {
+                width: 100% !important;
+                height: 0;
+                border-left: none;
+                border-top: 1px solid #2a3a4a;
+                transition: height 0.3s ease;
+            }
+            #corr-panel.open {
+                width: 100% !important;
+                height: 45vh;
+            }
+
+            #corr-toggle {
+                right: 10px;
+                bottom: 10px;
+                padding: 10px 14px;
+                font-size: 14px;
+            }
+
+            /* Larger touch targets */
+            .layer-control {
+                font-size: 14px;
+                padding: 12px 16px;
+            }
+            .layer-control label { padding: 6px 0; }
+            .layer-control select { padding: 6px 10px; font-size: 14px; }
+
+            .legend { font-size: 11px; padding: 8px 10px; }
+
+            /* Popups */
+            .eq-popup .mag { font-size: 20px; }
+            .eq-popup .location { font-size: 13px; }
+        }
+
+        @media (max-width: 480px) {
+            #stats { gap: 8px; }
+            .stat-value { font-size: 14px; }
+            .stat-label { font-size: 8px; }
+
+            #corr-panel.open { height: 50vh; }
+            .corr-chart-box canvas { height: 60px !important; }
+        }
     </style>
 </head>
 <body>
@@ -463,9 +529,24 @@
         function togglePanel() {
             const panel = document.getElementById('corr-panel');
             panel.classList.toggle('open');
-            setTimeout(() => { map.invalidateSize(); Object.values(corrCharts).forEach(c => c.resize()); }, 350);
+            // Wait for CSS transition to finish, then resize map + charts
+            setTimeout(() => {
+                map.invalidateSize();
+                Object.values(corrCharts).forEach(c => c.resize());
+            }, 350);
             if (panel.classList.contains('open')) loadCorrelation();
         }
+
+        // Close panel on map click (mobile UX)
+        map.on('click', function() {
+            if (window.innerWidth <= 768) {
+                const panel = document.getElementById('corr-panel');
+                if (panel.classList.contains('open')) {
+                    panel.classList.remove('open');
+                    setTimeout(() => map.invalidateSize(), 350);
+                }
+            }
+        });
 
         // === Init ===
         initCharts();
