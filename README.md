@@ -122,9 +122,16 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 
 ## Analysis Results (2011-2026, 28K M3+ earthquakes, 4M TEC, 44K Kp)
 
-### Phase 1: Single indicators — all negative
+### Summary: all tested indicators are negative
 
-No single indicator predicts earthquakes when tested with proper controls (aftershock isolation filter, large random baseline).
+Every indicator tested — b-value, Kp geomagnetic index, ionosphere TEC, and their combinations — showed **no statistically significant earthquake precursory signal** after proper bias correction.
+
+Two methodological artifacts were responsible for all false positives found during the investigation:
+
+1. **Aftershock contamination**: Without isolating independent events, clustering inflates apparent signals (b-value: 90% → 15%, Kp -12h: 62% → 11%)
+2. **Sampling bias**: Using chronologically-first events over-samples the 2011 Tohoku aftershock cluster (TEC σ: 0.942 → 0.263)
+
+### Phase 1: Single indicators — all negative
 
 **b-value (Gutenberg-Richter) — ❌ Aftershock artifact**
 
@@ -134,94 +141,88 @@ No single indicator predicts earthquakes when tested with proper controls (after
 | 30-day | 42.6% | 91.6% | **39.5%** (= random) |
 | 90-day | 72.2% | 84.6% | **55.1%** (noise range) |
 
-The 90% "signal" without isolation was entirely aftershock clustering. With isolation filter: no difference from random.
-
 **Epicenter TEC (raw) — ❌ Systematic bias**
 
-| Condition | n | Mean σ |
-|---|---|---|
-| Random | 373 | -0.781 |
-| Before M5+ | 494 | -0.222 |
-
-Random TEC drops *more* than pre-earthquake TEC. The -0.781 bias comes from seasonal/diurnal/solar cycle patterns, not earthquakes.
+Random TEC drops *more* than pre-earthquake TEC (σ=-0.781 vs -0.222). Bias from seasonal/diurnal/solar cycle patterns.
 
 **Multi-indicator grid search (100 combos) — ❌ No signal**
 
-Best lift across 100 threshold combinations (b×5 × Kp×5 × TEC×4): 1.82 at n=17. Fixed threshold (b<0.7, Kp>2.5, TEC<-1): earthquake 22.1% vs random 21.4% — identical distributions.
+Best lift 1.82 at n=17. Fixed thresholds: earthquake 22.1% vs random 21.4% — identical.
 
-### Phase 2: Advanced analysis — two candidate signals found (validation in progress)
+### Phase 2: Candidate signals found → validated → all rejected
 
-**TEC with seasonal/diurnal correction — ⚠️ 3.6× lift (needs validation)**
+Two promising signals were identified during exploratory analysis. Both were then rigorously validated with aftershock isolation + balanced time sampling + alternative methods + bootstrap CI. **Both collapsed.**
 
-After removing monthly-hourly climatology bias, the TEC direction reverses:
+**Kp -12h geomagnetic spike — ❌ Aftershock chain artifact (confirmed)**
 
-| Condition | Raw σ | Detrended σ | Spikes (σ>+1) |
+| Lead time | All events Kp>3 | **Isolated events Kp>3** | Random Kp>3 |
 |---|---|---|---|
-| Random | -0.781 | +0.247 | 15.6% |
-| Before M5+ | -0.222 | **+0.942** | **56.5%** |
+| -24h | 55.9% | **12.2%** | 14.2% |
+| -12h | 61.5% | **10.8%** | 14.0% |
+| -6h | 55.1% | **10.0%** | 15.2% |
 
-Pre-earthquake TEC *increases* after detrending. Consistent with the LAIC (Lithosphere-Atmosphere-Ionosphere Coupling) model: radon emission → air ionization → electric field → ionosphere enhancement.
+The apparent 62% Kp>3 rate was entirely from aftershock chains: the first M5+ in a cluster occurs during a Kp storm, then subsequent events in the same cluster all inherit the high Kp. Isolated events show Kp *below* random at every lead time.
 
-**Kp temporal profile — ⚠️ 4.4× lift at -12h (needs aftershock filter validation)**
+**TEC detrended (seasonal correction) — ❌ Sampling bias + aftershock artifact (confirmed)**
 
-| Lead time | Pre-EQ Kp | Random Kp | Kp > 3 |
+| Condition | Before bias fix | **After bias fix** | Bootstrap p |
 |---|---|---|---|
-| -7 days | 2.29 | 1.77 | 16% vs 14% |
-| -5 days | 1.49 | 1.83 | 2% vs 17% |
-| -3 days | 1.43 | 1.70 | 7% vs 13% |
-| **-24h** | **3.07** | 1.71 | **56% vs 14%** |
-| **-12h** | **3.41** | 1.72 | **62% vs 14%** |
-| -3h | 3.03 | 1.76 | 50% vs 16% |
+| Random | σ=+0.247, spikes 15.6% | σ=+0.247, spikes 15.6% | — |
+| All M5+ | **σ=+0.942, spikes 56.5%** | σ=+0.279, spikes 19.5% | p=0.265 |
+| **Isolated M5+ only** | not tested | **σ=+0.263, spikes 15.0%** | **p=0.389** |
 
-Kp normal/low 3-5 days before → rapid spike peaking at -12h. Needs aftershock isolation filter to confirm this isn't clustering contamination.
+The σ=0.942 "discovery" had two compounding artifacts:
+- `target_events[:500]` selected chronologically-first events, biased toward 2011 Tohoku aftershock cluster
+- Non-isolated events carried residual clustering effects
 
-**Mutual Information: TEC → next-day earthquake = 4.7× shuffled baseline**
+After balanced time sampling + isolation filter: mean_diff=0.016, 95% CI=[-0.106, +0.137], **indistinguishable from random**.
 
-| Pair | MI | Shuffled mean | Ratio |
+**Validation: temporal stability — ❌ No signal in either period**
+
+| Period | Isolated TECσ | Random TECσ | Bootstrap p |
 |---|---|---|---|
-| Kp → next-day EQ | 0.000057 | 0.000242 | 0.24 |
-| **TEC → next-day EQ** | **0.002075** | **0.000440** | **4.71** |
+| 2011-2018 (n=1937) | 0.218 | 0.312 | p=0.833 |
+| 2019-2026 (n=1178) | 0.095 | 0.183 | p=0.841 |
 
-Nonlinear dependence between daily TEC and next-day M5+ earthquake occurrence. Linear correlation (Pearson) missed this entirely.
+Isolated events show *lower* TEC than random in both periods.
 
-### Validation in progress
+**Validation: alternative detrending (30-day rolling) — ❌ Zero spikes**
 
-Four validation analyses are running to test whether the Phase 2 signals are real:
+| Condition | Rolling σ | Spikes (σ>+1) |
+|---|---|---|
+| Random | -0.666 | 0.0% |
+| Isolated M5+ | -0.622 | 0.0% |
 
-1. **Kp profile with aftershock isolation** — does the -12h spike survive filtering?
-2. **TEC + Kp combined** — is simultaneous TEC spike + Kp elevation more predictive?
-3. **Temporal stability** — same pattern in 2011-2018 AND 2019-2026?
-4. **Magnitude dependence** — does signal strengthen for M6+, M7+?
+Independent detrending method confirms no signal.
+
+**Validation: magnitude dependence (with isolation) — ❌ No monotonic increase**
+
+| Magnitude | Isolated TECσ | Spikes |
+|---|---|---|
+| M5-5.9 (n=1373 iso) | 0.127 | 11.7% |
+| M6-6.9 (n=160 iso) | 0.083 | 10.1% |
+| M7+ (n=20 iso) | 0.370 | 20.0% |
+
+M6 is *weaker* than M5. No physically consistent magnitude scaling.
+
+### Key lessons
+
+1. **Aftershock isolation is essential** — without it, every indicator shows inflated signals due to temporal clustering
+2. **Sampling method matters** — chronological truncation (`[:N]`) can introduce severe bias when event rates are non-stationary (e.g., post-Tohoku)
+3. **Low-resolution global indices cannot detect local precursors** — IONEX TEC (2.5°×5° grid) and Kp (global 3-hour average) spatially average away any local earthquake-related signal
+4. **Always validate with multiple independent methods** — the TEC signal survived aftershock filtering OR sampling correction alone, but collapsed under both simultaneously
 
 ### What's next
 
-Existing methods (b-value thresholds, raw TEC comparison, simple correlation) have been tried for decades without success. The path forward is **new data sources and new analytical perspectives**, not repeating what hasn't worked.
+The fundamental limitation of this phase was **spatial resolution**. Global/regional averages dilute any local precursory signal below detection threshold. The path forward is higher-resolution, more localized data:
 
-**Signal validation (if Phase 2 confirmed):**
-- Alternative TEC detrending (30-day rolling mean) for robustness check
-- Bootstrap confidence intervals
-- Solar flare (F10.7) covariate analysis — is Kp -12h spike solar-driven?
-- Earthquake mechanism classification (thrust/normal/strike-slip)
-
-**New data sources — novel perspectives no one has combined:**
-
-| Data | Physical basis | Source |
-|---|---|---|
-| **GEONET GPS-TEC** | 1,300 GPS stations = orders of magnitude higher spatial resolution than IONEX 2.5°×5° grid. Can examine TEC directly above epicenter without spatial averaging dilution | GSI GEONET / NICT |
-| **OLR (Outgoing Longwave Radiation)** | LAIC model intermediate step: radon → ionization → **surface heating** → atmospheric coupling → ionosphere. If TEC enhancement confirmed, surface thermal anomaly should precede it. **Independent cross-validation** | NOAA CDR OLR (daily, 2.5°, 1979-present) |
-| **GRACE-FO gravity anomalies** | Slow-slip and fluid migration redistribute mass → gravity field changes. Combined with GEONET surface displacement = 3D subsurface view | NASA JPL GRACE-FO Level-3 (monthly, 1°) |
-| **Solar wind (ACE/DSCOVR)** | Separate solar-driven Kp from earthquake-related Kp. If the -12h Kp spike disappears after controlling for solar wind → it's solar, not seismic | NOAA SWPC + NASA OMNI (1-min, 1995-present) |
-| **Coulomb stress transfer** | Physics-based: each earthquake adds stress to surrounding faults. Predict which fault is next. Combine with TEC/Kp for multi-domain approach. No new data needed — computable from existing 28K earthquake catalog | Okada (1992) model |
-
-**Also planned:**
-- GEONET F5 coordinates 2011-2025 (crustal deformation backfill)
-- SST historical data via ERDDAP
-- GOES magnetometer historical data
-
-**Dashboard:**
-- Add b-value time-series chart to correlation panel
-- Multi-indicator anomaly highlight display
-- Update screenshot (still shows Phase 1)
+| Priority | Data | Why it could work | Source |
+|---|---|---|---|
+| **1** | **GEONET GPS-TEC** | 1,300 GPS stations → point TEC measurements directly above epicenters, no spatial averaging dilution. Orders of magnitude higher resolution than IONEX | GSI GEONET / NICT |
+| **2** | **Coulomb stress transfer** | Deterministic physics: each earthquake changes stress on surrounding faults. Computable from existing 28K catalog. Not statistical pattern matching — mechanical causation | Okada (1992) model |
+| 3 | OLR (Outgoing Longwave Radiation) | LAIC intermediate step: surface thermal anomaly before ionosphere change. Daily 2.5° grid, 1979-present | NOAA CDR |
+| 4 | GRACE-FO gravity anomalies | Subsurface mass redistribution from slow-slip/fluid migration. Monthly 1° grid | NASA JPL |
+| 5 | Solar wind (ACE/DSCOVR) | Control variable: separate solar-driven ionosphere changes from any earthquake-related changes | NOAA SWPC / NASA OMNI |
 
 ## Automated Analysis (GitHub Actions)
 
