@@ -115,9 +115,9 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 - **Phase 3** ✅ Volcanoes (JMA 117 active) + Ocean (NOAA ERDDAP MUR SST)
 - **Phase 4** ✅ Ionosphere TEC (CODE Bern predicted IONEX) + GEONET crustal deformation (GSI SFTP, 218 stations)
 - **Correlation** ✅ Time-synchronized 5-chart panel (earthquake/Kp/GOES/TEC/pressure)
-- **Analysis** ✅ Anomaly detection (±2σ), lag correlation, epicenter TEC, b-value
-- **Backfill** ✅ 2011-2026 M3+ earthquakes (28,400), TEC (311K), Kp (18K)
-- **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact)
+- **Analysis** ✅ Anomaly detection (±2σ), lag correlation, epicenter TEC, b-value, multi-indicator grid search
+- **Backfill** ✅ 2011-2026 M3+ earthquakes (28K), TEC (728K + random baseline), Kp (44K)
+- **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 120min timeout)
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
 
 ## Analysis Results (2011-2026, 28,400 M3+ earthquakes)
@@ -162,19 +162,21 @@ Random dates also show TEC drops (n=34 too small to be definitive). Signal may n
 
 Single-indicator approaches have been exhausted by decades of seismology research. No one has achieved earthquake prediction because simple methods don't work. The path forward requires going beyond what existing papers have done.
 
-**1. Multi-indicator simultaneous anomaly detection** (highest priority)
-- Do b-value + TEC + Kp anomalies occurring *simultaneously* predict earthquakes better than any single indicator?
-- Threshold combination search: vary b<0.6/0.7/0.8, Kp>3/4/5, TEC σ<-0.5/-1.0/-1.5
-- Different time windows per indicator: b-value 90d + TEC 7d + Kp 48h
+**1. Multi-indicator simultaneous anomaly detection** ✅ Implemented
+- b-value + TEC + Kp anomalies occurring *simultaneously* — do they predict earthquakes better than any single indicator?
+- Grid search over 100 threshold combinations (b×5 × Kp×5 × TEC×4), ranked by lift (pre-earthquake rate / random rate)
+- Aftershock isolation filter removes clustering contamination (3-day / 1.5° window)
+- Depth-based spatial binning (shallow <30km, intermediate 30-70km, deep >70km)
+- Per-indicator availability tracking and single-indicator percentile analysis
 
-**2. Data expansion**
-- TEC full-period backfill (currently only ±7d around M6.5+ events — random control n=34 is too small)
+**2. Data expansion** (partially complete)
+- ✅ TEC random baseline (300 random dates ±7d for robust control, n→hundreds)
+- ✅ Kp full history 2011-2026 (44K records)
 - SST historical data via ERDDAP for pre-earthquake SST anomaly verification
 - GEONET F5 coordinates 2011-2025 for slow-slip detection before major earthquakes
 - GOES magnetometer historical data (alternative source needed)
 
-**3. Advanced analysis methods**
-- Spatial clustering: subduction zone vs. inland fault vs. volcanic — different mechanisms may have different precursors
+**3. Advanced analysis methods** (next phase)
 - Epicenter distance optimization: compare TEC at 1°/2°/5°/10° radius
 - Solar/seasonal/diurnal TEC correction before earthquake correlation
 - Nonlinear methods: Mutual Information, Transfer Entropy (Pearson only captures linear relationships)
@@ -204,8 +206,8 @@ gh workflow run "Earthquake Correlation Analysis" \
 |---|---|
 | `scripts/fetch_earthquakes.py` | M3+ earthquakes from USGS (yearly chunks) |
 | `scripts/fetch_kp.py` | Full Kp history from GFZ Potsdam |
-| `scripts/fetch_tec.py` | IONEX TEC around M6.5+ events from CODE (Bern) |
-| `scripts/run_analysis.py` | b-value, epicenter TEC, multi-indicator analysis with control experiments |
+| `scripts/fetch_tec.py` | IONEX TEC from CODE (Bern) — `--mode event` (M6.5+ ±7d) or `--mode random` (baseline) |
+| `scripts/run_analysis.py` | b-value (with isolation filter), epicenter TEC, multi-indicator grid search (100 combos) |
 
 Results saved as JSON artifact (90-day retention). Runs every Monday 12:00 JST or on demand.
 
