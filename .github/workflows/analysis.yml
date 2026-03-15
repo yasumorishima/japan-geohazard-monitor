@@ -90,6 +90,12 @@ jobs:
           pip install netCDF4 2>/dev/null || true
           python3 scripts/fetch_gnss_tec.py || echo "GNSS-TEC fetch failed (non-fatal, URL may need adjustment)"
 
+      - name: Run Phase 2 validation (isolation + delay + correlation + prospective)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/validate_phase2.py
+
       - name: Run analysis
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
