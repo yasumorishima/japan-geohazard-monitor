@@ -71,6 +71,25 @@ jobs:
         run: |
           python3 scripts/coulomb_analysis.py --min-mag 5.0
 
+      - name: Run ETAS analysis
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/etas_analysis.py --min-mag 5.0
+
+      - name: Run cluster analysis (Zaliapin-Ben-Zion)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/cluster_analysis.py --min-mag 5.0
+
+      - name: Fetch GNSS-TEC high-resolution data (Nagoya University)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          pip install netCDF4 2>/dev/null || true
+          python3 scripts/fetch_gnss_tec.py || echo "GNSS-TEC fetch failed (non-fatal, URL may need adjustment)"
+
       - name: Run analysis
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
