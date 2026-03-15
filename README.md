@@ -195,16 +195,27 @@ Four validation analyses are running to test whether the Phase 2 signals are rea
 
 ### What's next
 
-**If validated:**
-- Solar flare (F10.7 index) covariate analysis for Kp signal
-- GEONET crustal deformation backfill (2011-2025) — slow-slip is a known physical precursor
-- Alternative TEC detrending methods (30-day rolling mean) for robustness
+Existing methods (b-value thresholds, raw TEC comparison, simple correlation) have been tried for decades without success. The path forward is **new data sources and new analytical perspectives**, not repeating what hasn't worked.
+
+**Signal validation (if Phase 2 confirmed):**
+- Alternative TEC detrending (30-day rolling mean) for robustness check
 - Bootstrap confidence intervals
+- Solar flare (F10.7) covariate analysis — is Kp -12h spike solar-driven?
 - Earthquake mechanism classification (thrust/normal/strike-slip)
 
-**Data expansion needed:**
+**New data sources — novel perspectives no one has combined:**
+
+| Data | Physical basis | Source |
+|---|---|---|
+| **GEONET GPS-TEC** | 1,300 GPS stations = orders of magnitude higher spatial resolution than IONEX 2.5°×5° grid. Can examine TEC directly above epicenter without spatial averaging dilution | GSI GEONET / NICT |
+| **OLR (Outgoing Longwave Radiation)** | LAIC model intermediate step: radon → ionization → **surface heating** → atmospheric coupling → ionosphere. If TEC enhancement confirmed, surface thermal anomaly should precede it. **Independent cross-validation** | NOAA CDR OLR (daily, 2.5°, 1979-present) |
+| **GRACE-FO gravity anomalies** | Slow-slip and fluid migration redistribute mass → gravity field changes. Combined with GEONET surface displacement = 3D subsurface view | NASA JPL GRACE-FO Level-3 (monthly, 1°) |
+| **Solar wind (ACE/DSCOVR)** | Separate solar-driven Kp from earthquake-related Kp. If the -12h Kp spike disappears after controlling for solar wind → it's solar, not seismic | NOAA SWPC + NASA OMNI (1-min, 1995-present) |
+| **Coulomb stress transfer** | Physics-based: each earthquake adds stress to surrounding faults. Predict which fault is next. Combine with TEC/Kp for multi-domain approach. No new data needed — computable from existing 28K earthquake catalog | Okada (1992) model |
+
+**Also planned:**
+- GEONET F5 coordinates 2011-2025 (crustal deformation backfill)
 - SST historical data via ERDDAP
-- GEONET F5 coordinates 2011-2025
 - GOES magnetometer historical data
 
 **Dashboard:**
