@@ -215,16 +215,61 @@ M6 is *weaker* than M5. No physically consistent magnitude scaling.
 3. **Low-resolution global indices cannot detect local precursors** — IONEX TEC (2.5°×5° grid) and Kp (global 3-hour average) spatially average away any local earthquake-related signal
 4. **Always validate with multiple independent methods** — the TEC signal survived aftershock filtering OR sampling correction alone, but collapsed under both simultaneously
 
-### Phase 2: New approaches (in progress)
+### Phase 2: Physics-based and statistical approaches — 3 signals found
 
-Phase 1's fundamental limitation was **spatial resolution** — global indices dilute local signals below detection. Phase 2 attacks from 4 independent directions simultaneously:
+Phase 1's fundamental limitation was **spatial resolution** — global indices dilute local signals below detection. Phase 2 attacks from 4 independent directions. Three produced signals:
 
-| Approach | Method | What it tests | Status |
+**Coulomb stress transfer — CFS threshold-dependent lift (spatial control applied)**
+
+Using Okada (1992) dislocation model with 3,060 GCMT focal mechanisms. Compared earthquake locations vs 2-5° shifted locations (controls for spatial clustering):
+
+| CFS threshold | Earthquake % | Shifted 2-5° % | Lift |
 |---|---|---|---|
-| **Coulomb stress transfer** | Okada (1992) dislocation model + GCMT focal mechanisms + Wells & Coppersmith (1994) scaling | Do M5+ events occur preferentially in stress-enhanced zones from prior earthquakes? Physics-based causation, not statistical correlation | Running |
-| **ETAS rate anomaly** | Epidemic Type Aftershock Sequence model (Ogata 1988) fit to M3+ catalog | Are M5+ events preceded by anomalous activation or quiescence relative to ETAS expectation? | Running |
-| **Spatiotemporal clustering** | Zaliapin & Ben-Zion (2013) nearest-neighbor distance | Data-driven foreshock sequence detection — do M5+ events have more precursory cluster activity than random M4 events? | Running |
-| **High-resolution GNSS-TEC** | Nagoya University ISEE 0.25° grid (25x finer than CODE IONEX) | Re-test ionosphere anomaly hypothesis at resolution where local signals wouldn't be diluted | Running |
+| > 10 kPa | 63.7% | 68.6% | 0.93 (no signal) |
+| > 100 kPa | 45.4% | 22.9% | **1.98** |
+| > 500 kPa | 23.4% | 5.3% | **4.43** |
+| > 1000 kPa | 14.7% | 2.4% | **6.03** |
+
+Low CFS thresholds show no signal (spatial clustering effect). **High CFS (>500 kPa) shows 4-6x lift even after spatial control** — earthquakes preferentially occur at *exact* stress-enhanced locations, not just the same general region.
+
+**Seismicity rate anomaly — 6.7x activation lift (model-free)**
+
+Regional M3+ rate in 7 days before each M5+ event vs long-term regional average:
+
+| Condition | Activation (>2x rate) | Quiescence (<0.5x rate) |
+|---|---|---|
+| Before M5+ | **47.0%** | 23.0% |
+| Random | 7.0% | 75.4% |
+| **Lift** | **6.71** | 0.31 |
+
+47% of M5+ events are preceded by at least 2x normal seismicity rate in their region.
+
+**Spatiotemporal clustering — lift 2.83, p=0.0 (validated)**
+
+Zaliapin & Ben-Zion (2013) nearest-neighbor distance clustering:
+
+| | Has foreshock sequence | Mean foreshock count |
+|---|---|---|
+| M5+ events | **14.7%** | 9.19 |
+| Random M4 | 5.2% | 2.17 |
+| **Lift** | **2.83** | — |
+
+Bootstrap 95% CI: [2.01, 4.49], p=0.0. Temporally stable: 2011-2018 = 16.1%, 2019-2026 = 12.3%. Magnitude-dependent: M5 = 14.1% → M6 = 21.2%.
+
+**High-resolution GNSS-TEC — data unavailable**
+
+Nagoya University ISEE archive URLs returned 404 for all attempted date patterns. URL investigation needed.
+
+### Phase 2.5: Aftershock bias validation (in progress)
+
+Critical question: **are the 3 signals independent discoveries, or 3 measurements of the same aftershock cascading?**
+
+| Test | What it answers |
+|---|---|
+| **Isolation filter** | Do signals survive when aftershock-contaminated events are removed? (Same test that killed Phase 1) |
+| **Time delay** | Are high-CFS events within 30 days of their source? (If yes → aftershocks, not delayed triggering) |
+| **Signal correlation** | Do CFS, activation, and foreshock co-occur on the same events? (If yes → same phenomenon) |
+| **Prospective test** | Does 2011-2018 model predict 2019-2026? (Most stringent test) |
 
 **Future candidates:**
 
