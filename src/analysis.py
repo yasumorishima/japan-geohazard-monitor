@@ -125,26 +125,31 @@ def _find_anomalies(
     return {"anomalies": anomalies, "unit": unit, "total_points": len(time_values)}
 
 
-async def compute_lag_correlation(days: int = 30, max_lag_hours: int = 48) -> dict:
+async def compute_lag_correlation(
+    days: int = 30, max_lag_hours: int = 48, min_mag: float = 0.0,
+) -> dict:
     """Compute lagged cross-correlation between each metric and earthquake count.
 
     For each metric, computes Pearson correlation at lags from -max_lag to 0,
     where negative lag means the metric leads the earthquake.
     e.g., lag=-6 means "metric value 6 hours BEFORE earthquake spike".
 
+    min_mag: only count earthquakes with magnitude >= this value.
+
     Returns per-metric list of {lag_hours, correlation}.
     """
     cutoff = f"-{days}"
 
     async with aiosqlite.connect(DB_PATH) as db:
-        # Hourly earthquake counts
+        # Hourly earthquake counts (filtered by magnitude)
         eq_rows = await db.execute_fetchall(
             """SELECT strftime('%Y-%m-%dT%H:00:00Z', occurred_at) as hour,
                       COUNT(*) as count
                FROM earthquakes
                WHERE occurred_at > datetime('now', ? || ' days')
+                 AND (magnitude >= ? OR magnitude IS NULL)
                GROUP BY hour ORDER BY hour""",
-            (cutoff,),
+            (cutoff, min_mag),
         )
 
         kp_rows = await db.execute_fetchall(

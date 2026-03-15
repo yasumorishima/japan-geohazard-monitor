@@ -356,9 +356,12 @@ async def anomalies(days: int = 7):
 
 
 @app.get("/api/lag_correlation")
-async def lag_correlation(days: int = 30, max_lag: int = 48):
-    """Return lagged cross-correlation between metrics and earthquake frequency."""
-    return await compute_lag_correlation(days, max_lag)
+async def lag_correlation(days: int = 30, max_lag: int = 48, min_mag: float = 0.0):
+    """Return lagged cross-correlation between metrics and earthquake frequency.
+
+    min_mag: only count earthquakes with magnitude >= this value.
+    """
+    return await compute_lag_correlation(days, max_lag, min_mag)
 
 
 @app.get("/api/stats")
