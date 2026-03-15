@@ -117,6 +117,7 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 - **Correlation** ✅ Time-synchronized 5-chart panel (earthquake/Kp/GOES/TEC/pressure)
 - **Analysis** ✅ Anomaly detection (±2σ), lag correlation, epicenter TEC, b-value
 - **Backfill** ✅ 2011-2026 M3+ earthquakes (28,400), TEC (311K), Kp (18K)
+- **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact)
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
 
 ## Analysis Results (2011-2026, 28,400 M3+ earthquakes)
@@ -160,6 +161,28 @@ Random dates also show TEC drops (n=34 too small to be definitive). Signal may n
 ### What's next
 
 Single-indicator approaches have been exhausted by decades of seismology research. The next step is **multi-indicator simultaneous anomaly detection** — looking for cases where b-value, TEC, Kp, and pressure all deviate simultaneously. This combinatorial approach has not been thoroughly tested with sufficient data.
+
+## Automated Analysis (GitHub Actions)
+
+Weekly analysis workflow fetches fresh data from public APIs and runs control experiments.
+
+```bash
+# Manual trigger
+gh workflow run "Earthquake Correlation Analysis" \
+  --repo yasumorishima/japan-geohazard-monitor \
+  -f memo="multi-indicator test" \
+  -f min_mag=5.0 \
+  -f analysis_type=all
+```
+
+| Script | Purpose |
+|---|---|
+| `scripts/fetch_earthquakes.py` | M3+ earthquakes from USGS (yearly chunks) |
+| `scripts/fetch_kp.py` | Full Kp history from GFZ Potsdam |
+| `scripts/fetch_tec.py` | IONEX TEC around M6.5+ events from CODE (Bern) |
+| `scripts/run_analysis.py` | b-value, epicenter TEC, multi-indicator analysis with control experiments |
+
+Results saved as JSON artifact (90-day retention). Runs every Monday 12:00 JST or on demand.
 
 ### Not yet implemented
 
