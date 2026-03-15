@@ -119,6 +119,7 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 - **Correlation** ✅ Time-synchronized 5-chart panel (earthquake/Kp/GOES/TEC/pressure)
 - **Analysis Phase 1** ✅ b-value, TEC, Kp, multi-indicator grid search → all negative (aftershock/sampling artifacts)
 - **Analysis Phase 2** ✅ Coulomb stress (lift 37.5 isolated), rate anomaly (lift 1.86), clustering (lift 4.12) — all survived aftershock isolation + prospective test (combined lift 20.66)
+- **Analysis Phase 3** 🔄 LURR (tidal response), Natural Time (criticality), Nowcasting (cycle counting), MODIS LST (thermal), Kakioka ULF (magnetic)
 - **Backfill** ✅ 2011-2026 M3+ earthquakes (29K), TEC (4M), Kp (44K), GCMT focal mechanisms
 - **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 120min timeout)
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
@@ -324,13 +325,13 @@ With 3 validated signals, the next step is adding independent physical observabl
 
 ## Automated Analysis (GitHub Actions)
 
-Weekly analysis workflow fetches data from 4 public APIs, runs Phase 1 + Phase 2 analyses, and stores results as artifacts.
+Weekly analysis workflow fetches data from 7 public APIs, runs Phase 1-3 analyses (14 scripts), and stores results as artifacts.
 
 ```bash
 # Manual trigger
 gh workflow run "Earthquake Correlation Analysis" \
   --repo yasumorishima/japan-geohazard-monitor \
-  -f memo="Phase 2 full suite"
+  -f memo="Full analysis suite"
 ```
 
 ### Data fetch scripts
@@ -338,20 +339,25 @@ gh workflow run "Earthquake Correlation Analysis" \
 | Script | Source | Data |
 |---|---|---|
 | `fetch_earthquakes.py` | USGS GeoJSON | M3+ earthquakes (yearly chunks, retry with backoff) |
-| `fetch_kp.py` | GFZ Potsdam | Kp geomagnetic index (2011-present, retry with backoff) |
+| `fetch_kp.py` | GFZ Potsdam | Kp geomagnetic index (2011-present) |
 | `fetch_tec.py` | CODE (Bern) IONEX | Ionosphere TEC 2.5°×5° grid (event ±7d + random baseline) |
 | `fetch_cmt.py` | GCMT NDK catalog | Focal mechanisms: strike/dip/rake for Japan M5+ (2011-present) |
-| `fetch_gnss_tec.py` | Nagoya Univ. ISEE | High-resolution GNSS-TEC 0.25° grid (M6.5+ ±3 days) |
+| `fetch_gnss_tec.py` | Nagoya Univ. ISEE | High-resolution GNSS-TEC 0.25° grid (URL investigation needed) |
+| `fetch_modis_lst.py` | NASA LAADS DAAC (CMR) | MODIS Land Surface Temperature 1km daily (thermal anomaly) |
+| `fetch_kakioka_ulf.py` | WDC Kyoto | Kakioka/Memambetsu/Kanoya 1-minute geomagnetic (ULF precursor) |
 
 ### Analysis scripts
 
-| Script | Method | Reference |
-|---|---|---|
-| `run_analysis.py` | Phase 1: b-value, TEC, multi-indicator grid search, TEC detrended (with isolation filter, balanced sampling, bootstrap CI, rolling detrend validation) | — |
-| `coulomb_analysis.py` | Coulomb Failure Stress from Okada dislocation model, earthquake vs random location comparison | Okada (1992), Toda & Stein (2011) |
-| `etas_analysis.py` | ETAS model fit + rate ratio analysis for anomalous activation/quiescence detection | Ogata (1988, 1998) |
-| `cluster_analysis.py` | Nearest-neighbor distance clustering for foreshock sequence detection | Zaliapin & Ben-Zion (2013) |
-| `validate_phase2.py` | Aftershock isolation + time delay + signal correlation + prospective test | — |
+| Script | Phase | Method | Reference |
+|---|---|---|---|
+| `run_analysis.py` | 1 | b-value, TEC, multi-indicator (isolation, balanced sampling, bootstrap CI) | — |
+| `coulomb_analysis.py` | 2 | Coulomb Failure Stress, Okada model, spatial control (shifted baseline) | Okada (1992), Toda & Stein (2011) |
+| `etas_analysis.py` | 2 | Model-free regional rate anomaly + constrained ETAS residuals | Ogata (1988, 1998) |
+| `cluster_analysis.py` | 2 | Nearest-neighbor distance clustering, foreshock detection (bootstrap, temporal stability) | Zaliapin & Ben-Zion (2013) |
+| `validate_phase2.py` | 2.5 | Aftershock isolation + time delay + signal correlation + prospective test | — |
+| `lurr_analysis.py` | 3 | Load-Unload Response Ratio from tidal stress classification | Yin et al. (2006) |
+| `natural_time_analysis.py` | 3 | Natural time variance κ1 criticality detection (threshold 0.070) | Varotsos et al. (2011) |
+| `nowcast_analysis.py` | 3 | Earthquake Potential Score from inter-event M3+ cycle counting | Rundle et al. (2016) |
 
 Results saved as JSON artifacts (90-day retention). Runs every Monday 12:00 JST or on demand.
 
@@ -359,17 +365,20 @@ Results saved as JSON artifacts (90-day retention). Runs every Monday 12:00 JST 
 
 | Data | Blocker |
 |---|---|
-| Groundwater levels | No unified API. 国交省水文水質DB explicitly prohibits programmatic access |
-| INTERMAGNET ground magnetometers (KAK/MMB/KNY) | BGS GIN API currently down — using NOAA SWPC GOES as alternative |
+| Groundwater levels | 国交省水文水質DB prohibits programmatic access |
+| S-net / DONET seafloor pressure | NIED data access registration required |
+| Radon / He isotopes | AIST monitoring data has limited public access |
+| Hi-net waveforms | NIED registration + large data volume |
 
 ## Data Attribution
 
 - Earthquake data: USGS, P2P地震情報, 気象庁
 - Focal mechanisms: Global CMT Project (Ekström et al., 2012)
 - AMeDAS / Volcano: 気象庁
-- Geomagnetic: NOAA Space Weather Prediction Center, GFZ Potsdam
+- Geomagnetic: NOAA SWPC, GFZ Potsdam, WDC Kyoto (Kakioka Observatory)
 - SST: NASA JPL MUR SST v4.1 via NOAA ERDDAP
-- Ionosphere TEC: CODE (Astronomical Institute, University of Bern), Nagoya University ISEE GNSS-TEC
+- Ionosphere TEC: CODE (University of Bern), Nagoya University ISEE GNSS-TEC
+- Land Surface Temperature: NASA MODIS MOD11A1 via LAADS DAAC
 - GEONET: 国土地理院 (Geospatial Information Authority of Japan)
 
 ## Related
