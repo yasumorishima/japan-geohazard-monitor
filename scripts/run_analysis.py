@@ -1171,6 +1171,261 @@ async def analyze_advanced(db: aiosqlite.Connection, min_mag: float) -> dict:
             mi_kp_sameday,
         )
 
+    # ---------------------------------------------------------------
+    # 5. Kp temporal profile — ISOLATED events only
+    # ---------------------------------------------------------------
+    logger.info("  --- Kp temporal profile (isolated only) ---")
+
+    # Build isolation filter for target events
+    all_eq_with_loc = await db.execute_fetchall(
+        "SELECT occurred_at, latitude, longitude, magnitude FROM earthquakes "
+        "WHERE magnitude >= 3.0 ORDER BY occurred_at"
+    )
+    all_parsed_adv = []
+    for r in all_eq_with_loc:
+        try:
+            t = datetime.fromisoformat(r[0].replace("Z", "+00:00"))
+            all_parsed_adv.append((t, r[1], r[2], r[3]))
+        except (ValueError, TypeError):
+            continue
+
+    target_tuples_adv = [
+        (e["time"], e["lat"], e["lon"], e["mag"]) for e in target_events
+    ]
+    isolated_set_adv = set(
+        (t.isoformat(), lat, lon)
+        for t, lat, lon, mag in filter_isolated(target_tuples_adv, all_parsed_adv)
+    )
+    isolated_events = [
+        e for e in target_events
+        if (e["time"].isoformat(), e["lat"], e["lon"]) in isolated_set_adv
+    ]
+    logger.info("    Isolated events: %d / %d", len(isolated_events), len(target_events))
+
+    iso_profiles_kp = {h: [] for h in lead_hours}
+    for e in isolated_events[:500]:
+        for h in lead_hours:
+            kp = await get_kp_at(e["time_str"], h)
+            if kp is not None:
+                iso_profiles_kp[h].append(kp)
+
+    kp_profile_isolated = {}
+    for h in lead_hours:
+        iso_vals = iso_profiles_kp[h]
+        rand_vals = rand_profiles_kp[h]
+        iso_mean = sum(iso_vals) / len(iso_vals) if iso_vals else None
+        rand_mean = sum(rand_vals) / len(rand_vals) if rand_vals else None
+        kp_profile_isolated[f"-{h}h"] = {
+            "iso_n": len(iso_vals),
+            "iso_mean_kp": round(iso_mean, 3) if iso_mean else None,
+            "rand_mean_kp": round(rand_mean, 3) if rand_mean else None,
+            "diff": round(iso_mean - rand_mean, 3) if iso_mean and rand_mean else None,
+            "iso_high_pct": round(sum(1 for v in iso_vals if v > 3) / max(len(iso_vals), 1) * 100, 1),
+            "rand_high_pct": round(sum(1 for v in rand_vals if v > 3) / max(len(rand_vals), 1) * 100, 1),
+        }
+        if iso_mean and rand_mean:
+            logger.info(
+                "    [ISO] Kp at %4dh: iso=%.2f rand=%.2f diff=%+.3f high%%: iso=%.1f rand=%.1f",
+                h, iso_mean, rand_mean, iso_mean - rand_mean,
+                kp_profile_isolated[f"-{h}h"]["iso_high_pct"],
+                kp_profile_isolated[f"-{h}h"]["rand_high_pct"],
+            )
+
+    results["kp_temporal_profile_isolated"] = kp_profile_isolated
+
+    # ---------------------------------------------------------------
+    # 6. TEC detrended + Kp combined: both anomalous simultaneously
+    # ---------------------------------------------------------------
+    logger.info("  --- TEC detrended + Kp combined ---")
+
+    # For each earthquake: get both detrended TEC sigma and Kp at -12h
+    combined_eq = []
+    for e in target_events[:500]:
+        tec_s = await get_sigma_detrended(e["lat"], e["lon"], e["time_str"])
+        kp_12h = await get_kp_at(e["time_str"], 12)
+        is_iso = (e["time"].isoformat(), e["lat"], e["lon"]) in isolated_set_adv
+        combined_eq.append({
+            "tec_sigma": tec_s,
+            "kp_12h": kp_12h,
+            "mag": e["mag"],
+            "isolated": is_iso,
+        })
+
+    combined_rand = []
+    for r in random_points:
+        tec_s = await get_sigma_detrended(r["lat"], r["lon"], r["time_str"])
+        kp_12h = await get_kp_at(r["time_str"], 12)
+        combined_rand.append({
+            "tec_sigma": tec_s,
+            "kp_12h": kp_12h,
+        })
+
+    def combined_analysis(eq_list, rand_list, label):
+        """Check various threshold combinations of TEC spike + Kp high."""
+        combos = [
+            ("tec>0.5_kp>2", 0.5, 2.0),
+            ("tec>0.5_kp>3", 0.5, 3.0),
+            ("tec>1.0_kp>2", 1.0, 2.0),
+            ("tec>1.0_kp>3", 1.0, 3.0),
+            ("tec>1.5_kp>2", 1.5, 2.0),
+            ("tec>1.5_kp>3", 1.5, 3.0),
+        ]
+        result = {}
+        for name, tec_t, kp_t in combos:
+            eq_both = sum(
+                1 for p in eq_list
+                if p["tec_sigma"] is not None and p["kp_12h"] is not None
+                and p["tec_sigma"] > tec_t and p["kp_12h"] > kp_t
+            )
+            eq_either = sum(
+                1 for p in eq_list
+                if p["tec_sigma"] is not None and p["kp_12h"] is not None
+            )
+            rand_both = sum(
+                1 for p in rand_list
+                if p["tec_sigma"] is not None and p["kp_12h"] is not None
+                and p["tec_sigma"] > tec_t and p["kp_12h"] > kp_t
+            )
+            rand_either = sum(
+                1 for p in rand_list
+                if p["tec_sigma"] is not None and p["kp_12h"] is not None
+            )
+            eq_rate = eq_both / max(eq_either, 1) * 100
+            rand_rate = rand_both / max(rand_either, 1) * 100
+            lift = eq_rate / max(rand_rate, 0.01)
+            result[name] = {
+                "eq_count": eq_both, "eq_total": eq_either,
+                "eq_rate": round(eq_rate, 1),
+                "rand_count": rand_both, "rand_total": rand_either,
+                "rand_rate": round(rand_rate, 1),
+                "lift": round(lift, 2),
+            }
+            logger.info(
+                "    %s [%s]: eq=%d/%d (%.1f%%) rand=%d/%d (%.1f%%) lift=%.2f",
+                label, name, eq_both, eq_either, eq_rate,
+                rand_both, rand_either, rand_rate, lift,
+            )
+        return result
+
+    combined_iso = [p for p in combined_eq if p["isolated"]]
+    results["tec_kp_combined"] = {
+        "all_events": combined_analysis(combined_eq, combined_rand, "ALL"),
+        "isolated_events": combined_analysis(combined_iso, combined_rand, "ISO"),
+    }
+
+    # ---------------------------------------------------------------
+    # 7. Temporal stability: 2011-2018 vs 2019-2026
+    # ---------------------------------------------------------------
+    logger.info("  --- Temporal stability check ---")
+
+    split_date = datetime(2019, 1, 1, tzinfo=timezone.utc)
+
+    early_eq = [e for e in target_events[:500] if e["time"] < split_date]
+    late_eq = [e for e in target_events[:500] if e["time"] >= split_date]
+
+    async def kp_profile_for_group(events, label):
+        profiles = {h: [] for h in [24, 12, 6]}
+        for e in events:
+            for h in [24, 12, 6]:
+                kp = await get_kp_at(e["time_str"], h)
+                if kp is not None:
+                    profiles[h].append(kp)
+        result = {}
+        for h in [24, 12, 6]:
+            vals = profiles[h]
+            mean_v = sum(vals) / len(vals) if vals else None
+            result[f"-{h}h"] = {
+                "n": len(vals),
+                "mean_kp": round(mean_v, 3) if mean_v else None,
+                "high_pct": round(sum(1 for v in vals if v > 3) / max(len(vals), 1) * 100, 1),
+            }
+            if mean_v:
+                logger.info("    [%s] Kp at -%dh: mean=%.2f, high%%=%.1f (n=%d)",
+                            label, h, mean_v, result[f"-{h}h"]["high_pct"], len(vals))
+        return result
+
+    async def tec_dt_for_group(events, label):
+        sigmas = []
+        for e in events:
+            s = await get_sigma_detrended(e["lat"], e["lon"], e["time_str"])
+            if s is not None:
+                sigmas.append(s)
+        summary = tec_summary(sigmas)
+        logger.info("    [%s] TEC detrended: n=%d, mean_σ=%.3f, spikes%%=%.1f",
+                     label, summary.get("n", 0), summary.get("mean_sigma", 0),
+                     summary.get("spikes_pct", 0))
+        return summary
+
+    results["temporal_stability"] = {
+        "2011_2018": {
+            "n_events": len(early_eq),
+            "kp_profile": await kp_profile_for_group(early_eq, "2011-2018"),
+            "tec_detrended": await tec_dt_for_group(early_eq, "2011-2018"),
+        },
+        "2019_2026": {
+            "n_events": len(late_eq),
+            "kp_profile": await kp_profile_for_group(late_eq, "2019-2026"),
+            "tec_detrended": await tec_dt_for_group(late_eq, "2019-2026"),
+        },
+    }
+
+    # ---------------------------------------------------------------
+    # 8. Magnitude dependence: M5, M6+, M7+
+    # ---------------------------------------------------------------
+    logger.info("  --- Magnitude dependence ---")
+
+    mag_groups = [
+        ("M5_5.9", 5.0, 6.0),
+        ("M6_6.9", 6.0, 7.0),
+        ("M7plus", 7.0, 10.0),
+    ]
+
+    mag_results = {}
+    for label, m_min, m_max in mag_groups:
+        group = [e for e in target_events[:500] if m_min <= e["mag"] < m_max]
+        if len(group) < 5:
+            mag_results[label] = {"n": len(group), "note": "too few events"}
+            continue
+
+        # Kp at -12h
+        kp_vals = []
+        for e in group:
+            kp = await get_kp_at(e["time_str"], 12)
+            if kp is not None:
+                kp_vals.append(kp)
+
+        # TEC detrended
+        tec_vals = []
+        for e in group:
+            s = await get_sigma_detrended(e["lat"], e["lon"], e["time_str"])
+            if s is not None:
+                tec_vals.append(s)
+
+        kp_mean = sum(kp_vals) / len(kp_vals) if kp_vals else None
+        tec_mean = sum(tec_vals) / len(tec_vals) if tec_vals else None
+
+        mag_results[label] = {
+            "n": len(group),
+            "kp_12h": {
+                "n": len(kp_vals),
+                "mean": round(kp_mean, 3) if kp_mean else None,
+                "high_pct": round(sum(1 for v in kp_vals if v > 3) / max(len(kp_vals), 1) * 100, 1),
+            },
+            "tec_detrended": {
+                "n": len(tec_vals),
+                "mean_sigma": round(tec_mean, 3) if tec_mean else None,
+                "spikes_pct": round(sum(1 for v in tec_vals if v > 1) / max(len(tec_vals), 1) * 100, 1),
+            },
+        }
+        logger.info(
+            "    %s (n=%d): Kp_12h=%.2f (high=%.0f%%) TEC_dt=%.2f (spike=%.0f%%)",
+            label, len(group),
+            kp_mean or 0, mag_results[label]["kp_12h"]["high_pct"],
+            tec_mean or 0, mag_results[label]["tec_detrended"]["spikes_pct"],
+        )
+
+    results["magnitude_dependence"] = mag_results
+
     return results
 
 
