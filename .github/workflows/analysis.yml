@@ -1,0 +1,69 @@
+name: Earthquake Correlation Analysis
+
+on:
+  schedule:
+    - cron: '0 3 * * 1'  # Every Monday 3:00 UTC (12:00 JST)
+  workflow_dispatch:
+    inputs:
+      memo:
+        description: 'What are you running and why?'
+        required: true
+      min_mag:
+        description: 'Minimum magnitude for target earthquakes'
+        required: false
+        default: '5.0'
+      analysis_type:
+        description: 'Analysis type: all | bvalue | tec | lag | multi'
+        required: false
+        default: 'all'
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install aiohttp aiosqlite
+
+      - name: Download latest data from RPi5
+        env:
+          RPI_HOST: ${{ secrets.RPI_SSH_HOST }}
+          RPI_USER: ${{ secrets.RPI_SSH_USER }}
+          RPI_KEY: ${{ secrets.RPI_SSH_KEY }}
+        run: |
+          # If RPi5 SSH is configured, download DB snapshot
+          # Otherwise, build DB from public APIs
+          echo "Building analysis database from public APIs..."
+
+      - name: Fetch earthquake data (M3+, 2011-2026)
+        run: |
+          python3 scripts/fetch_earthquakes.py
+
+      - name: Fetch TEC data (major events ±7 days)
+        run: |
+          python3 scripts/fetch_tec.py
+
+      - name: Fetch Kp data (2011-2026)
+        run: |
+          python3 scripts/fetch_kp.py
+
+      - name: Run analysis
+        run: |
+          python3 scripts/run_analysis.py \
+            --min-mag ${{ github.event.inputs.min_mag || '5.0' }} \
+            --type ${{ github.event.inputs.analysis_type || 'all' }}
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-results-${{ github.run_id }}
+          path: results/
+          retention-days: 90
