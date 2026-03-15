@@ -83,12 +83,12 @@ jobs:
         run: |
           python3 scripts/cluster_analysis.py --min-mag 5.0
 
-      - name: Fetch GNSS-TEC high-resolution data (Nagoya University)
+      - name: Fetch GNSS-TEC high-resolution data (Nagoya University ISEE)
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          pip install netCDF4 2>/dev/null || true
-          python3 scripts/fetch_gnss_tec.py || echo "GNSS-TEC fetch failed (non-fatal, URL may need adjustment)"
+          pip install netCDF4 2>/dev/null || pip install scipy 2>/dev/null || true
+          python3 scripts/fetch_gnss_tec.py || echo "GNSS-TEC fetch non-fatal failure"
 
       - name: Run Phase 2 validation (isolation + delay + correlation + prospective)
         env:
@@ -125,6 +125,18 @@ jobs:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
           python3 scripts/fetch_kakioka_ulf.py || echo "ULF fetch completed (may need WDC registration for full access)"
+
+      - name: Run ULF magnetic anomaly analysis
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/ulf_analysis.py || echo "ULF analysis skipped (insufficient data)"
+
+      - name: Run MODIS LST thermal anomaly analysis
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/modis_lst_analysis.py
 
       - name: Run analysis
         env:

@@ -95,6 +95,8 @@ SQLite with WAL mode. 10 tables:
 - `geonet` — dedup by (station_id, observed_at)
 - `focal_mechanisms` — GCMT strike/dip/rake, dedup by (source, event_id)
 - `gnss_tec` — high-res 0.25° TEC from Nagoya Univ., dedup by (lat, lon, epoch, source)
+- `modis_lst` — MODIS Land Surface Temperature (Kelvin), dedup by (lat, lon, observed_date)
+- `ulf_magnetic` — 1-minute geomagnetic H/D/Z/F (nT) from KAK/MMB/KNY, dedup by (station, observed_at)
 
 Auto-purge: records older than 90 days deleted on each collector cycle (real-time tables only; analysis tables retained).
 
@@ -337,11 +339,15 @@ The critical next step: **non-seismological data** that is physically independen
 
 | Parameter | Physical mechanism | Data source | Status |
 |---|---|---|---|
-| **MODIS thermal IR** | Stress → gas release → surface heating | ORNL DAAC API (no auth, 1km) | Fetching |
-| **ULF magnetic field** | Stress → piezoelectric/electrokinetic emission | WDC Kyoto (Kakioka, 1-min) | URL investigation |
+| **MODIS thermal IR** | Stress → gas release → surface heating (LAIC model) | ORNL DAAC TESViS API (no auth, 1km) | **359 records fetched**, analysis script ready |
+| **ULF magnetic field** | Stress → piezoelectric/electrokinetic emission | INTERMAGNET BGS GIN + WDC Kyoto | Fetcher rewritten, testing |
 | **S-net ocean bottom pressure** | Slow-slip → seafloor displacement | NIED Hi-net portal (150 stations) | Registration needed |
-| GEONET GPS-TEC (per-station) | Point TEC above epicenters | GSI GEONET RINEX | FTP registration needed |
+| GEONET GPS-TEC (per-station) | Point TEC above epicenters | GSI GEONET RINEX | Nagoya Univ. 404, alternative needed |
 | Radon / He isotopes | Fault degassing | AIST monitoring | Limited access |
+
+**MODIS LST analysis** (Tronin 2006, Ouzounov & Freund 2004): For each M5.5+ earthquake on land, MODIS Land Surface Temperature is extracted at the epicenter ±14 days. Anomaly detection uses standardized deviation from local baseline (RST/RETIRA method, Tramutoli 2005). Tests pre-event anomaly, isolation filter, magnitude/depth dependence, and temporal profile.
+
+**ULF magnetic analysis** (Hayakawa et al. 2007, Hattori 2004): Analyzes 1-minute geomagnetic data from KAK/MMB/KNY for three precursor signatures: (1) ULF Z-component spectral power increase, (2) Sz/Sh polarization ratio > 1 (lithospheric origin), (3) fractal dimension decrease. Nighttime-only (0-6 LT) to avoid anthropogenic noise.
 
 ## Automated Analysis (GitHub Actions)
 
@@ -363,8 +369,8 @@ gh workflow run "Earthquake Correlation Analysis" \
 | `fetch_tec.py` | CODE (Bern) IONEX | Ionosphere TEC 2.5°×5° grid (event ±7d + random baseline) |
 | `fetch_cmt.py` | GCMT NDK catalog | Focal mechanisms: strike/dip/rake for Japan M5+ (2011-present) |
 | `fetch_gnss_tec.py` | Nagoya Univ. ISEE | High-resolution GNSS-TEC 0.25° grid (URL investigation needed) |
-| `fetch_modis_lst.py` | NASA LAADS DAAC (CMR) | MODIS Land Surface Temperature 1km daily (thermal anomaly) |
-| `fetch_kakioka_ulf.py` | WDC Kyoto | Kakioka/Memambetsu/Kanoya 1-minute geomagnetic (ULF precursor) |
+| `fetch_modis_lst.py` | ORNL DAAC TESViS API | MODIS LST 1km: M5.5+ land epicenters ±14d + random control (rate limited) |
+| `fetch_kakioka_ulf.py` | INTERMAGNET BGS GIN + WDC Kyoto | KAK/MMB/KNY 1-min geomagnetic: M6+ events ±7d (IAGA-2002 format) |
 
 ### Analysis scripts
 
@@ -378,6 +384,8 @@ gh workflow run "Earthquake Correlation Analysis" \
 | `lurr_analysis.py` | 3 | Load-Unload Response Ratio from tidal stress classification | Yin et al. (2006) |
 | `natural_time_analysis.py` | 3 | Natural time variance κ1 criticality detection (threshold 0.070) | Varotsos et al. (2011) |
 | `nowcast_analysis.py` | 3 | Earthquake Potential Score from inter-event M3+ cycle counting | Rundle et al. (2016) |
+| `modis_lst_analysis.py` | 3b | MODIS thermal IR anomaly: RST/RETIRA method, isolation, magnitude/depth dependence | Tramutoli (2005), Tronin (2006) |
+| `ulf_analysis.py` | 3b | ULF spectral power, Sz/Sh polarization, Higuchi fractal dimension (nighttime only) | Hayakawa (2007), Hattori (2004) |
 
 Results saved as JSON artifacts (90-day retention). Runs every Monday 12:00 JST or on demand.
 

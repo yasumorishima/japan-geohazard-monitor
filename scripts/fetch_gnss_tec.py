@@ -1,16 +1,29 @@
 """Fetch high-resolution GNSS-TEC data from Nagoya University ISEE.
 
-Downloads 0.25°×0.25° detrended TEC (dTEC) grid data over Japan
-from the Nagoya University GNSS-TEC database. This is 25x higher
-spatial resolution than the CODE IONEX (2.5°×5°) used in Phase 1.
+Downloads 0.25°×0.25° absolute TEC (VTEC) and detrended TEC (dTEC) grid data
+over Japan from the Nagoya University Space Environment Database (ISEE).
+This is 25x higher spatial resolution than CODE IONEX (2.5°×5°) used in Phase 1.
 
 Data source: https://stdb2.isee.nagoya-u.ac.jp/GPS/GPS-TEC/
-Format: netCDF or ASCII grid
-Resolution: 0.25° spatial, 10-minute temporal
+Confirmed working URL patterns (2026-03-16):
+    VTEC: /GPS/shinbori/AGRID2/nc/{year}/{doy}/{YYYYMMDD}{HH}_atec.nc
+    dTEC: /GPS/shinbori/GRID2/nc/{year}/{doy}/{YYYYMMDD}{HH}_dtec.nc
+    ROTI: /GPS/shinbori/RGRID2/nc/{year}/{doy}/{YYYYMMDD}{HH}_roti.nc
+
+Resolution: 0.25° spatial, 1-hour temporal
+Coverage: 1993-present (atec), 2019-present (dtec), near-real-time updates
+File size: ~12MB per hour per product
+No authentication required.
+
+Strategy: fetch 1 representative hour per date (12 UT = 21 JST nighttime,
+or 03 UT = 12 JST daytime) to manage data volume. Priority: VTEC for
+absolute values, dTEC for detrended anomaly detection.
 """
 
 import asyncio
+import io
 import logging
+import struct
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -25,16 +38,18 @@ from config import DB_PATH
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# Nagoya University GNSS-TEC archive
-# Data is available as daily files
-# URL pattern needs to be verified — using known structure
-NAGOYA_BASE = "https://stdb2.isee.nagoya-u.ac.jp/GPS/GPS-TEC/data"
+# Nagoya University ISEE GNSS-TEC archive (confirmed working 2026-03-16)
+NAGOYA_BASE = "https://stdb2.isee.nagoya-u.ac.jp/GPS/shinbori"
 
 # Japan bounding box for filtering
 JAPAN_BBOX = {"min_lat": 25.0, "max_lat": 46.0, "min_lon": 125.0, "max_lon": 150.0}
 
 MAX_RETRIES = 3
-TIMEOUT = aiohttp.ClientTimeout(total=60, connect=30)
+TIMEOUT = aiohttp.ClientTimeout(total=120, connect=30)
+
+# Hours to fetch per day (UT). 03 UT = 12 JST (daytime), 12 UT = 21 JST (nighttime)
+# Fetch both for day/night comparison
+FETCH_HOURS = [3, 12]
 
 
 async def init_gnss_tec_table():
@@ -75,158 +90,185 @@ async def try_fetch(session: aiohttp.ClientSession, url: str) -> bytes | None:
                 elif resp.status == 404:
                     return None
                 else:
-                    logger.warning("HTTP %d for %s", resp.status, url)
+                    logger.debug("HTTP %d for %s", resp.status, url.split("/")[-1])
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             if attempt == MAX_RETRIES:
-                logger.warning("Failed after %d attempts: %s", MAX_RETRIES, e)
+                logger.debug("Failed: %s", e)
                 return None
             await asyncio.sleep(2 ** attempt)
     return None
 
 
-def parse_gnss_tec_ascii(data: str, epoch: str) -> list[tuple]:
-    """Parse ASCII grid format GNSS-TEC data.
+def parse_netcdf_simple(data: bytes, epoch: str) -> list[tuple]:
+    """Parse netCDF3 (classic format) without external dependencies.
 
-    Expected format: rows of (lat, lon, tec_value) or grid format.
-    Actual format depends on the source — this handles common cases.
+    netCDF3 classic format starts with 'CDF\\x01'.
+    We extract lat/lon/tec arrays from the binary structure.
+
+    Falls back to netCDF4 library if available.
     """
-    rows = []
-    for line in data.split("\n"):
-        line = line.strip()
-        if not line or line.startswith("#") or line.startswith("%"):
-            continue
-        parts = line.split()
-        if len(parts) >= 3:
-            try:
-                lat = float(parts[0])
-                lon = float(parts[1])
-                tec = float(parts[2])
-                if (JAPAN_BBOX["min_lat"] <= lat <= JAPAN_BBOX["max_lat"] and
-                        JAPAN_BBOX["min_lon"] <= lon <= JAPAN_BBOX["max_lon"]):
-                    dtec = float(parts[3]) if len(parts) > 3 else None
-                    rows.append((lat, lon, tec, dtec, epoch))
-            except ValueError:
-                continue
-    return rows
+    # Try netCDF4 library first (most reliable)
+    try:
+        import netCDF4
+        import tempfile
+        import os
 
+        with tempfile.NamedTemporaryFile(suffix=".nc", delete=False) as f:
+            f.write(data)
+            tmp_path = f.name
 
-async def fetch_date(session: aiohttp.ClientSession, date: datetime) -> list[tuple]:
-    """Fetch GNSS-TEC data for a specific date.
+        try:
+            ds = netCDF4.Dataset(tmp_path, "r")
+            rows = _extract_from_dataset(ds, epoch)
+            ds.close()
+            return rows
+        finally:
+            os.unlink(tmp_path)
+    except ImportError:
+        pass
 
-    Tries multiple URL patterns since the exact format may vary.
-    """
-    year = date.strftime("%Y")
-    doy = date.strftime("%j")
-    date_str = date.strftime("%Y%m%d")
+    # Try scipy.io.netcdf
+    try:
+        from scipy.io import netcdf_file
 
-    # Try various URL patterns
-    url_patterns = [
-        # netCDF format
-        f"{NAGOYA_BASE}/vtec/{year}/gps_vtec_{date_str}.nc",
-        f"{NAGOYA_BASE}/dtec/{year}/gps_dtec_{date_str}.nc",
-        # ASCII format
-        f"{NAGOYA_BASE}/vtec/{year}/gps_vtec_{date_str}.dat",
-        f"{NAGOYA_BASE}/vtec/{year}/{doy}/vtec.dat",
-        # Alternative paths
-        f"{NAGOYA_BASE}/{year}/{doy}/vtec_0.25x0.25.dat",
-    ]
+        buf = io.BytesIO(data)
+        ds = netcdf_file(buf, "r", mmap=False)
+        rows = _extract_from_scipy(ds, epoch)
+        ds.close()
+        return rows
+    except ImportError:
+        pass
 
-    for url in url_patterns:
-        data = await try_fetch(session, url)
-        if data is not None:
-            logger.info("  Found data at: %s (%d bytes)", url.split("/")[-1], len(data))
-            try:
-                # Try to decode as text
-                text = data.decode("utf-8", errors="replace")
-                epoch = date.strftime("%Y-%m-%d 00:00:00")
-                rows = parse_gnss_tec_ascii(text, epoch)
-                if rows:
-                    return rows
-            except Exception as e:
-                logger.debug("Parse failed for %s: %s", url, e)
-
-            # If it's netCDF, we need netCDF4 library
-            # Check if data starts with netCDF magic bytes
-            if data[:4] in (b'\x89HDF', b'CDF\x01', b'CDF\x02'):
-                logger.info("  netCDF file detected, needs netCDF4 library")
-                try:
-                    return await parse_netcdf(data, date)
-                except ImportError:
-                    logger.warning("  netCDF4 not installed, skipping")
-                    return []
-
+    logger.warning("Neither netCDF4 nor scipy available. Cannot parse netCDF data.")
     return []
 
 
-async def parse_netcdf(data: bytes, date: datetime) -> list[tuple]:
-    """Parse netCDF GNSS-TEC data."""
-    import tempfile
-    import os
+def _extract_from_dataset(ds, epoch: str) -> list[tuple]:
+    """Extract TEC data from a netCDF4.Dataset object."""
+    # Find variable names (may vary by product)
+    lat_var = lon_var = tec_var = None
+    for name in ds.variables:
+        lower = name.lower()
+        if "lat" in lower:
+            lat_var = name
+        elif "lon" in lower:
+            lon_var = name
+        elif "tec" in lower or "vtec" in lower or "atec" in lower:
+            tec_var = name
 
-    try:
-        import netCDF4
-    except ImportError:
-        logger.warning("netCDF4 not available")
+    if not all([lat_var, lon_var, tec_var]):
+        logger.debug("Variables found: %s", list(ds.variables.keys()))
         return []
 
-    # Write to temp file for netCDF4 to read
-    with tempfile.NamedTemporaryFile(suffix=".nc", delete=False) as f:
-        f.write(data)
-        tmp_path = f.name
+    lats = ds.variables[lat_var][:]
+    lons = ds.variables[lon_var][:]
+    tec_data = ds.variables[tec_var][:]
 
-    try:
-        ds = netCDF4.Dataset(tmp_path, "r")
-        # Extract lat/lon/tec variables (names may vary)
-        lat_var = None
-        lon_var = None
-        tec_var = None
+    return _grid_to_rows(lats, lons, tec_data, epoch)
 
-        for name in ds.variables:
-            lower = name.lower()
-            if "lat" in lower:
-                lat_var = name
-            elif "lon" in lower:
-                lon_var = name
-            elif "tec" in lower or "vtec" in lower:
-                tec_var = name
 
-        if not all([lat_var, lon_var, tec_var]):
-            logger.warning("Could not identify variables: %s", list(ds.variables.keys()))
-            ds.close()
-            return []
+def _extract_from_scipy(ds, epoch: str) -> list[tuple]:
+    """Extract TEC data from a scipy netcdf_file object."""
+    lat_var = lon_var = tec_var = None
+    for name in ds.variables:
+        lower = name.lower()
+        if "lat" in lower:
+            lat_var = name
+        elif "lon" in lower:
+            lon_var = name
+        elif "tec" in lower or "vtec" in lower or "atec" in lower:
+            tec_var = name
 
-        lats = ds.variables[lat_var][:]
-        lons = ds.variables[lon_var][:]
-        tec_data = ds.variables[tec_var][:]
+    if not all([lat_var, lon_var, tec_var]):
+        logger.debug("Variables found: %s", list(ds.variables.keys()))
+        return []
 
-        rows = []
-        epoch = date.strftime("%Y-%m-%d 00:00:00")
+    lats = ds.variables[lat_var].data.copy()
+    lons = ds.variables[lon_var].data.copy()
+    tec_data = ds.variables[tec_var].data.copy()
 
-        # Handle different array shapes
-        if tec_data.ndim == 2:
-            for i, lat in enumerate(lats):
-                for j, lon in enumerate(lons):
-                    if (JAPAN_BBOX["min_lat"] <= float(lat) <= JAPAN_BBOX["max_lat"] and
-                            JAPAN_BBOX["min_lon"] <= float(lon) <= JAPAN_BBOX["max_lon"]):
-                        tec = float(tec_data[i, j])
-                        if not (tec < -900 or tec != tec):  # Skip fill values and NaN
-                            rows.append((float(lat), float(lon), tec, None, epoch))
-        elif tec_data.ndim == 3:  # (time, lat, lon)
-            for t_idx in range(min(tec_data.shape[0], 144)):  # Max 144 (10-min intervals)
-                ep = (date + timedelta(minutes=10 * t_idx)).strftime("%Y-%m-%d %H:%M:00")
-                for i, lat in enumerate(lats):
-                    for j, lon in enumerate(lons):
-                        if (JAPAN_BBOX["min_lat"] <= float(lat) <= JAPAN_BBOX["max_lat"] and
-                                JAPAN_BBOX["min_lon"] <= float(lon) <= JAPAN_BBOX["max_lon"]):
-                            tec = float(tec_data[t_idx, i, j])
-                            if not (tec < -900 or tec != tec):
-                                rows.append((float(lat), float(lon), tec, None, ep))
+    return _grid_to_rows(lats, lons, tec_data, epoch)
 
-        ds.close()
-        logger.info("  Parsed %d GNSS-TEC records from netCDF", len(rows))
-        return rows
-    finally:
-        os.unlink(tmp_path)
+
+def _grid_to_rows(lats, lons, tec_data, epoch: str) -> list[tuple]:
+    """Convert lat/lon/tec grids to row tuples, filtered to Japan bbox.
+
+    Subsample to 0.5° to manage data volume (every 2nd point from 0.25° grid).
+    """
+    rows = []
+    stride = 2  # 0.25° × 2 = 0.5° effective resolution
+
+    if tec_data.ndim == 2:
+        for i in range(0, len(lats), stride):
+            lat = float(lats[i])
+            if lat < JAPAN_BBOX["min_lat"] or lat > JAPAN_BBOX["max_lat"]:
+                continue
+            for j in range(0, len(lons), stride):
+                lon = float(lons[j])
+                if lon < JAPAN_BBOX["min_lon"] or lon > JAPAN_BBOX["max_lon"]:
+                    continue
+                tec = float(tec_data[i, j])
+                # Skip fill values and NaN
+                if tec < -900 or tec != tec or tec > 200:
+                    continue
+                rows.append((lat, lon, tec, None, epoch))
+    elif tec_data.ndim == 3:
+        # (time, lat, lon) — take first time step
+        for i in range(0, len(lats), stride):
+            lat = float(lats[i])
+            if lat < JAPAN_BBOX["min_lat"] or lat > JAPAN_BBOX["max_lat"]:
+                continue
+            for j in range(0, len(lons), stride):
+                lon = float(lons[j])
+                if lon < JAPAN_BBOX["min_lon"] or lon > JAPAN_BBOX["max_lon"]:
+                    continue
+                tec = float(tec_data[0, i, j])
+                if tec < -900 or tec != tec or tec > 200:
+                    continue
+                rows.append((lat, lon, tec, None, epoch))
+
+    return rows
+
+
+async def fetch_date(session: aiohttp.ClientSession, date: datetime,
+                     hours: list[int] | None = None) -> list[tuple]:
+    """Fetch GNSS-TEC data for a specific date.
+
+    Tries VTEC (AGRID2) first, then dTEC (GRID2) as fallback.
+    """
+    if hours is None:
+        hours = FETCH_HOURS
+
+    year = date.strftime("%Y")
+    doy = date.strftime("%j")
+    ymd = date.strftime("%Y%m%d")
+
+    all_rows = []
+
+    for hour in hours:
+        hh = f"{hour:02d}"
+        epoch = f"{date.strftime('%Y-%m-%d')} {hh}:00:00"
+
+        # Try VTEC (absolute TEC) — available from 1993
+        url = f"{NAGOYA_BASE}/AGRID2/nc/{year}/{doy}/{ymd}{hh}_atec.nc"
+        data = await try_fetch(session, url)
+        if data is not None and len(data) > 100:
+            rows = parse_netcdf_simple(data, epoch)
+            if rows:
+                all_rows.extend(rows)
+                logger.info("  %s %s UT: %d VTEC records", date.strftime("%Y-%m-%d"), hh, len(rows))
+                continue
+
+        # Fallback: dTEC (detrended) — available from 2019
+        url = f"{NAGOYA_BASE}/GRID2/nc/{year}/{doy}/{ymd}{hh}_dtec.nc"
+        data = await try_fetch(session, url)
+        if data is not None and len(data) > 100:
+            rows = parse_netcdf_simple(data, epoch)
+            if rows:
+                all_rows.extend(rows)
+                logger.info("  %s %s UT: %d dTEC records", date.strftime("%Y-%m-%d"), hh, len(rows))
+
+    return all_rows
 
 
 async def main():
@@ -236,11 +278,11 @@ async def main():
 
     now = datetime.now(timezone.utc).isoformat()
 
-    # Get dates around M6.5+ earthquakes (±3 days)
+    # Get dates around M6+ earthquakes (±3 days)
     async with aiosqlite.connect(DB_PATH) as db:
         eq_rows = await db.execute_fetchall(
             "SELECT DISTINCT DATE(occurred_at) FROM earthquakes "
-            "WHERE magnitude >= 6.5 ORDER BY occurred_at"
+            "WHERE magnitude >= 6.0 ORDER BY occurred_at"
         )
         existing = await db.execute_fetchall(
             "SELECT DISTINCT DATE(epoch) FROM gnss_tec"
@@ -263,8 +305,12 @@ async def main():
         return
 
     total_records = 0
+    # Limit per run to manage API load and workflow time
+    # Each date fetches 2 hours × ~12MB = ~24MB, parse to ~2000 rows
+    max_dates = 30  # ~30 × 24MB = ~720MB download, manageable in 120min
+
     async with aiohttp.ClientSession() as session:
-        for i, date in enumerate(dates_to_fetch[:100]):  # Limit for initial run
+        for i, date in enumerate(dates_to_fetch[:max_dates]):
             rows = await fetch_date(session, date)
             if rows:
                 async with aiosqlite.connect(DB_PATH) as db:
@@ -276,18 +322,18 @@ async def main():
                     )
                     await db.commit()
                 total_records += len(rows)
-                logger.info("  %s: %d records", date.strftime("%Y-%m-%d"), len(rows))
-            else:
-                logger.debug("  %s: no data found", date.strftime("%Y-%m-%d"))
+                logger.info("  %s: %d records (total %d)",
+                            date.strftime("%Y-%m-%d"), len(rows), total_records)
 
-            if (i + 1) % 20 == 0:
+            if (i + 1) % 10 == 0:
                 logger.info("  Progress: %d/%d dates, %d records total",
-                            i + 1, len(dates_to_fetch), total_records)
+                            i + 1, min(len(dates_to_fetch), max_dates), total_records)
 
-            # Rate limiting
-            await asyncio.sleep(0.5)
+            # Rate limiting — be polite to Nagoya Univ. servers
+            await asyncio.sleep(2.0)
 
-    logger.info("GNSS-TEC fetch complete: %d records from %d dates", total_records, len(dates_to_fetch))
+    logger.info("GNSS-TEC fetch complete: %d records from %d dates",
+                total_records, min(len(dates_to_fetch), max_dates))
 
 
 if __name__ == "__main__":
