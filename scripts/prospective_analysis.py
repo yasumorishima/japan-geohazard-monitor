@@ -173,7 +173,7 @@ def evaluate_alarm(alarm_times, alarm_locations, target_events,
     fp_alarms = 0
     matched_targets = set()
 
-    for alarm_t, alarm_lat, alarm_lon in zip(alarm_times, alarm_locations, alarm_locations):
+    for alarm_t, (alarm_lat, alarm_lon) in zip(alarm_times, alarm_locations):
         alarm_end = alarm_t + timedelta(days=prediction_window_days)
         hit = False
         for i, (t_t, t_lat, t_lon, t_mag) in enumerate(target_events):
