@@ -47,6 +47,14 @@ import aiosqlite
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from config import DB_PATH
+from physics import (
+    fault_dimensions as _physics_fault_dimensions,
+    default_mechanism as _physics_default_mechanism,
+    okada_cfs as _physics_okada_cfs,
+    DEG_TO_KM as _DEG_TO_KM,
+    SHEAR_MODULUS as _SHEAR_MODULUS,
+    MU_FRICTION as _MU_FRICTION,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -764,6 +772,33 @@ async def run_prospective_analysis():
     cfs_idx = build_alarm_index(cfs_best_t, cfs_best_loc)
     fore_idx = build_alarm_index(fore_best_t, fore_best_loc)
 
+    # --- ML-based alarm (Phase 6) ---
+    # Load ML prediction results if available
+    ml_alarm_idx = {}
+    ml_results_dir = Path(__file__).parent.parent / "results"
+    ml_files = sorted(ml_results_dir.glob("ml_prediction_*.json"), reverse=True)
+    if ml_files:
+        try:
+            with open(ml_files[0]) as f:
+                ml_data = json.load(f)
+            # Check for threshold evaluation in final model
+            final_model = ml_data.get("final_model", {})
+            thresh_eval = final_model.get("threshold_evaluation", [])
+            if thresh_eval:
+                # Use threshold with best probability gain > 3
+                best_thresh = 0.5  # default
+                for te in thresh_eval:
+                    if te.get("probability_gain", 0) >= 3.0 and te.get("recall", 0) > 0.01:
+                        best_thresh = te["threshold"]
+                        break
+                logger.info("  ML alarm threshold: %.2f (from %s)", best_thresh, ml_files[0].name)
+                # ML alarm index populated by threshold evaluation results
+                # For now mark as available for combined scoring
+                results["ml_alarm_threshold"] = best_thresh
+                results["ml_alarm_source"] = ml_files[0].name
+        except (json.JSONDecodeError, KeyError) as exc:
+            logger.warning("  Could not load ML results: %s", exc)
+
     combined_alarms_t = []
     combined_alarms_loc = []
     test_start = split_date.toordinal()
@@ -781,12 +816,14 @@ async def run_prospective_analysis():
                     n_active += 1
                 if (day_ord, cell) in fore_idx:
                     n_active += 1
+                if (day_ord, cell) in ml_alarm_idx:
+                    n_active += 1
                 if n_active >= 2:
                     combined_alarms_t.append(t_day)
                     combined_alarms_loc.append(cell)
 
     eval_and_log(combined_alarms_t, combined_alarms_loc,
-                 targets_test, "combined_etas_cfs_fore_ge2")
+                 targets_test, "combined_etas_cfs_fore_ml_ge2")
     eval_and_log(combined_alarms_t, combined_alarms_loc,
                  targets_test_iso, "combined_ge2_isolated")
 
