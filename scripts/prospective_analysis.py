@@ -186,8 +186,12 @@ def evaluate_alarm(alarm_times, alarm_locations, target_events,
         return {
             "label": label, "n_alarms": len(alarm_times),
             "n_targets": len(target_events),
-            "tp": 0, "fp": 0, "fn": 0,
-            "precision": 0, "recall": 0, "probability_gain": 0,
+            "tp": 0, "fp": 0, "fn": len(target_events),
+            "matched_targets": 0,
+            "precision": 0, "recall": 0, "false_alarm_rate": 0,
+            "cell_base_rate": 0, "probability_gain": 0,
+            "information_gain_bits": -10, "molchan_miss_rate": 1.0,
+            "molchan_alarm_fraction": 0, "molchan_score": 0,
         }
 
     # For each alarm: does a target event follow within the window?
