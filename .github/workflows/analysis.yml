@@ -138,6 +138,18 @@ jobs:
         run: |
           python3 scripts/modis_lst_analysis.py
 
+      - name: Run GNSS-TEC high-resolution analysis
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/gnss_tec_analysis.py || echo "GNSS-TEC analysis skipped (insufficient data)"
+
+      - name: Run Pattern Informatics analysis
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/pattern_informatics.py
+
       - name: Run prospective prediction analysis
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db

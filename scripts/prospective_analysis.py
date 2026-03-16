@@ -141,32 +141,54 @@ def filter_isolated(target_events, all_events_sorted, days=3.0, degrees=1.5):
 # Alarm evaluation framework
 # ---------------------------------------------------------------------------
 
+def compute_cell_base_rates(target_events, total_days, cell_size_deg,
+                             prediction_window_days):
+    """Compute per-cell base rates for spatially-resolved evaluation.
+
+    Returns dict: (cell_lat, cell_lon) → P(M5+ in this cell in prediction_window).
+    """
+    cell_counts = {}
+    for t, lat, lon, mag in target_events:
+        clat = round(lat / cell_size_deg) * cell_size_deg
+        clon = round(lon / cell_size_deg) * cell_size_deg
+        key = (clat, clon)
+        cell_counts[key] = cell_counts.get(key, 0) + 1
+
+    cell_rates = {}
+    for key, count in cell_counts.items():
+        cell_rates[key] = count * prediction_window_days / max(total_days, 1)
+    return cell_rates
+
+
 def evaluate_alarm(alarm_times, alarm_locations, target_events,
                    prediction_window_days, spatial_radius_deg,
-                   total_days, label=""):
+                   total_days, label="", cell_base_rates=None):
     """Evaluate alarm-based prediction performance.
 
+    Uses spatially-resolved base rates for probability gain calculation.
+    Computes Molchan diagram data points (miss_rate vs alarm_fraction).
+
     Args:
-        alarm_times: list of (datetime, lat, lon) when alarm is ON
-        alarm_locations: same, for spatial matching
+        alarm_times: list of datetime when alarm is ON
+        alarm_locations: list of (lat, lon) tuples for each alarm
         target_events: list of (datetime, lat, lon, mag) actual M5+ events
         prediction_window_days: how far ahead the alarm predicts
         spatial_radius_deg: spatial matching radius
         total_days: total time span of the dataset
         label: name for logging
+        cell_base_rates: dict from compute_cell_base_rates (per-cell rates)
 
     Returns:
-        dict with precision, recall, false_alarm_rate, probability_gain
+        dict with precision, recall, probability_gain (spatially corrected),
+        molchan data, information gain
     """
     if not alarm_times or not target_events:
         return {
             "label": label, "n_alarms": len(alarm_times),
             "n_targets": len(target_events),
-            "tp": 0, "fp": 0, "fn": 0, "tn": 0,
+            "tp": 0, "fp": 0, "fn": 0,
             "precision": 0, "recall": 0, "probability_gain": 0,
         }
-
-    target_times = [e[0] for e in target_events]
 
     # For each alarm: does a target event follow within the window?
     tp_alarms = 0
@@ -187,21 +209,41 @@ def evaluate_alarm(alarm_times, alarm_locations, target_events,
         else:
             fp_alarms += 1
 
-    fn = len(target_events) - len(matched_targets)  # Missed events
-    tn = max(0, int(total_days) - len(alarm_times) - fn)  # Rough
+    fn = len(target_events) - len(matched_targets)
 
     precision = tp_alarms / max(tp_alarms + fp_alarms, 1)
     recall = len(matched_targets) / max(len(target_events), 1)
 
-    # Base rate: P(M5+ in any random 7-day window in 2° box)
-    base_rate = len(target_events) * prediction_window_days / max(total_days, 1)
-    alarm_rate = len(alarm_times) / max(total_days, 1)
-    probability_gain = precision / max(base_rate, 0.001)
+    # Spatially-resolved base rate
+    # Average per-cell rate across alarm locations
+    if cell_base_rates:
+        cell_size = SPATIAL_RADIUS_DEG
+        alarm_cell_rates = []
+        for alarm_lat, alarm_lon in alarm_locations:
+            clat = round(alarm_lat / cell_size) * cell_size
+            clon = round(alarm_lon / cell_size) * cell_size
+            rate = cell_base_rates.get((clat, clon), 0.001)
+            alarm_cell_rates.append(rate)
+        mean_cell_rate = sum(alarm_cell_rates) / max(len(alarm_cell_rates), 1)
+    else:
+        # Estimate: divide Japan into ~50 independent 2°×2° cells
+        n_cells = 50
+        global_rate = len(target_events) * prediction_window_days / max(total_days, 1)
+        mean_cell_rate = global_rate / n_cells
 
-    # Molchan score: 1 - miss_rate - alarm_fraction
+    probability_gain = precision / max(mean_cell_rate, 0.0001)
+
+    # Information Gain per Earthquake (IGPE) — Zechar & Jordan (2008)
+    # IGPE = log2(P(EQ|alarm) / P(EQ|random))
+    igpe = math.log2(max(probability_gain, 0.001)) if probability_gain > 0 else -10
+
+    # Molchan diagram: miss_rate vs alarm_fraction
     miss_rate = fn / max(len(target_events), 1)
-    alarm_fraction = len(alarm_times) / max(total_days, 1)
-    molchan_score = 1 - miss_rate - alarm_fraction
+    n_total_cells_days = total_days * 50  # approximate total cell-days
+    alarm_fraction = len(alarm_times) / max(n_total_cells_days, 1)
+    # Molchan score: area above diagonal = predictive skill
+    # score > 0 means better than random
+    molchan_score = (1 - miss_rate) - alarm_fraction  # = recall - alarm_fraction
 
     return {
         "label": label,
@@ -213,11 +255,13 @@ def evaluate_alarm(alarm_times, alarm_locations, target_events,
         "matched_targets": len(matched_targets),
         "precision": round(precision, 4),
         "recall": round(recall, 4),
-        "false_alarm_rate": round(fp_alarms / max(tp_alarms + fp_alarms, 1), 4),
-        "base_rate": round(base_rate, 4),
+        "false_alarm_rate": round(1 - precision, 4),
+        "cell_base_rate": round(mean_cell_rate, 5),
         "probability_gain": round(probability_gain, 2),
+        "information_gain_bits": round(igpe, 2),
+        "molchan_miss_rate": round(miss_rate, 4),
+        "molchan_alarm_fraction": round(alarm_fraction, 6),
         "molchan_score": round(molchan_score, 4),
-        "alarm_fraction": round(alarm_fraction, 4),
     }
 
 
@@ -277,44 +321,150 @@ async def generate_rate_alarms(events, all_events, all_times, t0,
     return alarms_t, alarms_loc
 
 
-async def generate_cfs_alarms(events, fm_dict, all_times, t0,
-                               cfs_threshold_kpa=100):
-    """Generate alarms at locations with high cumulative CFS.
+async def generate_cfs_cumulative_alarms(events, fm_dict, all_times, t0,
+                                          cfs_threshold_kpa=100):
+    """Generate alarms using CUMULATIVE Coulomb stress map.
 
-    After each M5+ event, compute CFS on a grid and flag locations
-    where CFS exceeds threshold. These locations are "primed" for
-    the next earthquake.
+    Unlike the previous version (alarm only after M5+), this maintains
+    a running CFS map that accumulates stress from ALL past M5+ events.
+    Stress doesn't decay — a 2012 M7 still loads faults today.
+
+    Every 30 days, scan the CFS map and alarm at grid cells where
+    cumulative CFS exceeds threshold. This generates many more alarms
+    than the instantaneous version, making statistical evaluation possible.
     """
     alarms_t = []
     alarms_loc = []
 
     m5_events = [e for e in events if e["mag"] >= 5.0]
+    if not m5_events:
+        return alarms_t, alarms_loc
 
-    # After each M5+ event, compute CFS at grid points
-    for i, src in enumerate(m5_events):
-        src_fm_key = (round(src["lat"], 1), round(src["lon"], 1))
-        strike, dip, rake = fm_dict.get(src_fm_key,
-                                         default_mechanism(src["lat"], src["lon"], src["depth"]))
-        l, w, s = fault_dimensions(src["mag"])
+    # Grid: 0.5° over seismically active Japan
+    grid_lats = [lat * 0.5 for lat in range(52, 92)]   # 26°-46°N
+    grid_lons = [lon * 0.5 for lon in range(252, 300)]  # 126°-150°E
+    cfs_map = {}  # (lat, lon) → cumulative CFS (kPa)
+    for lat in grid_lats:
+        for lon in grid_lons:
+            cfs_map[(lat, lon)] = 0.0
 
-        # Check CFS at grid points around the source (±3°, 0.5° step)
-        for dlat in range(-6, 7):
-            for dlon in range(-6, 7):
-                obs_lat = src["lat"] + dlat * 0.5
-                obs_lon = src["lon"] + dlon * 0.5
-                if abs(dlat) < 1 and abs(dlon) < 1:
-                    continue  # Skip near-source (known high CFS)
-                obs_depth = 15.0  # Fixed shallow depth
+    m5_idx = 0
+    n_days = int(all_times[-1] - all_times[0])
 
+    # Scan every 30 days
+    for day_offset in range(30, n_days, 30):
+        t_now = all_times[0] + day_offset
+        alarm_dt = t0 + timedelta(days=t_now)
+
+        # Add CFS from new M5+ events since last scan
+        while m5_idx < len(m5_events) and m5_events[m5_idx]["t_days"] <= t_now:
+            src = m5_events[m5_idx]
+            src_fm_key = (round(src["lat"], 1), round(src["lon"], 1))
+            strike, dip, rake = fm_dict.get(src_fm_key,
+                                             default_mechanism(src["lat"], src["lon"], src["depth"]))
+            l, w, s = fault_dimensions(src["mag"])
+
+            for (obs_lat, obs_lon) in cfs_map:
+                dist_lat = abs(src["lat"] - obs_lat) * DEG_TO_KM
+                dist_lon = abs(src["lon"] - obs_lon) * DEG_TO_KM
+                if dist_lat > 300 or dist_lon > 300:  # Skip far points
+                    continue
                 cfs = okada_cfs(src["lat"], src["lon"], src["depth"],
                                 strike, dip, rake, l, w, s,
-                                obs_lat, obs_lon, obs_depth)
-                cfs_kpa = cfs / 1000
+                                obs_lat, obs_lon, 15.0)
+                cfs_map[(obs_lat, obs_lon)] += cfs / 1000  # to kPa
 
-                if cfs_kpa >= cfs_threshold_kpa:
-                    alarm_dt = src["time"] + timedelta(hours=1)  # Alarm starts right after source
-                    alarms_t.append(alarm_dt)
-                    alarms_loc.append((obs_lat, obs_lon))
+            m5_idx += 1
+
+        # Alarm at cells where cumulative CFS exceeds threshold
+        for (lat, lon), cfs_kpa in cfs_map.items():
+            if cfs_kpa >= cfs_threshold_kpa:
+                alarms_t.append(alarm_dt)
+                alarms_loc.append((lat, lon))
+
+    logger.info("    CFS cumulative: %d alarms from %d grid scans",
+                len(alarms_t), n_days // 30)
+    return alarms_t, alarms_loc
+
+
+async def generate_etas_residual_alarms(events, all_times, t0,
+                                         residual_threshold=3.0,
+                                         window_days=7):
+    """Generate alarms when seismicity rate exceeds ETAS prediction.
+
+    ETAS (Epidemic-Type Aftershock Sequence) predicts aftershock rates.
+    When OBSERVED rate significantly exceeds ETAS PREDICTION, something
+    beyond normal aftershock cascading is happening — a genuine anomaly.
+
+    Simplified ETAS: rate(t) = mu + sum(K * exp(alpha*(mi-mc)) / (t-ti+c)^p)
+    Parameters from Ogata (1998) for Japan: K=0.04, alpha=1.0, c=0.01, p=1.1
+    """
+    # ETAS parameters (Japan regional estimates, Ogata 1998)
+    mu = 0.5  # Background rate per day per 2° cell (fitted below)
+    K = 0.04
+    alpha_etas = 1.0
+    c = 0.01  # days
+    p = 1.1
+    mc = 3.0  # Completeness magnitude
+
+    T_total = all_times[-1] - all_times[0]
+    alarms_t = []
+    alarms_loc = []
+
+    n_days = int(T_total)
+    for day_offset in range(30, n_days, 1):  # Start after 30 days
+        t_now = all_times[0] + day_offset
+        idx = bisect.bisect_right(all_times, t_now)
+
+        t_start = t_now - window_days
+        idx_start = bisect.bisect_left(all_times, t_start)
+        recent = events[idx_start:idx]
+        if not recent:
+            continue
+
+        # Cluster by 2° boxes
+        boxes = {}
+        for e in recent:
+            bkey = (round(e["lat"] / 2) * 2, round(e["lon"] / 2) * 2)
+            if bkey not in boxes:
+                boxes[bkey] = []
+            boxes[bkey].append(e)
+
+        for (blat, blon), box_events in boxes.items():
+            observed = len(box_events)
+
+            # ETAS predicted rate for this cell in this window
+            # Sum aftershock contributions from all prior events in this cell
+            prior_idx = bisect.bisect_right(all_times, t_start)
+            etas_rate = mu * window_days  # Background
+
+            for j in range(max(0, prior_idx - 5000), prior_idx):
+                e = events[j]
+                if abs(e["lat"] - blat) > 2 or abs(e["lon"] - blon) > 2:
+                    continue
+                dt_start = t_start - e["t_days"]
+                dt_end = t_now - e["t_days"]
+                if dt_start < 0:
+                    dt_start = 0.001
+                if dt_end <= dt_start:
+                    continue
+                # Integrated ETAS kernel over [dt_start, dt_end]
+                productivity = K * math.exp(alpha_etas * (e["mag"] - mc))
+                if abs(p - 1.0) < 0.01:
+                    integral = productivity * (math.log(dt_end + c) - math.log(dt_start + c))
+                else:
+                    integral = productivity / (1 - p) * (
+                        (dt_end + c) ** (1 - p) - (dt_start + c) ** (1 - p))
+                etas_rate += max(integral, 0)
+
+            if etas_rate < 0.5:
+                etas_rate = 0.5  # Floor
+
+            residual = observed / etas_rate
+            if residual >= residual_threshold:
+                alarm_dt = t0 + timedelta(days=t_now)
+                alarms_t.append(alarm_dt)
+                alarms_loc.append((blat, blon))
 
     return alarms_t, alarms_loc
 
@@ -475,6 +625,10 @@ async def run_prospective_analysis():
     logger.info("  Total targets: %d (train: %d, test: %d, test_iso: %d)",
                 len(targets_all), len(targets_train), len(targets_test), len(targets_test_iso))
 
+    # Compute per-cell base rates for spatially-resolved evaluation
+    cell_rates = compute_cell_base_rates(
+        targets_test, T_total / 2, SPATIAL_RADIUS_DEG, PREDICTION_WINDOW_DAYS)
+
     results = {
         "metadata": {
             "prediction_window_days": PREDICTION_WINDOW_DAYS,
@@ -484,58 +638,61 @@ async def run_prospective_analysis():
             "n_events_m3": len(events),
             "n_targets_all": len(targets_all),
             "n_targets_isolated": len(targets_isolated),
+            "n_spatial_cells": len(cell_rates),
+            "mean_cell_base_rate": round(
+                sum(cell_rates.values()) / max(len(cell_rates), 1), 5),
             "train_period": "2011-2018",
             "test_period": "2019-2026",
         },
         "alarms": {},
     }
 
+    def eval_and_log(times, locs, targets, label):
+        """Evaluate and log alarm performance."""
+        r = evaluate_alarm(times, locs, targets,
+                           PREDICTION_WINDOW_DAYS, SPATIAL_RADIUS_DEG,
+                           T_total / 2, label=label, cell_base_rates=cell_rates)
+        results["alarms"][label] = r
+        logger.info("  %s: prec=%.3f recall=%.3f gain=%.1f IGPE=%.2f molchan=%.3f (%d alarms)",
+                    label, r["precision"], r["recall"],
+                    r["probability_gain"], r["information_gain_bits"],
+                    r["molchan_score"], r["n_alarms"])
+        return r
+
+    def filter_test_period(times, locs):
+        """Filter alarms to test period only."""
+        pairs = [(t, loc) for t, loc in zip(times, locs) if t >= split_date]
+        return [t for t, _ in pairs], [loc for _, loc in pairs]
+
     # ---------------------------------------------------------------
-    # Signal 1: Seismicity rate alarm
+    # Signal 1: Seismicity rate alarm (raw)
     # ---------------------------------------------------------------
     logger.info("  --- Generating rate alarms ---")
     for threshold in [2.0, 3.0, 5.0]:
         rate_t, rate_loc = await generate_rate_alarms(
             events, events, all_times, t0, threshold=threshold)
-
-        # Filter to test period only
-        rate_t_test = [(t, loc) for t, loc in zip(rate_t, rate_loc) if t >= split_date]
-        rate_t_test_times = [t for t, _ in rate_t_test]
-        rate_t_test_locs = [loc for _, loc in rate_t_test]
-
-        eval_result = evaluate_alarm(
-            rate_t_test_times,
-            rate_t_test_locs,
-            targets_test, PREDICTION_WINDOW_DAYS, SPATIAL_RADIUS_DEG,
-            T_total / 2, label=f"rate_gt_{threshold}x"
-        )
-        results["alarms"][f"rate_gt_{threshold}x"] = eval_result
-        logger.info("  Rate>%.0fx: precision=%.3f recall=%.3f gain=%.1f (%d alarms)",
-                    threshold, eval_result["precision"], eval_result["recall"],
-                    eval_result["probability_gain"], eval_result["n_alarms"])
+        rt, rl = filter_test_period(rate_t, rate_loc)
+        eval_and_log(rt, rl, targets_test, f"rate_gt_{threshold}x")
 
     # ---------------------------------------------------------------
-    # Signal 2: CFS alarm
+    # Signal 2: ETAS residual alarm (aftershock-corrected rate)
     # ---------------------------------------------------------------
-    logger.info("  --- Generating CFS alarms ---")
-    for cfs_thresh in [50, 100, 500]:
-        cfs_t, cfs_loc = await generate_cfs_alarms(
+    logger.info("  --- Generating ETAS residual alarms ---")
+    for res_thresh in [2.0, 3.0, 5.0]:
+        etas_t, etas_loc = await generate_etas_residual_alarms(
+            events, all_times, t0, residual_threshold=res_thresh)
+        et, el = filter_test_period(etas_t, etas_loc)
+        eval_and_log(et, el, targets_test, f"etas_residual_gt_{res_thresh}x")
+
+    # ---------------------------------------------------------------
+    # Signal 3: Cumulative CFS alarm
+    # ---------------------------------------------------------------
+    logger.info("  --- Generating cumulative CFS alarms ---")
+    for cfs_thresh in [10, 50, 100]:
+        cfs_t, cfs_loc = await generate_cfs_cumulative_alarms(
             events, fm_dict, all_times, t0, cfs_threshold_kpa=cfs_thresh)
-
-        cfs_t_test = [(t, loc) for t, loc in zip(cfs_t, cfs_loc) if t >= split_date]
-        cfs_t_test_times = [t for t, _ in cfs_t_test]
-        cfs_t_test_locs = [loc for _, loc in cfs_t_test]
-
-        eval_result = evaluate_alarm(
-            cfs_t_test_times,
-            cfs_t_test_locs,
-            targets_test, PREDICTION_WINDOW_DAYS, SPATIAL_RADIUS_DEG,
-            T_total / 2, label=f"cfs_gt_{cfs_thresh}kpa"
-        )
-        results["alarms"][f"cfs_gt_{cfs_thresh}kpa"] = eval_result
-        logger.info("  CFS>%dkPa: precision=%.3f recall=%.3f gain=%.1f (%d alarms)",
-                    cfs_thresh, eval_result["precision"], eval_result["recall"],
-                    eval_result["probability_gain"], eval_result["n_alarms"])
+        ct, cl = filter_test_period(cfs_t, cfs_loc)
+        eval_and_log(ct, cl, targets_test, f"cfs_cumul_gt_{cfs_thresh}kpa")
 
     # ---------------------------------------------------------------
     # Signal 3: Foreshock alarm
@@ -544,24 +701,11 @@ async def run_prospective_analysis():
     for min_count in [3, 5, 10]:
         fore_t, fore_loc = await generate_foreshock_alarms(
             events, all_times, t0, min_count=min_count)
-
-        fore_t_test = [(t, loc) for t, loc in zip(fore_t, fore_loc) if t >= split_date]
-        fore_t_test_times = [t for t, _ in fore_t_test]
-        fore_t_test_locs = [loc for _, loc in fore_t_test]
-
-        eval_result = evaluate_alarm(
-            fore_t_test_times,
-            fore_t_test_locs,
-            targets_test, PREDICTION_WINDOW_DAYS, SPATIAL_RADIUS_DEG,
-            T_total / 2, label=f"foreshock_ge_{min_count}"
-        )
-        results["alarms"][f"foreshock_ge_{min_count}"] = eval_result
-        logger.info("  Foreshock≥%d: precision=%.3f recall=%.3f gain=%.1f (%d alarms)",
-                    min_count, eval_result["precision"], eval_result["recall"],
-                    eval_result["probability_gain"], eval_result["n_alarms"])
+        ft, fl = filter_test_period(fore_t, fore_loc)
+        eval_and_log(ft, fl, targets_test, f"foreshock_ge_{min_count}")
 
     # ---------------------------------------------------------------
-    # Signal 4: ULF magnetic alarm (if data available)
+    # Signal 5: ULF magnetic alarm (if data available)
     # ---------------------------------------------------------------
     logger.info("  --- Generating ULF alarms ---")
     stations = {
@@ -572,104 +716,66 @@ async def run_prospective_analysis():
     for ulf_thresh in [2.0, 3.0, 5.0]:
         ulf_t, ulf_loc = await generate_ulf_alarms(
             DB_PATH, stations, threshold_ratio=ulf_thresh)
-
         if not ulf_t:
             results["alarms"][f"ulf_power_gt_{ulf_thresh}x"] = {
                 "label": f"ulf_power_gt_{ulf_thresh}x",
                 "status": "no_ulf_data_or_no_alarms",
             }
             continue
-
-        # Filter to test period
-        ulf_t_test = [(t, loc) for t, loc in zip(ulf_t, ulf_loc) if t >= split_date]
-        ulf_t_test_times = [t for t, _ in ulf_t_test]
-        ulf_t_test_locs = [loc for _, loc in ulf_t_test]
-
-        eval_result = evaluate_alarm(
-            ulf_t_test_times,
-            ulf_t_test_locs,
-            targets_test, PREDICTION_WINDOW_DAYS, SPATIAL_RADIUS_DEG,
-            T_total / 2, label=f"ulf_power_gt_{ulf_thresh}x"
-        )
-        results["alarms"][f"ulf_power_gt_{ulf_thresh}x"] = eval_result
-        logger.info("  ULF>%.0fx: precision=%.3f recall=%.3f gain=%.1f (%d alarms)",
-                    ulf_thresh, eval_result["precision"], eval_result["recall"],
-                    eval_result["probability_gain"], eval_result["n_alarms"])
+        ut, ul = filter_test_period(ulf_t, ulf_loc)
+        eval_and_log(ut, ul, targets_test, f"ulf_power_gt_{ulf_thresh}x")
 
     # ---------------------------------------------------------------
-    # Combined alarm: any 2+ of rate + CFS + foreshock
+    # Combined: ETAS residual + CFS cumulative + foreshock
     # ---------------------------------------------------------------
-    logger.info("  --- Combined alarm evaluation ---")
+    logger.info("  --- Combined alarm (ETAS + CFS + foreshock) ---")
+    etas_best_t, etas_best_loc = await generate_etas_residual_alarms(
+        events, all_times, t0, residual_threshold=3.0)
+    cfs_best_t, cfs_best_loc = await generate_cfs_cumulative_alarms(
+        events, fm_dict, all_times, t0, cfs_threshold_kpa=50)
+    fore_best_t, fore_best_loc = await generate_foreshock_alarms(
+        events, all_times, t0, min_count=5)
 
-    # Collect all alarms from best individual thresholds
-    # (Use rate>3x, CFS>100kPa, foreshock≥3 as baseline)
-    rate_t_all, rate_loc_all = await generate_rate_alarms(
-        events, events, all_times, t0, threshold=3.0)
-    cfs_t_all, cfs_loc_all = await generate_cfs_alarms(
-        events, fm_dict, all_times, t0, cfs_threshold_kpa=100)
-    fore_t_all, fore_loc_all = await generate_foreshock_alarms(
-        events, all_times, t0, min_count=3)
+    # Build daily alarm index for fast lookup
+    def build_alarm_index(times, locs, cell_size=2):
+        """Index alarms by (day_offset, cell) for O(1) lookup."""
+        idx = {}
+        for t, (lat, lon) in zip(times, locs):
+            day = t.toordinal()
+            cell = (round(lat / cell_size) * cell_size,
+                    round(lon / cell_size) * cell_size)
+            idx[(day, cell)] = True
+        return idx
 
-    # For each day in test period, count active alarms
+    etas_idx = build_alarm_index(etas_best_t, etas_best_loc)
+    cfs_idx = build_alarm_index(cfs_best_t, cfs_best_loc)
+    fore_idx = build_alarm_index(fore_best_t, fore_best_loc)
+
     combined_alarms_t = []
     combined_alarms_loc = []
-    test_start_days = (split_date - t0).total_seconds() / 86400
-    n_test_days = int(T_total - test_start_days)
+    test_start = split_date.toordinal()
+    test_end = test_start + int(T_total / 2)
 
-    for day_offset in range(n_test_days):
-        t_day = split_date + timedelta(days=day_offset)
-
-        # Check each alarm type: is there an alarm within ±1 day?
-        def has_alarm_near(alarm_times, t_ref, hours=24):
-            for at in alarm_times:
-                if abs((at - t_ref).total_seconds()) < hours * 3600:
-                    return True
-            return False
-
-        # Grid scan: check major seismic regions
+    for day_ord in range(test_start, test_end):
+        t_day = datetime.fromordinal(day_ord).replace(tzinfo=timezone.utc)
         for lat in range(26, 46, 2):
             for lon in range(128, 148, 2):
+                cell = (lat, lon)
                 n_active = 0
-                if has_alarm_near(
-                    [t for t, loc in zip(rate_t_all, rate_loc_all)
-                     if abs(loc[0] - lat) <= 2 and abs(loc[1] - lon) <= 2],
-                    t_day):
+                if (day_ord, cell) in etas_idx:
                     n_active += 1
-                if has_alarm_near(
-                    [t for t, loc in zip(cfs_t_all, cfs_loc_all)
-                     if abs(loc[0] - lat) <= 2 and abs(loc[1] - lon) <= 2],
-                    t_day):
+                if (day_ord, cell) in cfs_idx:
                     n_active += 1
-                if has_alarm_near(
-                    [t for t, loc in zip(fore_t_all, fore_loc_all)
-                     if abs(loc[0] - lat) <= 2 and abs(loc[1] - lon) <= 2],
-                    t_day):
+                if (day_ord, cell) in fore_idx:
                     n_active += 1
-
                 if n_active >= 2:
                     combined_alarms_t.append(t_day)
-                    combined_alarms_loc.append((lat, lon))
+                    combined_alarms_loc.append(cell)
 
-    combined_eval = evaluate_alarm(
-        combined_alarms_t, combined_alarms_loc,
-        targets_test, PREDICTION_WINDOW_DAYS, SPATIAL_RADIUS_DEG,
-        T_total / 2, label="combined_ge_2_signals"
-    )
-    results["alarms"]["combined_ge_2_signals"] = combined_eval
-    logger.info("  Combined≥2: precision=%.3f recall=%.3f gain=%.1f (%d alarms)",
-                combined_eval["precision"], combined_eval["recall"],
-                combined_eval["probability_gain"], combined_eval["n_alarms"])
-
-    # Also evaluate on isolated targets only
-    combined_eval_iso = evaluate_alarm(
-        combined_alarms_t, combined_alarms_loc,
-        targets_test_iso, PREDICTION_WINDOW_DAYS, SPATIAL_RADIUS_DEG,
-        T_total / 2, label="combined_ge_2_signals_isolated"
-    )
-    results["alarms"]["combined_ge_2_signals_isolated"] = combined_eval_iso
-    logger.info("  Combined≥2 (iso): precision=%.3f recall=%.3f gain=%.1f",
-                combined_eval_iso["precision"], combined_eval_iso["recall"],
-                combined_eval_iso["probability_gain"])
+    eval_and_log(combined_alarms_t, combined_alarms_loc,
+                 targets_test, "combined_etas_cfs_fore_ge2")
+    eval_and_log(combined_alarms_t, combined_alarms_loc,
+                 targets_test_iso, "combined_ge2_isolated")
 
     return results
 

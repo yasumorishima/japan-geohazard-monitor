@@ -264,9 +264,9 @@ async def main():
             logger.info("%s: %d dates to fetch (%d total eq dates, %d existing)",
                         station, len(dates_to_fetch), len(eq_dates), len(existing_set))
 
-            # Process in batches — limit total API calls per station
-            # to avoid hitting rate limits (max ~200 requests per run)
-            max_per_station = 80
+            # Process in batches — increased limit for full temporal coverage
+            # INTERMAGNET GIN V1 is reliable, 0.5s between requests
+            max_per_station = 300
             batch = dates_to_fetch[:max_per_station]
             station_records = 0
 
