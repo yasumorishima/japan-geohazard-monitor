@@ -196,10 +196,13 @@ def evaluate_alarm(alarm_times, alarm_locations, target_events,
     matched_targets = set()
 
     for alarm_t, (alarm_lat, alarm_lon) in zip(alarm_times, alarm_locations):
-        alarm_end = alarm_t + timedelta(days=prediction_window_days)
+        # Normalize timezone for comparison
+        at = alarm_t.replace(tzinfo=None) if alarm_t.tzinfo else alarm_t
+        alarm_end = at + timedelta(days=prediction_window_days)
         hit = False
         for i, (t_t, t_lat, t_lon, t_mag) in enumerate(target_events):
-            if alarm_t <= t_t <= alarm_end:
+            tt = t_t.replace(tzinfo=None) if t_t.tzinfo else t_t
+            if at <= tt <= alarm_end:
                 if (abs(alarm_lat - t_lat) <= spatial_radius_deg and
                         abs(alarm_lon - t_lon) <= spatial_radius_deg):
                     hit = True
@@ -660,8 +663,13 @@ async def run_prospective_analysis():
         return r
 
     def filter_test_period(times, locs):
-        """Filter alarms to test period only."""
-        pairs = [(t, loc) for t, loc in zip(times, locs) if t >= split_date]
+        """Filter alarms to test period only (handles naive/aware datetimes)."""
+        split_naive = split_date.replace(tzinfo=None)
+        pairs = []
+        for t, loc in zip(times, locs):
+            t_cmp = t.replace(tzinfo=None) if t.tzinfo else t
+            if t_cmp >= split_naive:
+                pairs.append((t, loc))
         return [t for t, _ in pairs], [loc for _, loc in pairs]
 
     # ---------------------------------------------------------------
