@@ -21,7 +21,7 @@ Real-time monitoring dashboard for Japan's geophysical activity — earthquakes,
     → Chart.js correlation panel (5 time-aligned charts)
 ```
 
-**Stack**: Python 3.12 / asyncio + aiohttp + asyncssh / aiosqlite / FastAPI + Uvicorn / Leaflet.js + Chart.js / Docker
+**Stack**: Python 3.12 / asyncio + aiohttp + asyncssh / aiosqlite / FastAPI + Uvicorn / scikit-learn + scipy / Leaflet.js + Chart.js / Docker
 
 ## Data Sources (10 APIs, 9 collectors)
 
@@ -124,7 +124,8 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 - **Analysis Phase 3a** ✅ LURR (❌), Natural Time (❌), Nowcasting (⚠️ lift 1.31) — catalog-based methods exhausted
 - **Analysis Phase 3b** ✅ MODIS LST (❌), ULF magnetic (⚠️ data limited to 80 days), GNSS-TEC 0.5° (31K records)
 - **Analysis Phase 4** ✅ **Prospective (forward-looking) prediction**: ETAS residual (gain 4.0x), foreshock (5.1x), cumulative CFS (2.4x), combined alarm (**7.8x, 62.5% precision**). Pattern Informatics (Molchan AUC 0.349)
-- **Analysis Phase 5** 🔄 ML integration: AdaBoost ensemble (11 features, pure Python) — running
+- **Analysis Phase 5** ✅ ML integration: AdaBoost ensemble (11 features, pure Python) — AUC 0.73
+- **Analysis Phase 6** 🔄 ML overhaul: HistGradientBoosting (35 temporal features), walk-forward CV, ETAS MLE, rate-and-state CFS, isotonic calibration
 - **Backfill** ✅ 2011-2026 M3+ earthquakes (29K), TEC (4M), Kp (44K), GCMT focal mechanisms
 - **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 120min timeout)
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
@@ -422,10 +423,36 @@ gh workflow run "Earthquake Correlation Analysis" \
 | `ulf_analysis.py` | 3b | ULF spectral power, Sz/Sh polarization, Higuchi fractal dimension (nighttime only) | Hayakawa (2007), Hattori (2004) |
 | `gnss_tec_analysis.py` | 3b | High-resolution GNSS-TEC (0.5°) anomaly at epicenters: day/night split, isolation filter, forward alarm evaluation | — |
 | `pattern_informatics.py` | 4 | Pattern Informatics: seismicity pattern change detection on 0.5° grid, prospective test | Rundle (2003), Tiampo (2002) |
-| `prospective_analysis.py` | 4 | **Forward-looking prediction**: ETAS residual + cumulative CFS + foreshock alarms. Cell-based base rate, Molchan score, information gain. Train 2011-2018, test 2019-2026 | Molchan (1991), Zechar & Jordan (2008), Ogata (1998) |
-| `ml_prediction.py` | 5 | ML integration: 11 features (rate, ETAS residual, CFS, foreshock, b-value, PI score, etc.) → decision stump ensemble. AUC-ROC, feature importance, prospective test | — |
+| `prospective_analysis.py` | 4 | **Forward-looking prediction**: ETAS residual + cumulative CFS + foreshock alarms + ML alarm. Cell-based base rate, Molchan score, information gain. Train 2011-2018, test 2019-2026 | Molchan (1991), Zechar & Jordan (2008), Ogata (1998) |
+| `ml_prediction.py` | 6 | ML integration: 35 temporal features → HistGradientBoosting, walk-forward CV, ETAS MLE, rate-and-state CFS, isotonic calibration, permutation importance | van den Ende & Ampuero (2020) |
 
-Results saved as JSON artifacts (90-day retention). Runs every Monday 12:00 JST or on demand.
+### Shared modules (`src/`)
+
+| Module | Purpose |
+|---|---|
+| `physics.py` | Okada (1992) CFS, Wells & Coppersmith (1994) fault scaling, ETAS MLE (scipy L-BFGS-B), Dieterich (1994) rate-and-state, b-value (Aki-Utsu), tectonic zone classification |
+| `features.py` | 35 temporal features: rate dynamics (acceleration, trend), ETAS residuals with MLE params, magnitude statistics (deficit, b-value trend), clustering (foreshock escalation, inter-event CV), rate-and-state CFS, Pattern Informatics, Benioff strain, spatial context |
+| `evaluation.py` | ROC-AUC, threshold evaluation (precision/recall/gain/IGPE/Molchan), walk-forward CV splits, isotonic calibration (PAV), reliability diagram, permutation importance, Molchan area skill score |
+
+Results saved as JSON artifacts (90-day retention). Runs every Monday 12:00 JST or on demand (180-min timeout).
+
+### Phase 5 ML Results (AUC 0.73, AdaBoost baseline)
+
+| Metric | Train | Test |
+|---|---|---|
+| AUC-ROC | 0.7588 | 0.7334 |
+
+| Feature | Single AUC | Ensemble weight |
+|---|---|---|
+| cfs_cumulative | **0.7151** | 23.3% (35 stumps) |
+| pi_score | **0.7098** | 12.2% (28 stumps) |
+| days_since_m5 | 0.6735 | 1.4% |
+| rate_30d | 0.6311 | 6.2% |
+| n_foreshock | 0.6062 | 8.7% |
+| etas_residual | 0.5597 | 5.0% |
+| b_value | 0.5166 | 41.0% (38 stumps, but ~random AUC) |
+
+**Key insight**: CFS cumulative and Pattern Informatics are the strongest individual predictors. ETAS residual underperformed (AUC 0.56) due to fixed literature parameters — Phase 6 addresses this with MLE fitting. b-value consumed most ensemble weight (41%) despite near-random AUC (0.52), indicating AdaBoost overfitting.
 
 ### Not yet implemented
 
