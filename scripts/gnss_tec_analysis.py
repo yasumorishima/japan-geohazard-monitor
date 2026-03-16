@@ -159,7 +159,7 @@ async def load_data(db, min_mag=5.0):
     all_events = []
     for r in eq_rows:
         try:
-            t = datetime.fromisoformat(r[0].replace("Z", "+00:00"))
+            t = datetime.fromisoformat(r[0].replace("Z", "+00:00")).replace(tzinfo=None)
             all_events.append({
                 "time": t, "mag": r[1], "lat": r[2], "lon": r[3],
                 "depth": r[4] if r[4] else 10.0,
@@ -182,7 +182,7 @@ async def load_data(db, min_mag=5.0):
     for lat, lon, tec, dtec, epoch_str in gnss_rows:
         key = (round(lat, 2), round(lon, 2))
         try:
-            ep = datetime.fromisoformat(epoch_str.replace("Z", "+00:00"))
+            ep = datetime.fromisoformat(epoch_str.replace("Z", "+00:00")).replace(tzinfo=None)
         except (ValueError, TypeError):
             continue
         if key not in gnss_by_loc:
@@ -198,7 +198,7 @@ async def load_data(db, min_mag=5.0):
     for lat, lon, tec, epoch_str in ionex_rows:
         key = (round(lat, 1), round(lon, 1))
         try:
-            ep = datetime.fromisoformat(epoch_str.replace("Z", "+00:00"))
+            ep = datetime.fromisoformat(epoch_str.replace("Z", "+00:00")).replace(tzinfo=None)
         except (ValueError, TypeError):
             continue
         if key not in ionex_by_loc:

@@ -150,6 +150,12 @@ jobs:
         run: |
           python3 scripts/pattern_informatics.py
 
+      - name: Run ML integrated prediction
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/ml_prediction.py || echo "ML prediction failed (non-fatal)"
+
       - name: Run prospective prediction analysis
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db

@@ -122,16 +122,17 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 - **Analysis Phase 1** ✅ b-value, TEC, Kp, multi-indicator grid search → all negative (aftershock/sampling artifacts)
 - **Analysis Phase 2** ✅ Coulomb stress (lift 37.5 isolated), rate anomaly (lift 1.86), clustering (lift 4.12) — all survived aftershock isolation + prospective test (combined lift 20.66)
 - **Analysis Phase 3a** ✅ LURR (❌), Natural Time (❌), Nowcasting (⚠️ lift 1.31) — catalog-based methods exhausted
-- **Analysis Phase 3b** 🔄 MODIS thermal IR, Kakioka ULF, S-net pressure — independent physical observations
+- **Analysis Phase 3b** ✅ MODIS LST (❌), ULF magnetic (⚠️ data limited to 80 days), GNSS-TEC 0.5° (31K records)
+- **Analysis Phase 4** ✅ **Prospective (forward-looking) prediction**: ETAS residual (gain 4.0x), foreshock (5.1x), cumulative CFS (2.4x), combined alarm (**7.8x, 62.5% precision**). Pattern Informatics (Molchan AUC 0.349). ML integration (in progress)
 - **Backfill** ✅ 2011-2026 M3+ earthquakes (29K), TEC (4M), Kp (44K), GCMT focal mechanisms
 - **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 120min timeout)
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
 
-## Analysis Results (2011-2026, 28K M3+ earthquakes, 4M TEC, 44K Kp)
+## Analysis Results (2011-2026, 28K M3+ earthquakes, 4M TEC, 44K Kp, 31K GNSS-TEC, 345K ULF)
 
-### Summary: all tested indicators are negative
+### Summary
 
-Every indicator tested — b-value, Kp geomagnetic index, ionosphere TEC, and their combinations — showed **no statistically significant earthquake precursory signal** after proper bias correction.
+Phase 1 indicators (b-value, Kp, low-res TEC) were all negative after bias correction. Phase 2 found 3 physics-based signals that survived aftershock isolation and prospective testing. **Phase 4 forward-looking evaluation achieved 62.5% precision (7.8x gain) by combining ETAS residual + cumulative CFS + foreshock alarms.**
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
 
@@ -349,9 +350,41 @@ The critical next step: **non-seismological data** that is physically independen
 
 **ULF magnetic analysis** (Hayakawa et al. 2007, Hattori 2004): Analyzes 1-minute geomagnetic data from KAK/MMB/KNY for three precursor signatures: (1) ULF Z-component spectral power increase, (2) Sz/Sh polarization ratio > 1 (lithospheric origin), (3) fractal dimension decrease. Nighttime-only (0-6 LT) to avoid anthropogenic noise.
 
+### Phase 3b: Independent physical observations — MODIS ❌, ULF ⚠️
+
+**MODIS Land Surface Temperature — ❌ No thermal precursor signal**
+
+Pre-earthquake 7-day anomaly: mean=0.061σ, 95% CI=[-0.109, 0.224], >2σ = 0.0%. The LAIC thermal precursor hypothesis (Tronin 2006) is not supported in this dataset.
+
+**ULF Magnetic — ⚠️ Strong retrospective signal, forward evaluation pending**
+
+| Station | Events | Power ratio (pre/post) | Sz/Sh polarization | Fractal dim |
+|---|---|---|---|---|
+| KAK | 439 | **mean 7.9x**, >2x = 53% | pre=0.98 > post=0.34 | pre=1.27 < post=1.33 |
+
+All three ULF precursor signatures are present (power increase, lithospheric polarization, fractal regularization). **However, data covers only 2011-01-05 to 2011-05-05 (80 days including Tohoku M9)** — aftershock contamination is almost certain. Full-period data needed for prospective evaluation.
+
+### Phase 4: Prospective (forward-looking) prediction — **gain up to 7.8x**
+
+The fundamental shift: from "given earthquake, was there anomaly?" to **"given anomaly now, will earthquake follow?"** Evaluated on 2019-2026 (unseen data), with spatially-resolved base rates per 2°×2° cell.
+
+| Signal | Alarms | Precision | Recall | **Prob. Gain** | IGPE (bits) |
+|---|---|---|---|---|---|
+| **Combined (ETAS+CFS+fore) ≥2** | **16** | **62.5%** | 2.5% | **7.8x** | **2.96** |
+| ETAS residual > 5x | 38 | 52.6% | 6.8% | 4.0x | 1.99 |
+| Foreshock ≥ 10 | 74 | 39.2% | 8.8% | **5.1x** | 2.36 |
+| Foreshock ≥ 5 | 257 | 34.2% | 16.3% | 4.1x | 2.04 |
+| ETAS residual > 3x | 71 | 47.9% | 8.2% | 3.8x | 1.92 |
+| Rate > 5x | 464 | 19.0% | 14.4% | 4.2x | 2.09 |
+| Cumulative CFS > 100 kPa | 440 | 19.8% | 3.7% | 2.4x | 1.25 |
+
+**Key finding**: When ETAS residual, cumulative CFS, and foreshock alarms fire simultaneously, 62.5% of the time an M5+ earthquake follows within 7 days — **7.8 times better than random**. The ETAS residual (rate exceeding aftershock model prediction) is the strongest individual signal at 52.6% precision.
+
+**Pattern Informatics (Rundle 2003)**: Prospective Molchan AUC = 0.349 (< 0.5 = better than random). PI hotspots preferentially attract future M5+ events. Top hotspots: Iburi (42.75°N), Izu-Bonin (32.75°N, 29.75°N).
+
 ## Automated Analysis (GitHub Actions)
 
-Weekly analysis workflow fetches data from 7 public APIs, runs Phase 1-3 analyses (14 scripts), and stores results as artifacts.
+Weekly analysis workflow fetches data from 7+ public APIs, runs 20 analysis scripts (Phase 1-4), and stores results as artifacts.
 
 ```bash
 # Manual trigger
@@ -389,6 +422,7 @@ gh workflow run "Earthquake Correlation Analysis" \
 | `gnss_tec_analysis.py` | 3b | High-resolution GNSS-TEC (0.5°) anomaly at epicenters: day/night split, isolation filter, forward alarm evaluation | — |
 | `pattern_informatics.py` | 4 | Pattern Informatics: seismicity pattern change detection on 0.5° grid, prospective test | Rundle (2003), Tiampo (2002) |
 | `prospective_analysis.py` | 4 | **Forward-looking prediction**: ETAS residual + cumulative CFS + foreshock alarms. Cell-based base rate, Molchan score, information gain. Train 2011-2018, test 2019-2026 | Molchan (1991), Zechar & Jordan (2008), Ogata (1998) |
+| `ml_prediction.py` | 5 | ML integration: 11 features (rate, ETAS residual, CFS, foreshock, b-value, PI score, etc.) → decision stump ensemble. AUC-ROC, feature importance, prospective test | — |
 
 Results saved as JSON artifacts (90-day retention). Runs every Monday 12:00 JST or on demand.
 
