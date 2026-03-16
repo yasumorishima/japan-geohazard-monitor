@@ -288,9 +288,9 @@ async def generate_rate_alarms(events, all_events, all_times, t0,
     alarms_t = []
     alarms_loc = []
 
-    # Sample every day across the timeline (not every event, too many)
+    # Sample every 3 days across the timeline (balance speed vs resolution)
     n_days = int(T_total)
-    for day_offset in range(0, n_days, 1):  # Every day
+    for day_offset in range(0, n_days, 3):
         t_now = all_times[0] + day_offset
         idx = bisect.bisect_right(all_times, t_now)
         if idx < 10:
@@ -343,13 +343,14 @@ async def generate_cfs_cumulative_alarms(events, fm_dict, all_times, t0,
     alarms_t = []
     alarms_loc = []
 
-    m5_events = [e for e in events if e["mag"] >= 5.0]
+    # Use M5.5+ for CFS sources (M5.0 too many, M6 too few)
+    m5_events = [e for e in events if e["mag"] >= 5.5]
     if not m5_events:
         return alarms_t, alarms_loc
 
-    # Grid: 0.5° over seismically active Japan
-    grid_lats = [lat * 0.5 for lat in range(52, 92)]   # 26°-46°N
-    grid_lons = [lon * 0.5 for lon in range(252, 300)]  # 126°-150°E
+    # Grid: 2° over seismically active Japan (coarser = faster)
+    grid_lats = [lat * 2.0 for lat in range(13, 24)]   # 26°-46°N
+    grid_lons = [lon * 2.0 for lon in range(63, 76)]    # 126°-150°E
     cfs_map = {}  # (lat, lon) → cumulative CFS (kPa)
     for lat in grid_lats:
         for lon in grid_lons:
@@ -363,7 +364,7 @@ async def generate_cfs_cumulative_alarms(events, fm_dict, all_times, t0,
         t_now = all_times[0] + day_offset
         alarm_dt = t0 + timedelta(days=t_now)
 
-        # Add CFS from new M5+ events since last scan
+        # Add CFS from new M5.5+ events since last scan
         while m5_idx < len(m5_events) and m5_events[m5_idx]["t_days"] <= t_now:
             src = m5_events[m5_idx]
             src_fm_key = (round(src["lat"], 1), round(src["lon"], 1))
@@ -374,7 +375,7 @@ async def generate_cfs_cumulative_alarms(events, fm_dict, all_times, t0,
             for (obs_lat, obs_lon) in cfs_map:
                 dist_lat = abs(src["lat"] - obs_lat) * DEG_TO_KM
                 dist_lon = abs(src["lon"] - obs_lon) * DEG_TO_KM
-                if dist_lat > 300 or dist_lon > 300:  # Skip far points
+                if dist_lat > 200 or dist_lon > 200:  # Tight distance cut
                     continue
                 cfs = okada_cfs(src["lat"], src["lon"], src["depth"],
                                 strike, dip, rake, l, w, s,
@@ -419,7 +420,7 @@ async def generate_etas_residual_alarms(events, all_times, t0,
     alarms_loc = []
 
     n_days = int(T_total)
-    for day_offset in range(30, n_days, 1):  # Start after 30 days
+    for day_offset in range(30, n_days, 3):  # Every 3 days (balance speed vs resolution)
         t_now = all_times[0] + day_offset
         idx = bisect.bisect_right(all_times, t_now)
 
@@ -487,7 +488,7 @@ async def generate_foreshock_alarms(events, all_times, t0,
     alarms_loc = []
 
     n_days = int(all_times[-1] - all_times[0])
-    for day_offset in range(0, n_days, 1):
+    for day_offset in range(0, n_days, 3):  # Every 3 days
         t_now = all_times[0] + day_offset
         idx = bisect.bisect_right(all_times, t_now)
         t_start = t_now - window_days
