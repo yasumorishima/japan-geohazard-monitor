@@ -518,20 +518,40 @@ Expanded from 35 to 47 features to capture spatial correlation and crustal defor
 
 Additional changes: zone-specific ETAS parameters injected into feature extraction (was global), 2-pass Gaussian spatial smoothing of cell predictions. The +0.003 improvement indicates the feature engineering ceiling is being reached — motivating Phase 8's structural approach.
 
-### Phase 8: Structural Overhaul (in progress)
+### Phase 8: Structural Overhaul
 
-Phase 7 showed diminishing returns from feature engineering (+0.003 with 12 new features). Phase 8 attacks from 4 structural directions:
+Phase 7 showed diminishing returns from feature engineering (+0.003 with 12 new features). Phase 8 attacks from 4 structural directions.
+
+**Phase 8.0 results (multi-target + CSEP + stacking + ConvLSTM export)**:
+
+| Target | CV AUC (pooled) | Test AUC | Notes |
+|---|---|---|---|
+| M5+ | 0.7413 | **0.7490** | No regression from Phase 7 (0.749) |
+| M5.5+ | 0.6671 | — | New target, fewer positives |
+| M6+ | 0.5858 | 0.6595 (smoothed) | Only 2.3% positive, spatial smoothing +0.052 |
+
+Phase 8.0 revealed critical bugs in stacking:
+- **Physics alarm AUC = 0.500 (constant)**: physics alarms were generated on a fixed 3-day grid while ML level-0 used different t_days precision → fuzzy matching ≈ 0% hit rate → all physics features defaulted to constants
+- **Logistic stacking AUC = 0.27 (collapsed)**: constant physics features + unscaled feature values (ML prob 0-1 vs CFS 0-1000+ kPa) caused gradient explosion
+- **Isotonic stacking AUC = 0.741**: survived by averaging all inputs (scale-invariant), but couldn't improve on ML alone
+- **CSEP benchmark used single static forecast**: averaged all test-period predictions into one forecast, applied to all sliding windows
+
+**Phase 8.1 fixes** (3 root causes addressed):
+1. Physics alarm alignment: `export_physics_alarms()` now reads ML level-0 keys and generates features at exact same (cell, t_days) coordinates → match rate 0% → 100%
+2. Logistic standardization: feature standardization (zero mean, unit variance) before gradient descent
+3. Dynamic CSEP: per-window ML forecast reconstruction from level-0 predictions
 
 **Initiative 1: ConvLSTM Spatiotemporal Neural Network**
 - 2-layer ConvLSTM with channel attention on 11×11×47 spatial grid
 - Captures spatial patterns that cell-independent HistGBT cannot learn
+- Feature matrix exported: 76.1 MB, 1789 timesteps, 10.08% positive
 - Training via RPi5 → Google Drive → Colab T4 GPU pipeline
-- Walk-Forward CV with same splits as HistGBT for fair comparison
 
 **Initiative 2: CSEP-Compatible Format + Benchmark**
 - ML probability → CSEP XML rate forecast (2°×2° grid, 4 magnitude bins)
 - 4 reference models: Uniform Poisson, Smoothed Seismicity (Helmstetter 2007), Relative Intensity (Rhoades 2004), Simple ETAS
 - Statistical tests: N-test (Poisson consistency), L-test (log-likelihood), T-test (paired comparison), Molchan diagram
+- Phase 8.1: per-window dynamic ML forecast, up to 80 sliding windows
 
 **Initiative 3: Multi-Target Prediction (M5+, M5.5+, M6+)**
 - Per-target prediction windows: M5+/M5.5+ = 7 days, M6+ = 14 days
@@ -540,8 +560,9 @@ Phase 7 showed diminishing returns from feature engineering (+0.003 with 12 new 
 
 **Initiative 4: Ensemble Stacking (Physics × ML)**
 - 8-input level-0: HistGBT×3 targets + ETAS rate + CFS kPa + CFS rate-state + foreshock alarm + composite alarm count
-- Level-1 meta-learner: Logistic regression / Isotonic regression
+- Level-1 meta-learner: Logistic regression (with standardization) / Isotonic regression
 - Walk-forward stacking with temporal leak prevention
+- Phase 8.1: exact key alignment between physics and ML predictions
 
 ### Not yet implemented
 
