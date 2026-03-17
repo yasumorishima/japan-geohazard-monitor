@@ -593,6 +593,153 @@ async def generate_ulf_alarms(db_path, stations, threshold_ratio=2.0,
 # Main prospective analysis
 # ---------------------------------------------------------------------------
 
+def export_physics_alarms(events, fm_dict, all_times, t0, output_dir):
+    """Export physics-based alarm features per (cell, time) for ensemble stacking.
+
+    Generates a JSON file with per-cell per-timestep alarm states:
+    - ETAS expected rate (continuous)
+    - CFS cumulative kPa (continuous)
+    - CFS rate-state modified rate ratio (continuous)
+    - Foreshock alarm (binary)
+    - Composite alarm count (0-4)
+
+    This runs synchronously using pre-computed alarm data.
+    """
+    import asyncio
+
+    logger.info("=== Exporting physics alarm features for stacking ===")
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(exist_ok=True)
+
+    T_total = all_times[-1] - all_times[0]
+
+    # Pre-compute CFS map
+    m55_events = [e for e in events if e["mag"] >= 5.5]
+    cfs_map = {}
+    grid_lats = [lat * 2.0 for lat in range(13, 24)]  # 26-46
+    grid_lons = [lon * 2.0 for lon in range(63, 76)]   # 126-150
+    for lat in grid_lats:
+        for lon in grid_lons:
+            cfs_map[(lat, lon)] = 0.0
+
+    m55_idx = 0
+    # ETAS parameters
+    K, alpha_etas, c_etas, p_etas, mc = 0.04, 1.0, 0.01, 1.1, 3.0
+    mu_bg = 0.5
+
+    records = []
+    n_days = int(T_total)
+
+    # Test period only (2019+, ~day 2920+)
+    split_date = datetime(2019, 1, 1, tzinfo=timezone.utc)
+    split_t_days = (split_date - t0).total_seconds() / 86400
+
+    for day_offset in range(int(split_t_days), n_days, 3):
+        t_now = all_times[0] + day_offset
+
+        # Update CFS from new M5.5+ events
+        while m55_idx < len(m55_events) and m55_events[m55_idx]["t_days"] <= t_now:
+            src = m55_events[m55_idx]
+            src_fm_key = (round(src["lat"], 1), round(src["lon"], 1))
+            strike, dip, rake = fm_dict.get(
+                src_fm_key, default_mechanism(src["lat"], src["lon"], src["depth"]))
+            l, w, s = fault_dimensions(src["mag"])
+            for (obs_lat, obs_lon) in cfs_map:
+                dist_lat = abs(src["lat"] - obs_lat) * DEG_TO_KM
+                dist_lon = abs(src["lon"] - obs_lon) * DEG_TO_KM
+                if dist_lat > 200 or dist_lon > 200:
+                    continue
+                cfs = okada_cfs(src["lat"], src["lon"], src["depth"],
+                                strike, dip, rake, l, w, s,
+                                obs_lat, obs_lon, 15.0)
+                cfs_map[(obs_lat, obs_lon)] += cfs / 1000
+            m55_idx += 1
+
+        # For each grid cell
+        for lat in grid_lats:
+            for lon in grid_lons:
+                ck = (lat, lon)
+
+                # ETAS expected rate (7-day window)
+                window_days = 7
+                t_start = t_now - window_days
+                idx_start = bisect.bisect_left(all_times, t_start)
+                idx_now = bisect.bisect_right(all_times, t_now)
+
+                cell_events = [e for e in events[max(0, idx_start - 5000):idx_now]
+                               if abs(e["lat"] - lat) <= 2 and abs(e["lon"] - lon) <= 2]
+                observed = sum(1 for e in cell_events if t_start <= e["t_days"] < t_now)
+
+                etas_rate = mu_bg * window_days
+                for e in cell_events:
+                    if e["t_days"] >= t_start:
+                        continue
+                    dt_s = t_start - e["t_days"]
+                    dt_e = t_now - e["t_days"]
+                    if dt_e <= dt_s:
+                        continue
+                    prod = K * math.exp(alpha_etas * (e["mag"] - mc))
+                    if abs(p_etas - 1.0) < 0.01:
+                        integral = prod * (math.log(dt_e + c_etas) - math.log(dt_s + c_etas))
+                    else:
+                        integral = prod / (1 - p_etas) * (
+                            (dt_e + c_etas) ** (1 - p_etas) - (dt_s + c_etas) ** (1 - p_etas))
+                    etas_rate += max(integral, 0)
+
+                # CFS cumulative
+                cfs_kpa = cfs_map.get(ck, 0.0)
+
+                # CFS rate-state ratio (simplified)
+                lt_rate = sum(1 for e in events if abs(e["lat"] - lat) <= 2
+                              and abs(e["lon"] - lon) <= 2) / max(T_total, 1)
+                cfs_rate_state = 1.0
+                if cfs_kpa != 0 and lt_rate > 0:
+                    # Simplified Dieterich: rate_ratio ≈ exp(CFS / (A * sigma))
+                    a_sigma = 10.0  # kPa, typical
+                    cfs_rate_state = math.exp(min(cfs_kpa / a_sigma, 10))
+
+                # Foreshock alarm
+                foreshock = 0
+                idx_f_start = bisect.bisect_left(all_times, t_now - 7)
+                recent_nearby = [e for e in events[idx_f_start:idx_now]
+                                 if abs(e["lat"] - lat) <= 1 and abs(e["lon"] - lon) <= 1]
+                if len(recent_nearby) >= 3:
+                    mags = [e["mag"] for e in recent_nearby]
+                    if max(mags[-min(3, len(mags)):]) >= max(mags) - 0.5:
+                        foreshock = 1
+
+                # Composite alarm count
+                n_alarms = 0
+                if observed > 0 and etas_rate > 0:
+                    if observed / max(etas_rate, 0.1) >= 3:
+                        n_alarms += 1
+                if cfs_kpa >= 50:
+                    n_alarms += 1
+                if foreshock:
+                    n_alarms += 1
+                regional_rate = lt_rate * 7
+                if regional_rate > 0 and observed / max(regional_rate, 0.1) >= 3:
+                    n_alarms += 1
+
+                records.append({
+                    "cell_lat": lat,
+                    "cell_lon": lon,
+                    "t_days": round(t_now, 1),
+                    "etas_rate": round(etas_rate, 4),
+                    "cfs_kpa": round(cfs_kpa, 4),
+                    "cfs_rate_state": round(cfs_rate_state, 4),
+                    "foreshock_alarm": foreshock,
+                    "n_alarms": n_alarms,
+                })
+
+    out_path = output_dir / "physics_alarms.json"
+    with open(out_path, "w") as f:
+        json.dump({"n_records": len(records), "records": records}, f, indent=None)
+    logger.info("  Physics alarms exported: %s (%d records)", out_path.name, len(records))
+    return records
+
+
 async def run_prospective_analysis():
     logger.info("=== Prospective (Forward-Looking) Prediction Analysis ===")
 
@@ -826,6 +973,12 @@ async def run_prospective_analysis():
                  targets_test, "combined_etas_cfs_fore_ml_ge2")
     eval_and_log(combined_alarms_t, combined_alarms_loc,
                  targets_test_iso, "combined_ge2_isolated")
+
+    # Export physics alarm features for ensemble stacking (Initiative 4)
+    try:
+        export_physics_alarms(events, fm_dict, all_times, t0, RESULTS_DIR)
+    except Exception as e:
+        logger.warning("Physics alarm export failed (non-fatal): %s", e)
 
     return results
 

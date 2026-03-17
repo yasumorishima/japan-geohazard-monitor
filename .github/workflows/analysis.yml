@@ -162,6 +162,26 @@ jobs:
         run: |
           python3 scripts/prospective_analysis.py
 
+      - name: Export feature matrix for neural network
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/export_feature_matrix.py || echo "Feature matrix export failed (non-fatal)"
+
+      - name: Export CSEP forecast and run benchmark
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          pip install pycsep 2>/dev/null || true
+          python3 scripts/export_csep.py || echo "CSEP export failed (non-fatal)"
+          python3 scripts/csep_benchmark.py || echo "CSEP benchmark failed (non-fatal)"
+
+      - name: Run ensemble stacking analysis
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/stacking_analysis.py || echo "Stacking analysis failed (non-fatal)"
+
       - name: Run analysis
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db

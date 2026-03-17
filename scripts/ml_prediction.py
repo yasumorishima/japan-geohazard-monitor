@@ -1,14 +1,16 @@
-"""ML-integrated earthquake prediction — Phase 7: spatial correlation + GNSS + zone ETAS.
+"""ML-integrated earthquake prediction — Phase 8: multi-target + stacking.
 
-Phase 7 changes from Phase 6:
-    1. 47 features (was 35): +6 GNSS crustal deformation, +6 enhanced spatial
-    2. Zone-specific ETAS parameters injected into feature extraction (was global)
-    3. 2-pass spatial smoothing of predictions (was cell-independent)
-    4. GNSS displacement features when data available (graceful fallback to 0)
-    5. Enhanced neighbor features: CFS max, ETAS residual max, mag max
-    6. Zone-level statistics: rate anomaly within tectonic zone, CFS rank
+Phase 8 changes from Phase 7:
+    1. Multi-target prediction: M5+, M5.5+, M6+ (was M5+ only)
+    2. Per-target class weighting for extreme imbalance (M6+)
+    3. Level-0 prediction export for ensemble stacking (Initiative 4)
+    4. Target-specific prediction windows (M6+: 14 days)
 
-Target: M5.0+ within 7 days in 2°×2° cells.
+Phase 7 (retained):
+    - 47 features: +6 GNSS crustal deformation, +6 enhanced spatial
+    - Zone-specific ETAS parameters
+    - 2-pass spatial smoothing
+    - GNSS displacement features (graceful fallback)
 
 References:
     - Ogata (1998) Space-time ETAS
@@ -58,13 +60,14 @@ from evaluation import (
     single_feature_auc_ranking,
     molchan_area_skill_score,
 )
+from target_config import TARGET_CONFIGS, DEFAULT_TARGET
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 RESULTS_DIR = Path(__file__).parent.parent / "results"
 
-# Prediction parameters
+# Legacy constants (kept for backward compatibility, overridden per target)
 PREDICTION_WINDOW_DAYS = 7
 MIN_TARGET_MAG = 5.0
 STEP_DAYS = 3
@@ -153,18 +156,31 @@ def fit_etas_by_zone(events):
 # ---------------------------------------------------------------------------
 
 def build_dataset(events, fm_dict, t0, etas_params=None,
-                   zone_etas=None, gnss_data=None):
+                   zone_etas=None, gnss_data=None,
+                   min_target_mag=None, window_days=None, step_days=None):
     """Generate feature matrix and labels.
+
+    Args:
+        min_target_mag: minimum magnitude for target events (default: MIN_TARGET_MAG)
+        window_days: prediction window in days (default: PREDICTION_WINDOW_DAYS)
+        step_days: time step between samples (default: STEP_DAYS)
 
     Returns:
         samples: list of (cell_lat, cell_lon, t_days, features, label)
         active_cells: set of (lat, lon)
         metadata: dict
     """
-    # Target events (M5+) by cell
+    if min_target_mag is None:
+        min_target_mag = MIN_TARGET_MAG
+    if window_days is None:
+        window_days = PREDICTION_WINDOW_DAYS
+    if step_days is None:
+        step_days = STEP_DAYS
+
+    # Target events by cell
     target_by_cell = {}
     for e in events:
-        if e["mag"] >= MIN_TARGET_MAG:
+        if e["mag"] >= min_target_mag:
             ck = cell_key(e["lat"], e["lon"])
             target_by_cell.setdefault(ck, []).append(e["t_days"])
 
@@ -175,7 +191,8 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
         if GRID_LAT_MIN <= ck[0] <= GRID_LAT_MAX and GRID_LON_MIN <= ck[1] <= GRID_LON_MAX:
             active_cells.add(ck)
 
-    logger.info("  Active 2° cells: %d", len(active_cells))
+    logger.info("  Active 2° cells: %d (target M%.1f+, window %dd)",
+                len(active_cells), min_target_mag, window_days)
 
     # Feature extractor with zone-specific ETAS and GNSS data
     extractor = FeatureExtractor(
@@ -187,7 +204,7 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
     # Generate samples
     total_t_days = events[-1]["t_days"]
     start_day = 180  # need 180 days of history for all features
-    end_day = total_t_days - PREDICTION_WINDOW_DAYS
+    end_day = total_t_days - window_days
 
     samples = []
     day = start_day
@@ -196,11 +213,11 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
     while day <= end_day:
         for clat, clon in active_cells:
             features = extractor.extract(clat, clon, day)
-            label = generate_label(clat, clon, day, target_by_cell, PREDICTION_WINDOW_DAYS)
+            label = generate_label(clat, clon, day, target_by_cell, window_days)
             samples.append((clat, clon, day, features, label))
             n_total += 1
 
-        day += STEP_DAYS
+        day += step_days
 
         if n_total % 50000 == 0 and n_total > 0:
             logger.info("  Generated %d samples (day %.0f/%.0f)...", n_total, day, end_day)
@@ -217,9 +234,10 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
         "positive_rate": round(n_pos / max(len(samples), 1), 5),
         "features": FEATURE_NAMES,
         "n_features": N_FEATURES,
-        "prediction_window_days": PREDICTION_WINDOW_DAYS,
+        "prediction_window_days": window_days,
+        "min_target_mag": min_target_mag,
         "cell_size_deg": CELL_SIZE_DEG,
-        "step_days": STEP_DAYS,
+        "step_days": step_days,
     }
 
     return samples, active_cells, metadata
@@ -229,11 +247,21 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
 # Model training with HistGradientBoosting
 # ---------------------------------------------------------------------------
 
-def train_model(X_train, y_train):
+def train_model(X_train, y_train, class_weight_ratio=1):
     """Train HistGradientBoostingClassifier.
+
+    Args:
+        class_weight_ratio: weight multiplier for positive class (for M6+ imbalance).
+            If > 1, generates sample_weight with positives weighted higher.
 
     Falls back to pure Python AdaBoost if sklearn is unavailable.
     """
+    # Build sample weights for class imbalance
+    sample_weight = None
+    if class_weight_ratio > 1:
+        sample_weight = [class_weight_ratio if y == 1 else 1.0 for y in y_train]
+        logger.info("  Class weight ratio: %d (pos_weight=%d)", class_weight_ratio, class_weight_ratio)
+
     try:
         from sklearn.ensemble import HistGradientBoostingClassifier
         logger.info("  Using sklearn HistGradientBoostingClassifier")
@@ -251,7 +279,7 @@ def train_model(X_train, y_train):
             scoring="roc_auc",
             random_state=42,
         )
-        model.fit(X_train, y_train)
+        model.fit(X_train, y_train, sample_weight=sample_weight)
 
         n_iter = model.n_iter_
         logger.info("  Trained %d iterations (early stopping)", n_iter)
@@ -260,7 +288,8 @@ def train_model(X_train, y_train):
             return model.predict_proba(X)[:, 1].tolist()
 
         return predict_fn, {"type": "HistGradientBoosting", "n_iterations": int(n_iter),
-                            "max_depth": 5, "learning_rate": 0.05, "l2_reg": 1.0}
+                            "max_depth": 5, "learning_rate": 0.05, "l2_reg": 1.0,
+                            "class_weight_ratio": class_weight_ratio}
 
     except ImportError:
         logger.warning("  sklearn not available, falling back to AdaBoost")
@@ -335,11 +364,17 @@ def _train_adaboost_fallback(X_train, y_train):
 # Walk-forward CV
 # ---------------------------------------------------------------------------
 
-def run_walk_forward_cv(samples, metadata):
+def run_walk_forward_cv(samples, metadata, class_weight_ratio=1,
+                        min_pos_train=10, min_pos_test=5):
     """Walk-forward cross-validation with expanding training window.
 
     Splits: train on [0, split_day), test on [split_day, split_day + 365.25)
     Starting from 5 years of training, advancing 1 year at a time.
+
+    Args:
+        class_weight_ratio: weight for positive class (passed to train_model)
+        min_pos_train: minimum positives in training set to proceed
+        min_pos_test: minimum positives in test set to proceed
 
     Returns list of fold results + aggregated metrics.
     """
@@ -384,12 +419,18 @@ def run_walk_forward_cv(samples, metadata):
                     fold_idx, len(train_y), n_pos_train, len(test_y), n_pos_test,
                     train_start, train_end, test_start, test_end)
 
-        if n_pos_train < 10 or n_pos_test < 5:
-            logger.warning("  Fold %d: skipping (insufficient positives)", fold_idx)
+        if n_pos_train < min_pos_train:
+            logger.warning("  Fold %d: skipping (train positives %d < %d)",
+                          fold_idx, n_pos_train, min_pos_train)
+            continue
+
+        if n_pos_test < min_pos_test:
+            logger.warning("  Fold %d: skipping (test positives %d < %d)",
+                          fold_idx, n_pos_test, min_pos_test)
             continue
 
         # Train
-        predict_fn, model_info = train_model(train_X, train_y)
+        predict_fn, model_info = train_model(train_X, train_y, class_weight_ratio)
 
         # Predict
         test_probs = predict_fn(test_X)
@@ -442,9 +483,11 @@ def run_walk_forward_cv(samples, metadata):
 # Final model (train on all data before 2019, test on 2019+)
 # ---------------------------------------------------------------------------
 
-def train_final_model(samples, events_t0):
+def train_final_model(samples, events_t0, class_weight_ratio=1,
+                       target_name="M5+"):
     """Train final model and evaluate on holdout test set.
 
+    Phase 8: supports multi-target with class weighting.
     Phase 7: includes 2-pass spatial smoothing of predictions.
     """
     split_date = datetime(2019, 1, 1, tzinfo=timezone.utc)
@@ -473,13 +516,13 @@ def train_final_model(samples, events_t0):
     base_rate_train = n_pos_train / max(len(train_y), 1)
     base_rate_test = n_pos_test / max(len(test_y), 1)
 
-    logger.info("--- Final model ---")
+    logger.info("--- Final model [%s] ---", target_name)
     logger.info("  Train: %d (pos=%d, %.2f%%) | Test: %d (pos=%d, %.2f%%)",
                 len(train_y), n_pos_train, 100 * base_rate_train,
                 len(test_y), n_pos_test, 100 * base_rate_test)
 
     # Train
-    predict_fn, model_info = train_model(train_X, train_y)
+    predict_fn, model_info = train_model(train_X, train_y, class_weight_ratio)
 
     # Predict
     train_probs = predict_fn(train_X)
@@ -570,7 +613,12 @@ def train_final_model(samples, events_t0):
     for sf in sf_auc[:15]:
         logger.info("  %s: AUC=%.4f (%s)", sf["feature"], sf["auc"], sf["direction"])
 
+    # Export level-0 predictions for ensemble stacking (Initiative 4)
+    export_level0_predictions(
+        target_name, test_probs_cal, test_y, test_cells, test_t_days)
+
     return {
+        "target": target_name,
         "model_info": model_info,
         "performance": {
             "auc_roc_train": round(auc_train, 4),
@@ -593,6 +641,42 @@ def train_final_model(samples, events_t0):
             for imp in importance
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# Level-0 prediction export (for ensemble stacking)
+# ---------------------------------------------------------------------------
+
+def export_level0_predictions(target_name, probs, labels, cells, t_days_list):
+    """Export level-0 predictions for ensemble stacking.
+
+    Saves to results/level0_predictions_{target}.json with per-sample
+    probability, label, cell coordinates, and time step.
+    """
+    RESULTS_DIR.mkdir(exist_ok=True)
+    safe_name = target_name.replace("+", "plus").replace(".", "")
+    out_path = RESULTS_DIR / f"level0_predictions_{safe_name}.json"
+
+    records = []
+    for prob, label, (clat, clon), t_day in zip(probs, labels, cells, t_days_list):
+        records.append({
+            "prob": round(prob, 6),
+            "label": label,
+            "cell_lat": clat,
+            "cell_lon": clon,
+            "t_days": round(t_day, 1),
+        })
+
+    data = {
+        "target": target_name,
+        "n_samples": len(records),
+        "n_positive": sum(r["label"] for r in records),
+        "predictions": records,
+    }
+
+    with open(out_path, "w") as f:
+        json.dump(data, f, indent=None, ensure_ascii=False)
+    logger.info("  Level-0 predictions exported: %s (%d samples)", out_path.name, len(records))
 
 
 # ---------------------------------------------------------------------------
@@ -714,10 +798,9 @@ def spatial_smooth_predictions(
 
 
 async def run_ml_prediction():
-    """Full ML prediction pipeline (Phase 7)."""
-    logger.info("=== ML Integrated Earthquake Prediction (Phase 7) ===")
-    logger.info("Target: M%.1f+ within %d days in %.0f° cells",
-                MIN_TARGET_MAG, PREDICTION_WINDOW_DAYS, CELL_SIZE_DEG)
+    """Full ML prediction pipeline (Phase 8: multi-target)."""
+    logger.info("=== ML Integrated Earthquake Prediction (Phase 8) ===")
+    logger.info("Targets: %s", ", ".join(TARGET_CONFIGS.keys()))
     logger.info("Features: %d temporal features", N_FEATURES)
 
     # Load data
@@ -754,36 +837,75 @@ async def run_ml_prediction():
             logger.info("  Zone %s: K=%.4f alpha=%.2f p=%.3f BR=%.2f",
                         zn, p["K"], p["alpha"], p["p"], zr.get("branching_ratio", 0))
 
-    # Build dataset with zone-specific ETAS and GNSS
-    logger.info("--- Building feature dataset (Phase 7: %d features) ---", N_FEATURES)
-    samples, active_cells, metadata = build_dataset(
-        events, fm_dict, t0, global_etas,
-        zone_etas=zone_etas,
-        gnss_data=gnss_data,
-    )
+    # Multi-target loop
+    target_results = {}
+    primary_metadata = None
 
-    if len(samples) < 1000:
-        logger.error("Dataset too small (%d samples)", len(samples))
-        return {"error": "dataset_too_small", "metadata": metadata}
+    for target_name, cfg in TARGET_CONFIGS.items():
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("=== Target: %s (M%.1f+ within %dd) ===",
+                    target_name, cfg["min_mag"], cfg["window_days"])
+        logger.info("=" * 60)
 
-    # Walk-forward CV
-    logger.info("--- Walk-forward cross-validation ---")
-    cv_folds, cv_aggregate, cv_all_y, cv_all_probs = run_walk_forward_cv(samples, metadata)
+        # Build dataset for this target
+        logger.info("--- Building feature dataset (%d features) ---", N_FEATURES)
+        samples, active_cells, metadata = build_dataset(
+            events, fm_dict, t0, global_etas,
+            zone_etas=zone_etas,
+            gnss_data=gnss_data,
+            min_target_mag=cfg["min_mag"],
+            window_days=cfg["window_days"],
+            step_days=cfg["step_days"],
+        )
 
-    # Overall CV AUC
-    if cv_all_y:
-        _, cv_overall_auc = compute_roc(cv_all_y, cv_all_probs)
-        logger.info("  Overall CV AUC (pooled): %.4f", cv_overall_auc)
-        cv_aggregate["pooled_auc"] = round(cv_overall_auc, 4)
+        if primary_metadata is None:
+            primary_metadata = metadata
 
-    # Final model
-    logger.info("--- Training final model (train 2011-2018, test 2019-2026) ---")
-    final_results = train_final_model(samples, t0)
+        if len(samples) < 1000:
+            logger.error("Dataset too small (%d samples) for %s", len(samples), target_name)
+            target_results[target_name] = {
+                "error": "dataset_too_small", "metadata": metadata}
+            continue
+
+        # Walk-forward CV
+        logger.info("--- Walk-forward cross-validation [%s] ---", target_name)
+        cv_folds, cv_aggregate, cv_all_y, cv_all_probs = run_walk_forward_cv(
+            samples, metadata,
+            class_weight_ratio=cfg["class_weight_ratio"],
+            min_pos_train=cfg["min_pos_train"],
+            min_pos_test=cfg["min_pos_test"],
+        )
+
+        # Overall CV AUC
+        if cv_all_y:
+            _, cv_overall_auc = compute_roc(cv_all_y, cv_all_probs)
+            logger.info("  Overall CV AUC (pooled) [%s]: %.4f", target_name, cv_overall_auc)
+            cv_aggregate["pooled_auc"] = round(cv_overall_auc, 4)
+
+        # Final model
+        logger.info("--- Training final model [%s] (train 2011-2018, test 2019-2026) ---",
+                    target_name)
+        final_results = train_final_model(
+            samples, t0,
+            class_weight_ratio=cfg["class_weight_ratio"],
+            target_name=target_name,
+        )
+
+        target_results[target_name] = {
+            "config": cfg,
+            "metadata": metadata,
+            "walk_forward_cv": {
+                "aggregate": cv_aggregate,
+                "folds": cv_folds,
+            },
+            "final_model": final_results,
+        }
 
     # Compile results
     results = {
-        "phase": "Phase 7",
-        "metadata": metadata,
+        "phase": "Phase 8",
+        "metadata": primary_metadata,
         "etas_fitting": {
             zone: {
                 "fitted": r.get("fitted", False),
@@ -798,24 +920,22 @@ async def run_ml_prediction():
             "cells_with_gnss": len(gnss_data),
             "total_snapshots": sum(len(v) for v in gnss_data.values()),
         },
-        "walk_forward_cv": {
-            "aggregate": cv_aggregate,
-            "folds": cv_folds,
-        },
-        "final_model": final_results,
+        "targets": target_results,
         "interpretation": {
-            "phase7_improvements": [
-                "47 features (was 35): +6 GNSS, +6 enhanced spatial",
-                "Zone-specific ETAS params in feature extraction (was global)",
-                "2-pass spatial smoothing of predictions (was cell-independent)",
+            "phase8_improvements": [
+                "Multi-target: M5+, M5.5+, M6+ (was M5+ only)",
+                "Per-target class weighting for extreme imbalance (M6+)",
+                "Level-0 prediction export for ensemble stacking",
+                "Target-specific prediction windows (M6+: 14 days)",
+            ],
+            "phase7_retained": [
+                "47 features: +6 GNSS, +6 enhanced spatial",
+                "Zone-specific ETAS params in feature extraction",
+                "2-pass spatial smoothing of predictions",
                 "GNSS crustal deformation features (when available)",
-                "Enhanced neighbor features: CFS max, ETAS resid max, mag max",
-                "Zone-level rate anomaly and CFS rank features",
             ],
             "auc_meaning": "0.5=random, 1.0=perfect. >0.7 suggests useful skill.",
             "molchan_skill": ">0 better than random, 1=perfect.",
-            "calibration": "Reliability diagram shows predicted vs observed frequency.",
-            "spatial_smoothing": "Gaussian kernel averaging of neighboring cell predictions.",
         },
     }
 
