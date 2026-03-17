@@ -576,48 +576,54 @@ def main():
     split_date = datetime(2019, 1, 1, tzinfo=timezone.utc)
     test_start_days = (split_date - t0).total_seconds() / 86400
 
-    # Load ML forecast from level-0 predictions
-    ml_forecast = None
-    level0_files = sorted(RESULTS_DIR.glob("level0_predictions_M5plus.json"), reverse=True)
-    if not level0_files:
-        level0_files = sorted(RESULTS_DIR.glob("level0_predictions_*.json"), reverse=True)
-
-    if level0_files:
+    # Load ML level-0 predictions indexed by (cell, t_days)
+    ml_preds_by_key = {}
+    level0_file = RESULTS_DIR / "level0_predictions_M5plus.json"
+    if level0_file.exists():
         try:
-            with open(level0_files[0]) as f:
+            with open(level0_file) as f:
                 l0_data = json.load(f)
 
-            from csep_format import csep_rate_from_probability
-
-            # Average probability per cell in test period
-            cell_probs = {}
-            cell_counts = {}
             for rec in l0_data.get("predictions", []):
-                if rec["t_days"] >= test_start_days:
-                    ck = (rec["cell_lat"], rec["cell_lon"])
-                    cell_probs[ck] = cell_probs.get(ck, 0) + rec["prob"]
-                    cell_counts[ck] = cell_counts.get(ck, 0) + 1
-
-            ml_forecast = {}
-            for ck, total_prob in cell_probs.items():
-                avg_prob = total_prob / cell_counts[ck]
-                rates = csep_rate_from_probability(avg_prob, 7)
-                ml_forecast[ck] = sum(rates.values())
-
-            logger.info("Loaded ML forecast: %d cells", len(ml_forecast))
+                key = (rec["cell_lat"], rec["cell_lon"], rec["t_days"])
+                ml_preds_by_key[key] = rec["prob"]
+            logger.info("Loaded ML level-0 predictions: %d records", len(ml_preds_by_key))
         except Exception as e:
-            logger.warning("Could not load ML forecast: %s", e)
+            logger.warning("Could not load ML predictions: %s", e)
+    else:
+        logger.warning("Level-0 file not found: %s", level0_file)
+
+    from csep_format import csep_rate_from_probability
 
     # Run full benchmark over multiple test windows
-    # Use the full test period in sliding windows
+    # Each window gets its own ML forecast based on predictions within that window
     window_days = 7
     all_results = []
 
-    # Sample test windows (every 30 days in test period)
+    # Sample test windows (every 30 days in test period, up to 80 windows)
     test_end = events[-1]["t_days"]
     n_windows = 0
     t = test_start_days
-    while t + window_days <= test_end and n_windows < 50:
+    while t + window_days <= test_end and n_windows < 80:
+        # Build ML forecast for this specific window
+        # Average ML probabilities for predictions whose t_days falls in [t, t+window)
+        ml_forecast = None
+        if ml_preds_by_key:
+            cell_probs = {}
+            cell_counts = {}
+            for (clat, clon, t_days), prob in ml_preds_by_key.items():
+                if t <= t_days < t + window_days:
+                    ck = (clat, clon)
+                    cell_probs[ck] = cell_probs.get(ck, 0) + prob
+                    cell_counts[ck] = cell_counts.get(ck, 0) + 1
+
+            if cell_probs:
+                ml_forecast = {}
+                for ck, total_prob in cell_probs.items():
+                    avg_prob = total_prob / cell_counts[ck]
+                    rates = csep_rate_from_probability(avg_prob, window_days)
+                    ml_forecast[ck] = sum(rates.values())
+
         result = run_benchmark(events, t, window_days, ml_forecast)
         all_results.append(result)
         t += 30

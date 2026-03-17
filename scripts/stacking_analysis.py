@@ -90,7 +90,10 @@ def load_physics_alarms():
 
 
 def merge_level0_features(ml_predictions, physics_alarms):
-    """Merge ML predictions and physics alarms by (cell, time) key.
+    """Merge ML predictions and physics alarms by exact (cell, time) key.
+
+    Phase 8.1 fix: physics alarms are now generated at the same (cell, t_days)
+    keys as ML level-0, so exact key matching works. No fuzzy matching needed.
 
     Returns:
         level0_data: list of feature vectors (8 features each)
@@ -111,6 +114,8 @@ def merge_level0_features(ml_predictions, physics_alarms):
     labels = []
     t_days_list = []
     keys = []
+    n_matched = 0
+    n_missed = 0
 
     for key, m5_info in m5_preds.items():
         cell_lat, cell_lon, t_days = key
@@ -120,16 +125,13 @@ def merge_level0_features(ml_predictions, physics_alarms):
         ml_m55 = m55_preds.get(key, {}).get("prob", 0.0)
         ml_m6 = m6_preds.get(key, {}).get("prob", 0.0)
 
-        # Physics alarms — match by nearest time step (within 1.5 days)
-        physics = None
-        for dt in [0, 1.5, -1.5, 3, -3]:
-            nearby_key = (cell_lat, cell_lon, round(t_days + dt, 1))
-            if nearby_key in physics_alarms:
-                physics = physics_alarms[nearby_key]
-                break
+        # Physics alarms — exact key match (keys are now aligned)
+        physics = physics_alarms.get(key)
 
-        if physics is None:
-            # Use defaults if physics alarms not available
+        if physics is not None:
+            n_matched += 1
+        else:
+            n_missed += 1
             physics = {
                 "etas_rate": 0.0,
                 "cfs_kpa": 0.0,
@@ -154,6 +156,9 @@ def merge_level0_features(ml_predictions, physics_alarms):
         t_days_list.append(t_days)
         keys.append(key)
 
+    match_rate = n_matched / max(n_matched + n_missed, 1) * 100
+    logger.info("  Physics alarm match rate: %d/%d (%.1f%%)",
+                n_matched, n_matched + n_missed, match_rate)
     logger.info("  Merged stacking dataset: %d samples, %d positive (%.2f%%)",
                 len(labels), sum(labels),
                 100 * sum(labels) / max(len(labels), 1))

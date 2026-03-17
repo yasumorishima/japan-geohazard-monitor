@@ -56,6 +56,8 @@ class StackingEnsemble:
         self.weights = None
         self.bias = 0.0
         self.isotonic_bins = None
+        self._means = None
+        self._stds = None
 
     def fit(self, X_meta, y_meta):
         """Fit level-1 meta-learner.
@@ -89,24 +91,44 @@ class StackingEnsemble:
             return self._predict_logistic(X_meta)
 
     def _fit_logistic(self, X, y, n_features):
-        """Fit logistic regression via gradient descent with L2 regularization."""
+        """Fit logistic regression via gradient descent with L2 regularization.
+
+        Standardizes features (zero mean, unit variance) before fitting to handle
+        different scales between ML probabilities (0-1) and physics features
+        (ETAS rate ~0-50, CFS ~0-1000 kPa).
+        """
+        # Standardize features
+        self._means = [0.0] * n_features
+        self._stds = [1.0] * n_features
+        n = len(y)
+        for j in range(n_features):
+            vals = [X[i][j] for i in range(n)]
+            self._means[j] = sum(vals) / n
+            var = sum((v - self._means[j]) ** 2 for v in vals) / max(n - 1, 1)
+            self._stds[j] = math.sqrt(var) if var > 0 else 1.0
+
+        # Standardize
+        X_std = []
+        for i in range(n):
+            X_std.append([(X[i][j] - self._means[j]) / self._stds[j]
+                          for j in range(n_features)])
+
         self.weights = [0.0] * n_features
         self.bias = 0.0
         lr = 0.01
         l2_reg = 1.0
-        n = len(y)
 
         for epoch in range(200):
             grad_w = [0.0] * n_features
             grad_b = 0.0
 
             for i in range(n):
-                z = self.bias + sum(w * x for w, x in zip(self.weights, X[i]))
+                z = self.bias + sum(w * x for w, x in zip(self.weights, X_std[i]))
                 z = max(min(z, 20), -20)
                 p = 1.0 / (1.0 + math.exp(-z))
                 err = p - y[i]
                 for j in range(n_features):
-                    grad_w[j] += err * X[i][j] / n
+                    grad_w[j] += err * X_std[i][j] / n
                 grad_b += err / n
 
             for j in range(n_features):
@@ -116,8 +138,11 @@ class StackingEnsemble:
 
     def _predict_logistic(self, X):
         probs = []
+        n_features = len(self.weights)
         for row in X:
-            z = self.bias + sum(w * x for w, x in zip(self.weights, row))
+            x_std = [(row[j] - self._means[j]) / self._stds[j]
+                     for j in range(n_features)]
+            z = self.bias + sum(w * x for w, x in zip(self.weights, x_std))
             z = max(min(z, 20), -20)
             probs.append(1.0 / (1.0 + math.exp(-z)))
         return probs
