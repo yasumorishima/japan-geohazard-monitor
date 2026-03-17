@@ -714,3 +714,156 @@ def classify_tectonic_zone(lat: float, lon: float) -> str:
                 bbox["lon_min"] <= lon <= bbox["lon_max"]):
             return zone_name
     return "other"
+
+
+# ---------------------------------------------------------------------------
+# GNSS displacement → strain (Phase 7)
+# ---------------------------------------------------------------------------
+
+def gnss_horizontal_displacement(dx_mm: float, dy_mm: float) -> float:
+    """Horizontal displacement magnitude from GEONET dx/dy components (mm)."""
+    return math.sqrt(dx_mm ** 2 + dy_mm ** 2)
+
+
+def gnss_strain_rate(
+    stations: list,
+    cell_lat: float,
+    cell_lon: float,
+    cell_size_deg: float = 2.0,
+) -> float:
+    """Estimate local strain rate from GNSS station displacements.
+
+    Uses the gradient of displacement field within the cell.
+    Stations is a list of dicts with keys: lat, lon, dx_mm, dy_mm.
+
+    Returns strain rate in nanostrain/day (approximate).
+    """
+    if len(stations) < 3:
+        return 0.0
+
+    # Fit linear velocity gradient: v = A * x + b
+    # where x is position relative to cell centre
+    # A = [[du/dx, du/dy], [dv/dx, dv/dy]] is the deformation gradient
+    # strain rate tensor = (A + A^T) / 2
+
+    # Build least-squares: [dx_mm] = [a00 * x_km + a01 * y_km + b0]
+    #                      [dy_mm] = [a10 * x_km + a11 * y_km + b1]
+    n = len(stations)
+    # Design matrix for each component: [x_km, y_km, 1]
+    G = []
+    dx_obs = []
+    dy_obs = []
+
+    for s in stations:
+        x_km = (s["lon"] - cell_lon) * DEG_TO_KM * math.cos(math.radians(cell_lat))
+        y_km = (s["lat"] - cell_lat) * DEG_TO_KM
+        G.append([x_km, y_km, 1.0])
+        dx_obs.append(s["dx_mm"])
+        dy_obs.append(s["dy_mm"])
+
+    # Solve G * [a, b, c]^T = d for each component using normal equations
+    # G^T G m = G^T d
+    GtG = [[0.0] * 3 for _ in range(3)]
+    Gtd_x = [0.0] * 3
+    Gtd_y = [0.0] * 3
+
+    for i in range(n):
+        for j in range(3):
+            for k in range(3):
+                GtG[j][k] += G[i][j] * G[i][k]
+            Gtd_x[j] += G[i][j] * dx_obs[i]
+            Gtd_y[j] += G[i][j] * dy_obs[i]
+
+    # Solve 3x3 system via Cramer's rule
+    def solve_3x3(A, b):
+        det = (A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1])
+               - A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0])
+               + A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0]))
+        if abs(det) < 1e-20:
+            return None
+        inv_det = 1.0 / det
+        x0 = (b[0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1])
+               - A[0][1] * (b[1] * A[2][2] - A[1][2] * b[2])
+               + A[0][2] * (b[1] * A[2][1] - A[1][1] * b[2])) * inv_det
+        x1 = (A[0][0] * (b[1] * A[2][2] - A[1][2] * b[2])
+               - b[0] * (A[1][0] * A[2][2] - A[1][2] * A[2][0])
+               + A[0][2] * (A[1][0] * b[2] - b[1] * A[2][0])) * inv_det
+        x2 = (A[0][0] * (A[1][1] * b[2] - b[1] * A[2][1])
+               - A[0][1] * (A[1][0] * b[2] - b[1] * A[2][0])
+               + b[0] * (A[1][0] * A[2][1] - A[1][1] * A[2][0])) * inv_det
+        return [x0, x1, x2]
+
+    mx = solve_3x3(GtG, Gtd_x)
+    my = solve_3x3(GtG, Gtd_y)
+
+    if mx is None or my is None:
+        return 0.0
+
+    # Deformation gradient (mm/km): du/dx, du/dy, dv/dx, dv/dy
+    dudx = mx[0]  # mm/km
+    dudy = mx[1]
+    dvdx = my[0]
+    dvdy = my[1]
+
+    # Strain tensor (dimensionless) = mm / (km * 1e6 mm/km) = 1e-6
+    # nanostrain = 1e-9, so multiply by 1000
+    exx = dudx * 1e-6
+    eyy = dvdy * 1e-6
+    exy = 0.5 * (dudy + dvdx) * 1e-6
+
+    # Second invariant of strain rate (proxy for total deformation)
+    strain_rate = math.sqrt(exx ** 2 + eyy ** 2 + 2 * exy ** 2)
+
+    # Convert to nanostrain
+    return strain_rate * 1e9
+
+
+def gnss_transient_score(
+    displacements: list,
+    baseline_days: int = 90,
+    recent_days: int = 7,
+) -> float:
+    """Detect transient GNSS signals (slow-slip events).
+
+    Compares recent displacement rate to long-term baseline.
+
+    Args:
+        displacements: list of (t_days, horiz_disp_mm) sorted by time
+        baseline_days: days for baseline rate estimation
+        recent_days: days for recent rate estimation
+
+    Returns:
+        Transient score: ratio of recent rate to baseline rate.
+        Score > 3.0 suggests a transient (slow-slip) event.
+    """
+    if len(displacements) < 10:
+        return 0.0
+
+    t_max = displacements[-1][0]
+    t_baseline_start = t_max - baseline_days
+    t_recent_start = t_max - recent_days
+
+    baseline_pts = [(t, d) for t, d in displacements if t >= t_baseline_start and t < t_recent_start]
+    recent_pts = [(t, d) for t, d in displacements if t >= t_recent_start]
+
+    if len(baseline_pts) < 5 or len(recent_pts) < 2:
+        return 0.0
+
+    # Baseline rate (mm/day)
+    bl_dt = baseline_pts[-1][0] - baseline_pts[0][0]
+    bl_dd = baseline_pts[-1][1] - baseline_pts[0][1]
+    if bl_dt <= 0:
+        return 0.0
+    baseline_rate = abs(bl_dd / bl_dt)
+
+    # Recent rate (mm/day)
+    rc_dt = recent_pts[-1][0] - recent_pts[0][0]
+    rc_dd = recent_pts[-1][1] - recent_pts[0][1]
+    if rc_dt <= 0:
+        return 0.0
+    recent_rate = abs(rc_dd / rc_dt)
+
+    if baseline_rate < 0.001:  # < 1 μm/day baseline — very quiet
+        return recent_rate * 100  # scale up for signal detection
+
+    return recent_rate / baseline_rate

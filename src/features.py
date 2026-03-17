@@ -25,9 +25,13 @@ from physics import (
     ETAS_DEFAULTS,
     b_value_aki,
     b_value_with_uncertainty,
+    classify_tectonic_zone,
     default_mechanism,
     etas_expected_count,
     fault_dimensions,
+    gnss_horizontal_displacement,
+    gnss_strain_rate,
+    gnss_transient_score,
     okada_cfs,
     rate_state_probability,
     DEG_TO_KM,
@@ -97,6 +101,20 @@ FEATURE_NAMES = [
     # K. Composite
     "n_active_signals",     # count of above-threshold signals (meta-feature)
     "alarm_density",        # moving average of past alarm hits (self-reinforcing)
+    # L. GNSS crustal deformation (Phase 7)
+    "gnss_disp_max_30d",    # max horizontal displacement in cell (30d, mm)
+    "gnss_disp_accel",      # displacement acceleration (recent / previous)
+    "gnss_vertical_rate",   # vertical rate of change (mm/day)
+    "gnss_strain_rate",     # local strain rate (nanostrain/day)
+    "gnss_anomaly_count",   # stations with displacement > 2σ
+    "gnss_transient_score", # slow-slip event detection score
+    # M. Enhanced spatial (Phase 7)
+    "neighbor_cfs_max",     # max CFS among neighboring cells
+    "neighbor_etas_resid_max",  # max ETAS residual among neighbors
+    "zone_rate_anomaly",    # cell rate_7d / zone mean rate_7d
+    "zone_cfs_rank",        # percentile rank of CFS within zone
+    "spatial_gradient",     # rate gradient (center vs neighbors)
+    "neighbor_max_mag",     # max magnitude in neighbors (7d)
 ]
 
 N_FEATURES = len(FEATURE_NAMES)
@@ -110,19 +128,33 @@ class FeatureExtractor:
     Supports zone-specific ETAS parameters.
     """
 
-    def __init__(self, events: list, fm_dict: dict, t0, etas_params: dict = None):
+    def __init__(self, events: list, fm_dict: dict, t0,
+                 etas_params: dict = None,
+                 zone_etas_params: dict = None,
+                 gnss_data: dict = None):
         """
         Args:
             events: list of dicts with keys: time, mag, lat, lon, depth, t_days
             fm_dict: {(lat_rounded, lon_rounded): (strike, dip, rake)}
             t0: reference datetime for t_days=0
-            etas_params: fitted ETAS parameters (or None for defaults)
+            etas_params: global ETAS parameters (fallback)
+            zone_etas_params: {zone_name: {params dict}} for zone-specific ETAS
+            gnss_data: {cell_key: list of {t_days, stations: [{lat, lon, dx_mm, dy_mm, dz_mm}]}}
         """
         self.events = events
         self.fm_dict = fm_dict
         self.t0 = t0
         self.all_t_days = [e["t_days"] for e in events]
         self.etas = etas_params if etas_params else ETAS_DEFAULTS.copy()
+        self.zone_etas = zone_etas_params or {}
+        self.gnss_data = gnss_data or {}
+
+        # Pre-compute cell → zone mapping
+        self.cell_zone = {}
+        for lat in range(GRID_LAT_MIN, GRID_LAT_MAX + 1, int(CELL_SIZE_DEG)):
+            for lon in range(GRID_LON_MIN, GRID_LON_MAX + 1, int(CELL_SIZE_DEG)):
+                ck = (float(lat), float(lon))
+                self.cell_zone[ck] = classify_tectonic_zone(float(lat), float(lon))
 
         # Index events by 2° cell
         self.cell_events = {}
@@ -203,19 +235,36 @@ class FeatureExtractor:
         """Get events in [t_start, t_end)."""
         return [e for e in cell_evs if t_start <= e["t_days"] < t_end]
 
-    def _compute_etas_expected(self, cell_evs, t_now_days, window_days):
-        """Expected count under ETAS model."""
-        mu = self.mu_bg.get(cell_key(0, 0), 0.01)  # placeholder
+    def _get_etas_for_cell(self, cell_lat, cell_lon):
+        """Get ETAS parameters for a cell, using zone-specific if available."""
+        zone = self.cell_zone.get((cell_lat, cell_lon), "other")
+        zone_info = self.zone_etas.get(zone, {})
+        if zone_info.get("fitted") and zone_info.get("params"):
+            return zone_info["params"]
+        return self.etas
+
+    def _compute_etas_expected(self, cell_evs, t_now_days, window_days,
+                                cell_lat=None, cell_lon=None):
+        """Expected count under ETAS model (zone-aware)."""
+        ck = (cell_lat, cell_lon) if cell_lat is not None else (0, 0)
+        mu = self.mu_bg.get(ck, 0.01)
         t_start = t_now_days - window_days
         prior = [(e["t_days"], e["mag"]) for e in cell_evs if e["t_days"] < t_start]
         prior = prior[-2000:]  # limit for speed
+
+        # Use zone-specific ETAS parameters if available
+        if cell_lat is not None and cell_lon is not None:
+            params = self._get_etas_for_cell(cell_lat, cell_lon)
+        else:
+            params = self.etas
+
         return etas_expected_count(
             t_start, t_now_days, prior, mu,
-            self.etas.get("K", 0.04),
-            self.etas.get("alpha", 1.0),
-            self.etas.get("c", 0.01),
-            self.etas.get("p", 1.1),
-            self.etas.get("Mc", 3.0),
+            params.get("K", 0.04),
+            params.get("alpha", 1.0),
+            params.get("c", 0.01),
+            params.get("p", 1.1),
+            params.get("Mc", 3.0),
         )
 
     def _benioff_strain(self, evs):
@@ -297,12 +346,12 @@ class FeatureExtractor:
         rate_values = [v for _, v in hist[-9:]]  # last ~60 days
         rate_trend_slope = self._linear_slope(rate_values)
 
-        # --- C. ETAS residuals ---
+        # --- C. ETAS residuals (zone-aware) ---
         mu = self.mu_bg.get(ck, 0.01)
-        etas_exp_7d = self._compute_etas_expected(cell_evs, t_now_days, 7)
+        etas_exp_7d = self._compute_etas_expected(cell_evs, t_now_days, 7, cell_lat, cell_lon)
         etas_residual_7d = rate_7d / max(etas_exp_7d, 0.1)
 
-        etas_exp_30d = self._compute_etas_expected(cell_evs, t_now_days, 30)
+        etas_exp_30d = self._compute_etas_expected(cell_evs, t_now_days, 30, cell_lat, cell_lon)
         etas_residual_30d = rate_30d / max(etas_exp_30d, 0.1)
 
         # ETAS residual trend
@@ -475,6 +524,146 @@ class FeatureExtractor:
 
         alarm_density = 0.0  # placeholder; updated externally if needed
 
+        # --- L. GNSS crustal deformation (Phase 7) ---
+        gnss_disp_max_30d = 0.0
+        gnss_disp_accel = 0.0
+        gnss_vertical_rate = 0.0
+        gnss_strain_val = 0.0
+        gnss_anomaly_cnt = 0
+        gnss_transient = 0.0
+
+        cell_gnss = self.gnss_data.get(ck, [])
+        if cell_gnss:
+            # Get GNSS snapshots in 30d and previous 30d windows
+            gnss_30d = [g for g in cell_gnss if t_30 <= g["t_days"] < t_now_days]
+            gnss_prev_30d = [g for g in cell_gnss if t_60 <= g["t_days"] < t_30]
+
+            if gnss_30d:
+                # Max horizontal displacement across all stations in window
+                all_disps_30d = []
+                for snapshot in gnss_30d:
+                    for s in snapshot.get("stations", []):
+                        d = gnss_horizontal_displacement(
+                            s.get("dx_mm", 0), s.get("dy_mm", 0))
+                        all_disps_30d.append(d)
+                if all_disps_30d:
+                    gnss_disp_max_30d = max(all_disps_30d)
+
+                    # Anomaly count: stations > mean + 2*std
+                    if len(all_disps_30d) >= 5:
+                        d_mean = sum(all_disps_30d) / len(all_disps_30d)
+                        d_std = math.sqrt(
+                            sum((d - d_mean) ** 2 for d in all_disps_30d) / len(all_disps_30d))
+                        threshold_2sigma = d_mean + 2 * max(d_std, 0.1)
+                        gnss_anomaly_cnt = sum(1 for d in all_disps_30d if d > threshold_2sigma)
+
+                # Strain rate from most recent snapshot
+                latest_snap = max(gnss_30d, key=lambda g: g["t_days"])
+                stations = latest_snap.get("stations", [])
+                if len(stations) >= 3:
+                    gnss_strain_val = gnss_strain_rate(
+                        stations, cell_lat, cell_lon, CELL_SIZE_DEG)
+
+                # Vertical rate (mm/day) from recent data
+                vert_data = []
+                for snapshot in gnss_30d:
+                    for s in snapshot.get("stations", []):
+                        if s.get("dz_mm") is not None:
+                            vert_data.append((snapshot["t_days"], s["dz_mm"]))
+                if len(vert_data) >= 3:
+                    vert_data.sort()
+                    vdt = vert_data[-1][0] - vert_data[0][0]
+                    if vdt > 0:
+                        gnss_vertical_rate = (vert_data[-1][1] - vert_data[0][1]) / vdt
+
+                # Transient score (slow-slip detection)
+                disp_timeseries = []
+                for snapshot in cell_gnss:
+                    if snapshot["t_days"] < t_now_days:
+                        total_d = 0
+                        n_s = 0
+                        for s in snapshot.get("stations", []):
+                            total_d += gnss_horizontal_displacement(
+                                s.get("dx_mm", 0), s.get("dy_mm", 0))
+                            n_s += 1
+                        if n_s > 0:
+                            disp_timeseries.append((snapshot["t_days"], total_d / n_s))
+                gnss_transient = gnss_transient_score(disp_timeseries)
+
+            # Displacement acceleration
+            if gnss_30d and gnss_prev_30d:
+                disps_recent = []
+                for snapshot in gnss_30d:
+                    for s in snapshot.get("stations", []):
+                        disps_recent.append(
+                            gnss_horizontal_displacement(s.get("dx_mm", 0), s.get("dy_mm", 0)))
+                disps_prev = []
+                for snapshot in gnss_prev_30d:
+                    for s in snapshot.get("stations", []):
+                        disps_prev.append(
+                            gnss_horizontal_displacement(s.get("dx_mm", 0), s.get("dy_mm", 0)))
+                if disps_recent and disps_prev:
+                    mean_recent = sum(disps_recent) / len(disps_recent)
+                    mean_prev = sum(disps_prev) / len(disps_prev)
+                    gnss_disp_accel = mean_recent / max(mean_prev, 0.01)
+
+        # --- M. Enhanced spatial features (Phase 7) ---
+        neighbor_cfs_max = 0.0
+        neighbor_etas_resid_max = 0.0
+        neighbor_max_mag_7d = 0.0
+
+        for dlat in (-CELL_SIZE_DEG, 0, CELL_SIZE_DEG):
+            for dlon in (-CELL_SIZE_DEG, 0, CELL_SIZE_DEG):
+                if dlat == 0 and dlon == 0:
+                    continue
+                nk = (cell_lat + dlat, cell_lon + dlon)
+
+                # Neighbor CFS
+                n_cfs = self.cfs_map.get(nk, 0.0)
+                if n_cfs > neighbor_cfs_max:
+                    neighbor_cfs_max = n_cfs
+
+                # Neighbor ETAS residual
+                n_evs = self.cell_events.get(nk, [])
+                n_rate_7d = sum(1 for e in n_evs if t_7 <= e["t_days"] < t_now_days)
+                n_etas_exp = self._compute_etas_expected(n_evs, t_now_days, 7, nk[0], nk[1])
+                n_etas_resid = n_rate_7d / max(n_etas_exp, 0.1)
+                if n_etas_resid > neighbor_etas_resid_max:
+                    neighbor_etas_resid_max = n_etas_resid
+
+                # Neighbor max magnitude (7d)
+                for e in n_evs:
+                    if t_7 <= e["t_days"] < t_now_days and e["mag"] > neighbor_max_mag_7d:
+                        neighbor_max_mag_7d = e["mag"]
+
+        # Zone-level statistics
+        zone = self.cell_zone.get(ck, "other")
+        zone_rates = []
+        zone_cfs_values = []
+        for other_ck, other_zone in self.cell_zone.items():
+            if other_zone == zone and other_ck != ck:
+                other_evs = self.cell_events.get(other_ck, [])
+                other_rate = sum(1 for e in other_evs if t_7 <= e["t_days"] < t_now_days)
+                zone_rates.append(other_rate)
+                zone_cfs_values.append(self.cfs_map.get(other_ck, 0.0))
+
+        zone_mean_rate = sum(zone_rates) / max(len(zone_rates), 1) if zone_rates else rate_7d
+        zone_rate_anomaly = rate_7d / max(zone_mean_rate, 0.1)
+
+        # CFS rank within zone
+        if zone_cfs_values:
+            zone_cfs_values_sorted = sorted(zone_cfs_values)
+            n_below = sum(1 for v in zone_cfs_values_sorted if v <= cfs_cumulative_kpa)
+            zone_cfs_rank = n_below / max(len(zone_cfs_values_sorted), 1)
+        else:
+            zone_cfs_rank = 0.5
+
+        # Spatial gradient: how different is this cell from its neighbors
+        if neighbor_rates:
+            spatial_gradient = rate_7d - mean_neighbor_rate
+        else:
+            spatial_gradient = 0.0
+
         # Assemble feature vector
         return [
             rate_7d,
@@ -512,6 +701,20 @@ class FeatureExtractor:
             rate_spatial_anomaly,
             n_active_signals,
             alarm_density,
+            # L. GNSS
+            gnss_disp_max_30d,
+            gnss_disp_accel,
+            gnss_vertical_rate,
+            gnss_strain_val,
+            gnss_anomaly_cnt,
+            gnss_transient,
+            # M. Enhanced spatial
+            neighbor_cfs_max,
+            neighbor_etas_resid_max,
+            zone_rate_anomaly,
+            zone_cfs_rank,
+            spatial_gradient,
+            neighbor_max_mag_7d,
         ]
 
     def extract_dict(self, cell_lat, cell_lon, t_now_days) -> dict:

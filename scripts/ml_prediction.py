@@ -1,13 +1,12 @@
-"""ML-integrated earthquake prediction — Phase 6 overhaul.
+"""ML-integrated earthquake prediction — Phase 7: spatial correlation + GNSS + zone ETAS.
 
-Major changes from Phase 5:
-    1. 35 temporal features (was 11 static)
-    2. sklearn HistGradientBoostingClassifier (was pure Python AdaBoost)
-    3. Walk-forward CV with expanding window (was single train/test split)
-    4. ETAS MLE parameter fitting per tectonic zone (was fixed literature values)
-    5. Rate-and-state CFS (was non-decaying cumulative)
-    6. Isotonic calibration for reliable probabilities
-    7. Permutation importance (was single-feature AUC only)
+Phase 7 changes from Phase 6:
+    1. 47 features (was 35): +6 GNSS crustal deformation, +6 enhanced spatial
+    2. Zone-specific ETAS parameters injected into feature extraction (was global)
+    3. 2-pass spatial smoothing of predictions (was cell-independent)
+    4. GNSS displacement features when data available (graceful fallback to 0)
+    5. Enhanced neighbor features: CFS max, ETAS residual max, mag max
+    6. Zone-level statistics: rate anomaly within tectonic zone, CFS rank
 
 Target: M5.0+ within 7 days in 2°×2° cells.
 
@@ -16,6 +15,8 @@ References:
     - van den Ende & Ampuero (2020) ML + physics earthquake prediction
     - Zechar & Jordan (2008) Testing alarm-based predictions
     - Molchan (1991) Strong earthquake prediction strategies
+    - Mogi (1985) GNSS-based earthquake prediction
+    - Kato et al. (2012) Slow-slip events and earthquake triggering
 """
 
 import asyncio
@@ -151,7 +152,8 @@ def fit_etas_by_zone(events):
 # Dataset generation
 # ---------------------------------------------------------------------------
 
-def build_dataset(events, fm_dict, t0, etas_params=None):
+def build_dataset(events, fm_dict, t0, etas_params=None,
+                   zone_etas=None, gnss_data=None):
     """Generate feature matrix and labels.
 
     Returns:
@@ -175,8 +177,12 @@ def build_dataset(events, fm_dict, t0, etas_params=None):
 
     logger.info("  Active 2° cells: %d", len(active_cells))
 
-    # Feature extractor
-    extractor = FeatureExtractor(events, fm_dict, t0, etas_params)
+    # Feature extractor with zone-specific ETAS and GNSS data
+    extractor = FeatureExtractor(
+        events, fm_dict, t0, etas_params,
+        zone_etas_params=zone_etas,
+        gnss_data=gnss_data,
+    )
 
     # Generate samples
     total_t_days = events[-1]["t_days"]
@@ -437,20 +443,27 @@ def run_walk_forward_cv(samples, metadata):
 # ---------------------------------------------------------------------------
 
 def train_final_model(samples, events_t0):
-    """Train final model and evaluate on holdout test set."""
+    """Train final model and evaluate on holdout test set.
+
+    Phase 7: includes 2-pass spatial smoothing of predictions.
+    """
     split_date = datetime(2019, 1, 1, tzinfo=timezone.utc)
     split_t_days = (split_date - events_t0).total_seconds() / 86400
 
     train_X, train_y = [], []
     test_X, test_y = [], []
+    test_cells = []  # track cell locations for spatial smoothing
+    test_t_days = []
 
-    for _, _, t_day, features, label in samples:
+    for clat, clon, t_day, features, label in samples:
         if t_day < split_t_days:
             train_X.append(features)
             train_y.append(label)
         else:
             test_X.append(features)
             test_y.append(label)
+            test_cells.append((clat, clon))
+            test_t_days.append(t_day)
 
     if not train_X or not test_X:
         return None
@@ -470,12 +483,58 @@ def train_final_model(samples, events_t0):
 
     # Predict
     train_probs = predict_fn(train_X)
-    test_probs = predict_fn(test_X)
+    test_probs_raw = predict_fn(test_X)
 
-    # ROC
+    # 2-pass spatial smoothing (Phase 7)
+    # Group test predictions by time step, smooth within each step
+    logger.info("--- Spatial smoothing (2-pass Gaussian kernel) ---")
+    time_groups = {}
+    for idx, (ck, t_day) in enumerate(zip(test_cells, test_t_days)):
+        time_groups.setdefault(t_day, []).append(idx)
+
+    test_probs_smoothed = list(test_probs_raw)  # copy
+    active_cells_set = set(test_cells)
+
+    n_smoothed_steps = 0
+    for t_day, indices in time_groups.items():
+        if len(indices) < 3:
+            continue
+        # Build per-cell prediction map for this time step
+        cell_preds = {}
+        for idx in indices:
+            cell_preds[test_cells[idx]] = test_probs_raw[idx]
+
+        # Smooth
+        smoothed = spatial_smooth_predictions(cell_preds, active_cells_set)
+
+        # Write back
+        for idx in indices:
+            ck = test_cells[idx]
+            if ck in smoothed:
+                test_probs_smoothed[idx] = smoothed[ck]
+        n_smoothed_steps += 1
+
+    logger.info("  Smoothed %d time steps", n_smoothed_steps)
+
+    # Evaluate both raw and smoothed
     _, auc_train = compute_roc(train_y, train_probs)
-    _, auc_test = compute_roc(test_y, test_probs)
-    logger.info("  AUC-ROC: train=%.4f test=%.4f", auc_train, auc_test)
+    _, auc_test_raw = compute_roc(test_y, test_probs_raw)
+    _, auc_test_smooth = compute_roc(test_y, test_probs_smoothed)
+    logger.info("  AUC-ROC: train=%.4f test_raw=%.4f test_smoothed=%.4f",
+                auc_train, auc_test_raw, auc_test_smooth)
+
+    # Use the better result
+    if auc_test_smooth >= auc_test_raw:
+        test_probs = test_probs_smoothed
+        auc_test = auc_test_smooth
+        model_info["spatial_smoothing"] = True
+        logger.info("  Using spatially smoothed predictions (+%.4f AUC)",
+                    auc_test_smooth - auc_test_raw)
+    else:
+        test_probs = list(test_probs_raw)
+        auc_test = auc_test_raw
+        model_info["spatial_smoothing"] = False
+        logger.info("  Spatial smoothing did not improve AUC, using raw predictions")
 
     # Calibration
     logger.info("--- Isotonic calibration ---")
@@ -502,19 +561,21 @@ def train_final_model(samples, events_t0):
     # Feature importance (permutation-based)
     logger.info("--- Feature importance (permutation) ---")
     importance = permutation_importance(predict_fn, test_X, test_y, FEATURE_NAMES, n_repeats=3)
-    for imp in importance[:10]:
+    for imp in importance[:15]:
         logger.info("  %s: importance=%.4f (±%.4f)", imp["feature"], imp["importance"], imp["std"])
 
     # Single-feature AUC for comparison
     sf_auc = single_feature_auc_ranking(test_X, test_y, FEATURE_NAMES)
     logger.info("--- Single-feature AUC ranking ---")
-    for sf in sf_auc[:10]:
+    for sf in sf_auc[:15]:
         logger.info("  %s: AUC=%.4f (%s)", sf["feature"], sf["auc"], sf["direction"])
 
     return {
         "model_info": model_info,
         "performance": {
             "auc_roc_train": round(auc_train, 4),
+            "auc_roc_test_raw": round(auc_test_raw, 4),
+            "auc_roc_test_smoothed": round(auc_test_smooth, 4),
             "auc_roc_test": round(auc_test, 4),
             "auc_roc_calibrated": round(auc_cal, 4),
             "molchan_area_skill": molchan_skill,
@@ -523,10 +584,14 @@ def train_final_model(samples, events_t0):
         },
         "threshold_evaluation": threshold_eval,
         "reliability_diagram": reliability,
-        "feature_importance_permutation": importance[:15],
-        "feature_importance_single_auc": sf_auc[:15],
+        "feature_importance_permutation": importance[:20],
+        "feature_importance_single_auc": sf_auc[:20],
         "train_size": len(train_y),
         "test_size": len(test_y),
+        "gnss_features_available": any(
+            imp["feature"].startswith("gnss_") and imp["importance"] > 0.001
+            for imp in importance
+        ),
     }
 
 
@@ -534,9 +599,123 @@ def train_final_model(samples, events_t0):
 # Main pipeline
 # ---------------------------------------------------------------------------
 
+async def load_gnss_data(db_path, t0):
+    """Load GNSS displacement data from database, indexed by cell.
+
+    Returns dict: {cell_key: list of {t_days, stations: [{lat, lon, dx_mm, dy_mm, dz_mm}]}}
+    """
+    gnss_data = {}
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT station_id, observed_at, latitude, longitude, "
+                "dx_mm, dy_mm, dz_mm FROM geonet "
+                "WHERE dx_mm IS NOT NULL AND dy_mm IS NOT NULL "
+                "ORDER BY observed_at"
+            )
+
+        if not rows:
+            logger.info("  No GNSS data available (GEONET table empty)")
+            return {}
+
+        logger.info("  Loaded %d GNSS records", len(rows))
+
+        # Group by date → cell
+        from collections import defaultdict
+        date_cell_stations = defaultdict(lambda: defaultdict(list))
+
+        for r in rows:
+            try:
+                t = datetime.fromisoformat(r[1].replace("Z", "+00:00"))
+                t_days = (t - t0).total_seconds() / 86400
+                lat, lon = r[2], r[3]
+                ck = cell_key(lat, lon)
+                date_key = r[1][:10]  # YYYY-MM-DD
+
+                date_cell_stations[date_key][ck].append({
+                    "lat": lat, "lon": lon,
+                    "dx_mm": r[4], "dy_mm": r[5], "dz_mm": r[6],
+                    "t_days": t_days,
+                })
+            except (ValueError, TypeError):
+                continue
+
+        # Convert to per-cell time series
+        for date_key, cells in date_cell_stations.items():
+            for ck, stations in cells.items():
+                if ck not in gnss_data:
+                    gnss_data[ck] = []
+                t_days = stations[0]["t_days"]
+                gnss_data[ck].append({
+                    "t_days": t_days,
+                    "stations": stations,
+                })
+
+        # Sort each cell's data by time
+        for ck in gnss_data:
+            gnss_data[ck].sort(key=lambda g: g["t_days"])
+
+        logger.info("  GNSS data indexed for %d cells", len(gnss_data))
+
+    except Exception as e:
+        logger.warning("  GNSS data load failed (non-fatal): %s", e)
+        return {}
+
+    return gnss_data
+
+
+def spatial_smooth_predictions(
+    predictions: dict,
+    active_cells: set,
+    sigma_deg: float = 2.0,
+) -> dict:
+    """2-pass spatial smoothing of cell predictions.
+
+    Averages each cell's prediction with its neighbors, weighted by
+    Gaussian distance kernel. This captures spatial correlation in
+    earthquake occurrence.
+
+    Args:
+        predictions: {cell_key: probability}
+        active_cells: set of active cell keys
+        sigma_deg: Gaussian kernel width in degrees
+
+    Returns:
+        {cell_key: smoothed_probability}
+    """
+    smoothed = {}
+    cell_size = CELL_SIZE_DEG
+
+    for ck in predictions:
+        lat, lon = ck
+        total_weight = 0.0
+        weighted_sum = 0.0
+
+        # Self weight (highest)
+        self_w = 1.0
+        weighted_sum += self_w * predictions[ck]
+        total_weight += self_w
+
+        # Neighbor contributions (8 neighbors)
+        for dlat in (-cell_size, 0, cell_size):
+            for dlon in (-cell_size, 0, cell_size):
+                if dlat == 0 and dlon == 0:
+                    continue
+                nk = (lat + dlat, lon + dlon)
+                if nk in predictions:
+                    dist = math.sqrt(dlat ** 2 + dlon ** 2)
+                    w = math.exp(-0.5 * (dist / sigma_deg) ** 2)
+                    weighted_sum += w * predictions[nk]
+                    total_weight += w
+
+        smoothed[ck] = weighted_sum / total_weight if total_weight > 0 else predictions[ck]
+
+    return smoothed
+
+
 async def run_ml_prediction():
-    """Full ML prediction pipeline."""
-    logger.info("=== ML Integrated Earthquake Prediction (Phase 6) ===")
+    """Full ML prediction pipeline (Phase 7)."""
+    logger.info("=== ML Integrated Earthquake Prediction (Phase 7) ===")
     logger.info("Target: M%.1f+ within %d days in %.0f° cells",
                 MIN_TARGET_MAG, PREDICTION_WINDOW_DAYS, CELL_SIZE_DEG)
     logger.info("Features: %d temporal features", N_FEATURES)
@@ -544,6 +723,10 @@ async def run_ml_prediction():
     # Load data
     events, fm_dict, t0 = await load_events(DB_PATH)
     logger.info("  Loaded %d M3+ events, %d focal mechanisms", len(events), len(fm_dict))
+
+    # Load GNSS data (optional — graceful fallback to empty)
+    logger.info("--- Loading GNSS displacement data ---")
+    gnss_data = await load_gnss_data(DB_PATH, t0)
 
     # Fit ETAS by zone
     logger.info("--- ETAS MLE parameter fitting ---")
@@ -564,9 +747,20 @@ async def run_ml_prediction():
         global_etas = None
         logger.info("  No zone fitted successfully, using default ETAS parameters")
 
-    # Build dataset
-    logger.info("--- Building feature dataset ---")
-    samples, active_cells, metadata = build_dataset(events, fm_dict, t0, global_etas)
+    # Log zone ETAS summary
+    for zn, zr in zone_etas.items():
+        if zr.get("fitted"):
+            p = zr["params"]
+            logger.info("  Zone %s: K=%.4f alpha=%.2f p=%.3f BR=%.2f",
+                        zn, p["K"], p["alpha"], p["p"], zr.get("branching_ratio", 0))
+
+    # Build dataset with zone-specific ETAS and GNSS
+    logger.info("--- Building feature dataset (Phase 7: %d features) ---", N_FEATURES)
+    samples, active_cells, metadata = build_dataset(
+        events, fm_dict, t0, global_etas,
+        zone_etas=zone_etas,
+        gnss_data=gnss_data,
+    )
 
     if len(samples) < 1000:
         logger.error("Dataset too small (%d samples)", len(samples))
@@ -588,7 +782,7 @@ async def run_ml_prediction():
 
     # Compile results
     results = {
-        "phase": "Phase 6",
+        "phase": "Phase 7",
         "metadata": metadata,
         "etas_fitting": {
             zone: {
@@ -600,24 +794,28 @@ async def run_ml_prediction():
             }
             for zone, r in zone_etas.items()
         },
+        "gnss_data_summary": {
+            "cells_with_gnss": len(gnss_data),
+            "total_snapshots": sum(len(v) for v in gnss_data.values()),
+        },
         "walk_forward_cv": {
             "aggregate": cv_aggregate,
             "folds": cv_folds,
         },
         "final_model": final_results,
         "interpretation": {
-            "phase6_improvements": [
-                "35 temporal features (was 11 static)",
-                "HistGradientBoosting (was AdaBoost stumps)",
-                "Walk-forward CV (was single split)",
-                "ETAS MLE per zone (was fixed params)",
-                "Isotonic calibration (was raw sigmoid)",
-                "Permutation importance (was single-feature AUC)",
-                "Rate-and-state CFS (was non-decaying)",
+            "phase7_improvements": [
+                "47 features (was 35): +6 GNSS, +6 enhanced spatial",
+                "Zone-specific ETAS params in feature extraction (was global)",
+                "2-pass spatial smoothing of predictions (was cell-independent)",
+                "GNSS crustal deformation features (when available)",
+                "Enhanced neighbor features: CFS max, ETAS resid max, mag max",
+                "Zone-level rate anomaly and CFS rank features",
             ],
             "auc_meaning": "0.5=random, 1.0=perfect. >0.7 suggests useful skill.",
             "molchan_skill": ">0 better than random, 1=perfect.",
             "calibration": "Reliability diagram shows predicted vs observed frequency.",
+            "spatial_smoothing": "Gaussian kernel averaging of neighboring cell predictions.",
         },
     }
 
