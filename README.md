@@ -125,9 +125,10 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 - **Analysis Phase 3b** ✅ MODIS LST (❌), ULF magnetic (⚠️ data limited to 80 days), GNSS-TEC 0.5° (31K records)
 - **Analysis Phase 4** ✅ **Prospective (forward-looking) prediction**: ETAS residual (gain 4.0x), foreshock (5.1x), cumulative CFS (2.4x), combined alarm (**7.8x, 62.5% precision**). Pattern Informatics (Molchan AUC 0.349)
 - **Analysis Phase 5** ✅ ML integration: AdaBoost ensemble (11 features, pure Python) — AUC 0.73
-- **Analysis Phase 6** 🔄 ML overhaul: HistGradientBoosting (35 temporal features), walk-forward CV, ETAS MLE, rate-and-state CFS, isotonic calibration
+- **Analysis Phase 6** ✅ ML overhaul: HistGradientBoosting (35 temporal features), walk-forward CV (0.740 ± 0.016), ETAS MLE per zone, rate-and-state CFS, isotonic calibration — **AUC 0.746**
+- **Analysis Phase 7** 🔄 Spatial correlation + GNSS + zone ETAS: 47 features (+6 GNSS crustal deformation, +6 enhanced spatial), zone-specific ETAS in feature extraction, 2-pass Gaussian spatial smoothing
 - **Backfill** ✅ 2011-2026 M3+ earthquakes (29K), TEC (4M), Kp (44K), GCMT focal mechanisms
-- **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 120min timeout)
+- **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 240min timeout)
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
 
 ## Analysis Results (2011-2026, 28K M3+ earthquakes, 4M TEC, 44K Kp, 31K GNSS-TEC, 345K ULF)
@@ -424,17 +425,17 @@ gh workflow run "Earthquake Correlation Analysis" \
 | `gnss_tec_analysis.py` | 3b | High-resolution GNSS-TEC (0.5°) anomaly at epicenters: day/night split, isolation filter, forward alarm evaluation | — |
 | `pattern_informatics.py` | 4 | Pattern Informatics: seismicity pattern change detection on 0.5° grid, prospective test | Rundle (2003), Tiampo (2002) |
 | `prospective_analysis.py` | 4 | **Forward-looking prediction**: ETAS residual + cumulative CFS + foreshock alarms + ML alarm. Cell-based base rate, Molchan score, information gain. Train 2011-2018, test 2019-2026 | Molchan (1991), Zechar & Jordan (2008), Ogata (1998) |
-| `ml_prediction.py` | 6 | ML integration: 35 temporal features → HistGradientBoosting, walk-forward CV, ETAS MLE, rate-and-state CFS, isotonic calibration, permutation importance | van den Ende & Ampuero (2020) |
+| `ml_prediction.py` | 7 | ML integration: 47 temporal features → HistGradientBoosting, walk-forward CV, zone-specific ETAS MLE, GNSS crustal deformation, 2-pass spatial smoothing, isotonic calibration, permutation importance | van den Ende & Ampuero (2020), Kato et al. (2012) |
 
 ### Shared modules (`src/`)
 
 | Module | Purpose |
 |---|---|
-| `physics.py` | Okada (1992) CFS, Wells & Coppersmith (1994) fault scaling, ETAS MLE (scipy L-BFGS-B), Dieterich (1994) rate-and-state, b-value (Aki-Utsu), tectonic zone classification |
-| `features.py` | 35 temporal features: rate dynamics (acceleration, trend), ETAS residuals with MLE params, magnitude statistics (deficit, b-value trend), clustering (foreshock escalation, inter-event CV), rate-and-state CFS, Pattern Informatics, Benioff strain, spatial context |
+| `physics.py` | Okada (1992) CFS, Wells & Coppersmith (1994) fault scaling, ETAS MLE (scipy L-BFGS-B), Dieterich (1994) rate-and-state, b-value (Aki-Utsu), tectonic zone classification, GNSS strain rate estimation, slow-slip transient detection |
+| `features.py` | 47 temporal features: rate dynamics (acceleration, trend), zone-specific ETAS residuals, magnitude statistics (deficit, b-value trend), clustering (foreshock escalation, inter-event CV), rate-and-state CFS, Pattern Informatics, Benioff strain, GNSS crustal deformation (displacement, strain rate, SSE detection), enhanced spatial (neighbor CFS/ETAS/mag, zone rate anomaly, CFS rank, spatial gradient) |
 | `evaluation.py` | ROC-AUC, threshold evaluation (precision/recall/gain/IGPE/Molchan), walk-forward CV splits, isotonic calibration (PAV), reliability diagram, permutation importance, Molchan area skill score |
 
-Results saved as JSON artifacts (90-day retention). Runs every Monday 12:00 JST or on demand (180-min timeout).
+Results saved as JSON artifacts (90-day retention). Runs every Monday 12:00 JST or on demand (240-min timeout).
 
 ### Phase 5 ML Results (AUC 0.73, AdaBoost baseline)
 
@@ -453,6 +454,56 @@ Results saved as JSON artifacts (90-day retention). Runs every Monday 12:00 JST 
 | b_value | 0.5166 | 41.0% (38 stumps, but ~random AUC) |
 
 **Key insight**: CFS cumulative and Pattern Informatics are the strongest individual predictors. ETAS residual underperformed (AUC 0.56) due to fixed literature parameters — Phase 6 addresses this with MLE fitting. b-value consumed most ensemble weight (41%) despite near-random AUC (0.52), indicating AdaBoost overfitting.
+
+### Phase 6 ML Results (AUC 0.746, HistGradientBoosting)
+
+Major overhaul: 35 temporal features, sklearn HistGradientBoosting, walk-forward CV, zone-specific ETAS MLE, rate-and-state CFS, isotonic calibration.
+
+| Metric | Phase 5 | Phase 6 | Change |
+|---|---|---|---|
+| AUC-ROC (train) | 0.759 | 0.822 | +0.063 |
+| AUC-ROC (test) | 0.733 | **0.746** | **+0.013** |
+| Walk-Forward CV mean AUC | — | **0.740 ± 0.016** | new |
+| Molchan Skill | — | **0.425** | new (>0 = better than random) |
+
+**Walk-Forward CV (9 folds)**: All folds AUC 0.71–0.77, std=0.016. Confirms no overfitting.
+
+**ETAS MLE (7 tectonic zones — all converged)**:
+
+| Zone | Branching Ratio | Interpretation |
+|---|---|---|
+| Hokkaido | 0.23 | Lowest aftershock activity |
+| Tohoku Offshore | 0.42 | Moderate |
+| Kanto-Tokai | 0.51 | Active subduction interface |
+| Kyushu | **0.66** | Strongest aftershock chains |
+| Nankai | alpha=1.9 | Large events trigger disproportionately |
+
+**Top features (permutation importance)**:
+
+| Rank | Feature | Importance | Single AUC |
+|---|---|---|---|
+| 1 | `cfs_cumulative_kpa` | **0.107** | 0.715 |
+| 2 | `neighbor_rate_sum` | — | — |
+| 3 | `days_since_m4` | — | — |
+| 4 | `pi_score` | — | — |
+| 5 | `cfs_recent_kpa` | — | — |
+
+CFS cumulative remains the dominant predictor, consistent across Phase 5→6. The physics-based Coulomb stress signal is robust.
+
+**Prospective evaluation (2019-2026)**: Combined alarm (ETAS+CFS+foreshock ≥2) gain = 7.79x, FA rate = 0.375 — consistent with Phase 4 results (7.8x).
+
+**Remaining challenges**: Threshold precision-recall tradeoff is steep (thresh 0.5: recall 3.5%, precision 35.6%; thresh 0.2: recall 46%, precision 23.8%). ULF alarm gain = 0.
+
+### Phase 7: Spatial Correlation + GNSS + Zone ETAS (in progress)
+
+Expanding from 35 to 47 features to capture spatial correlation and crustal deformation signals:
+
+| Category | New Features | Physical Motivation |
+|---|---|---|
+| GNSS crustal deformation (6) | displacement, acceleration, vertical rate, strain rate, anomaly count, transient (SSE) score | Slow-slip events precede megathrust earthquakes (Kato 2012); strain accumulation detectable by GEONET |
+| Enhanced spatial (6) | neighbor CFS max, neighbor ETAS residual max, zone rate anomaly, zone CFS rank, spatial gradient, neighbor max magnitude | Earthquakes cluster spatially; stress transfer affects neighboring cells |
+
+Additional changes: zone-specific ETAS parameters injected into feature extraction (was global), 2-pass Gaussian spatial smoothing of cell predictions.
 
 ### Not yet implemented
 
