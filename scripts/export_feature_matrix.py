@@ -174,8 +174,10 @@ async def main():
             ck = cell_key(e["lat"], e["lon"])
             target_by_cell.setdefault(ck, []).append(e["t_days"])
 
-    # Feature extractor
+    # Feature extractor (Phase 9 data loaded via results files if available)
     extractor = FeatureExtractor(events, fm_dict, t0)
+    # Note: Phase 9 data (cosmic_ray, lightning, etc.) will be loaded
+    # when running full pipeline via ml_prediction.py. Export uses defaults.
 
     # Generate time steps
     total_t_days = events[-1]["t_days"]

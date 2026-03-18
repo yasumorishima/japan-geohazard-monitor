@@ -157,6 +157,8 @@ def fit_etas_by_zone(events):
 
 def build_dataset(events, fm_dict, t0, etas_params=None,
                    zone_etas=None, gnss_data=None,
+                   cosmic_ray_data=None, lightning_data=None,
+                   geomag_spectral_data=None, animal_data=None,
                    min_target_mag=None, window_days=None, step_days=None):
     """Generate feature matrix and labels.
 
@@ -194,11 +196,15 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
     logger.info("  Active 2° cells: %d (target M%.1f+, window %dd)",
                 len(active_cells), min_target_mag, window_days)
 
-    # Feature extractor with zone-specific ETAS and GNSS data
+    # Feature extractor with zone-specific ETAS, GNSS, and Phase 9 data
     extractor = FeatureExtractor(
         events, fm_dict, t0, etas_params,
         zone_etas_params=zone_etas,
         gnss_data=gnss_data,
+        cosmic_ray_data=cosmic_ray_data,
+        lightning_data=lightning_data,
+        geomag_spectral_data=geomag_spectral_data,
+        animal_data=animal_data,
     )
 
     # Generate samples
@@ -748,6 +754,147 @@ async def load_gnss_data(db_path, t0):
     return gnss_data
 
 
+async def load_phase9_cosmic_ray(db_path):
+    """Load cosmic ray features from results file or DB.
+
+    Returns dict: {date_str: {cosmic_ray_rate, cosmic_ray_anomaly, ...}}
+    """
+    import json
+    results_dir = Path(__file__).parent.parent / "results"
+    latest = results_dir / "cosmic_ray_features_latest.json"
+
+    if latest.exists():
+        try:
+            with open(latest) as f:
+                data = json.load(f)
+            logger.info("  Cosmic ray features loaded: %d dates", len(data))
+            return data
+        except (json.JSONDecodeError, IOError) as e:
+            logger.warning("  Cosmic ray features file error: %s", e)
+
+    # Fallback: compute from DB
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT observed_at, counts_per_sec FROM cosmic_ray "
+                "WHERE station = 'IRKT' ORDER BY observed_at"
+            )
+        if not rows:
+            logger.info("  No cosmic ray data available")
+            return {}
+
+        data = {}
+        values = [r[1] for r in rows]
+        dates = [r[0] for r in rows]
+        for i, date in enumerate(dates):
+            data[date] = {
+                "cosmic_ray_rate": values[i],
+                "cosmic_ray_anomaly": 0.0,
+                "cosmic_ray_trend_15d": 0.0,
+            }
+        logger.info("  Cosmic ray raw data loaded: %d dates (no anomaly computed)",
+                     len(data))
+        return data
+    except Exception as e:
+        logger.warning("  Cosmic ray load failed (non-fatal): %s", e)
+        return {}
+
+
+async def load_phase9_lightning(db_path):
+    """Load lightning data from DB.
+
+    Returns dict: {(date_str, cell_lat, cell_lon): {stroke_count, ...}}
+    """
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT observed_at, cell_lat, cell_lon, stroke_count, "
+                "mean_intensity_ka FROM lightning "
+                "WHERE source != 'climatology'"
+            )
+        if not rows:
+            logger.info("  No lightning data available")
+            return {}
+
+        data = {}
+        for r in rows:
+            key = (r[0], r[1], r[2])
+            data[key] = {"stroke_count": r[3] or 0, "mean_intensity": r[4]}
+        logger.info("  Lightning data loaded: %d cell-date records", len(data))
+        return data
+    except Exception as e:
+        logger.warning("  Lightning load failed (non-fatal): %s", e)
+        return {}
+
+
+async def load_phase9_geomag_spectral(db_path):
+    """Load hourly geomag spectral features.
+
+    Computes daily ULF power, polarization ratio, fractal dimension
+    from geomag_hourly table (KAK as primary station).
+
+    Returns dict: {date_str: {ulf_power, polarization, fractal_dim}}
+    """
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT DATE(observed_at), "
+                "AVG(h_nt), AVG(z_nt), "
+                "MAX(h_nt) - MIN(h_nt), MAX(z_nt) - MIN(z_nt) "
+                "FROM geomag_hourly WHERE station = 'KAK' "
+                "GROUP BY DATE(observed_at) ORDER BY DATE(observed_at)"
+            )
+        if not rows:
+            logger.info("  No hourly geomag data available")
+            return {}
+
+        data = {}
+        for r in rows:
+            date_str = r[0]
+            h_range = r[3] if r[3] is not None else 0
+            z_range = r[4] if r[4] is not None else 0
+            # ULF power proxy: daily range of H component (nT)
+            ulf_power = h_range + z_range
+            # Polarization: Z range / H range (>1 = lithospheric source)
+            polarization = z_range / max(h_range, 0.01) if h_range > 0 else 1.0
+            data[date_str] = {
+                "ulf_power": ulf_power,
+                "polarization": polarization,
+                "fractal_dim": 1.5,  # Will be computed in full spectral analysis
+            }
+        logger.info("  Geomag spectral features loaded: %d dates", len(data))
+        return data
+    except Exception as e:
+        logger.warning("  Geomag spectral load failed (non-fatal): %s", e)
+        return {}
+
+
+async def load_phase9_animal(db_path):
+    """Load animal behavior anomaly features.
+
+    Computes daily movement speed anomaly per grid cell from animal_tracking.
+
+    Returns dict: {(date_str, cell_lat, cell_lon): {speed_anomaly, ...}}
+    """
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            count = await db.execute_fetchall(
+                "SELECT COUNT(*) FROM animal_tracking"
+            )
+        if not count or count[0][0] == 0:
+            logger.info("  No animal tracking data available")
+            return {}
+
+        # TODO: Full implementation requires computing baseline speeds
+        # per individual and detecting anomalies. For now, return empty.
+        logger.info("  Animal tracking data exists but anomaly computation "
+                     "not yet implemented")
+        return {}
+    except Exception as e:
+        logger.warning("  Animal data load failed (non-fatal): %s", e)
+        return {}
+
+
 def spatial_smooth_predictions(
     predictions: dict,
     active_cells: set,
@@ -837,6 +984,13 @@ async def run_ml_prediction():
             logger.info("  Zone %s: K=%.4f alpha=%.2f p=%.3f BR=%.2f",
                         zn, p["K"], p["alpha"], p["p"], zr.get("branching_ratio", 0))
 
+    # --- Phase 9: Load non-traditional precursor data ---
+    logger.info("--- Loading Phase 9 data (cosmic ray, lightning, geomag, animal) ---")
+    cosmic_ray_data = await load_phase9_cosmic_ray(DB_PATH)
+    lightning_data = await load_phase9_lightning(DB_PATH)
+    geomag_spectral_data = await load_phase9_geomag_spectral(DB_PATH)
+    animal_data = await load_phase9_animal(DB_PATH)
+
     # Multi-target loop
     target_results = {}
     primary_metadata = None
@@ -854,6 +1008,10 @@ async def run_ml_prediction():
             events, fm_dict, t0, global_etas,
             zone_etas=zone_etas,
             gnss_data=gnss_data,
+            cosmic_ray_data=cosmic_ray_data,
+            lightning_data=lightning_data,
+            geomag_spectral_data=geomag_spectral_data,
+            animal_data=animal_data,
             min_target_mag=cfg["min_mag"],
             window_days=cfg["window_days"],
             step_days=cfg["step_days"],

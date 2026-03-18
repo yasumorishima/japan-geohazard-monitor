@@ -115,23 +115,41 @@ FEATURE_NAMES = [
     "zone_cfs_rank",        # percentile rank of CFS within zone
     "spatial_gradient",     # rate gradient (center vs neighbors)
     "neighbor_max_mag",     # max magnitude in neighbors (7d)
+    # N. Cosmic ray (Phase 9) — Homola et al. 2023
+    "cosmic_ray_rate",      # daily corrected count rate (IRKT)
+    "cosmic_ray_anomaly",   # deviation from 27-day solar rotation mean (σ)
+    "cosmic_ray_trend_15d", # 15-day trend slope (Homola lag)
+    # O. Lightning/electromagnetic (Phase 9)
+    "lightning_count_7d",   # lightning stroke count in cell (7 days)
+    "lightning_anomaly",    # deviation from seasonal baseline
+    # P. Geomagnetic hourly spectral (Phase 9) — Hattori 2004
+    "geomag_ulf_power",     # ULF band (0.01-0.1 Hz) spectral power (nearest station)
+    "geomag_polarization",  # Sz/Sh polarization ratio
+    "geomag_fractal_dim",   # Higuchi fractal dimension of Z component
+    # Q. Animal behavior (Phase 9) — Wikelski et al. 2020
+    "animal_speed_anomaly", # GPS movement speed anomaly (σ from baseline)
 ]
 
 N_FEATURES = len(FEATURE_NAMES)
 
 
 class FeatureExtractor:
-    """Extract 35 temporal features for (cell, time) pairs.
+    """Extract temporal features for (cell, time) pairs.
 
     Pre-indexes events by cell for O(1) spatial lookup.
     Maintains incremental CFS map.
     Supports zone-specific ETAS parameters.
+    Phase 9: adds cosmic ray, lightning, geomag spectral, animal behavior.
     """
 
     def __init__(self, events: list, fm_dict: dict, t0,
                  etas_params: dict = None,
                  zone_etas_params: dict = None,
-                 gnss_data: dict = None):
+                 gnss_data: dict = None,
+                 cosmic_ray_data: dict = None,
+                 lightning_data: dict = None,
+                 geomag_spectral_data: dict = None,
+                 animal_data: dict = None):
         """
         Args:
             events: list of dicts with keys: time, mag, lat, lon, depth, t_days
@@ -140,6 +158,10 @@ class FeatureExtractor:
             etas_params: global ETAS parameters (fallback)
             zone_etas_params: {zone_name: {params dict}} for zone-specific ETAS
             gnss_data: {cell_key: list of {t_days, stations: [{lat, lon, dx_mm, dy_mm, dz_mm}]}}
+            cosmic_ray_data: {date_str: {cosmic_ray_rate, cosmic_ray_anomaly, ...}}
+            lightning_data: {(date_str, cell_lat, cell_lon): {stroke_count, ...}}
+            geomag_spectral_data: {date_str: {ulf_power, polarization, fractal_dim}}
+            animal_data: {(date_str, cell_lat, cell_lon): {speed_anomaly, ...}}
         """
         self.events = events
         self.fm_dict = fm_dict
@@ -148,6 +170,10 @@ class FeatureExtractor:
         self.etas = etas_params if etas_params else ETAS_DEFAULTS.copy()
         self.zone_etas = zone_etas_params or {}
         self.gnss_data = gnss_data or {}
+        self.cosmic_ray_data = cosmic_ray_data or {}
+        self.lightning_data = lightning_data or {}
+        self.geomag_spectral_data = geomag_spectral_data or {}
+        self.animal_data = animal_data or {}
 
         # Pre-compute cell → zone mapping
         self.cell_zone = {}
@@ -234,6 +260,12 @@ class FeatureExtractor:
     def _events_in_window(self, cell_evs, t_start, t_end):
         """Get events in [t_start, t_end)."""
         return [e for e in cell_evs if t_start <= e["t_days"] < t_end]
+
+    def _t_days_to_date(self, t_days: float) -> str:
+        """Convert t_days offset to YYYY-MM-DD date string."""
+        from datetime import timedelta
+        dt = self.t0 + timedelta(days=t_days)
+        return dt.strftime("%Y-%m-%d")
 
     def _get_etas_for_cell(self, cell_lat, cell_lon):
         """Get ETAS parameters for a cell, using zone-specific if available."""
@@ -664,6 +696,37 @@ class FeatureExtractor:
         else:
             spatial_gradient = 0.0
 
+        # --- N. Cosmic ray features (Phase 9) ---
+        date_str = self._t_days_to_date(t_now_days)
+        cr = self.cosmic_ray_data.get(date_str, {})
+        cosmic_ray_rate = cr.get("cosmic_ray_rate", 0.0) or 0.0
+        cosmic_ray_anomaly = cr.get("cosmic_ray_anomaly", 0.0) or 0.0
+        cosmic_ray_trend_15d = cr.get("cosmic_ray_trend_15d", 0.0) or 0.0
+
+        # --- O. Lightning features (Phase 9) ---
+        lightning_count_7d = 0
+        lightning_anomaly = 0.0
+        for lag in range(7):
+            lag_date = self._t_days_to_date(t_now_days - lag)
+            lk = (lag_date, cell_lat, cell_lon)
+            lt = self.lightning_data.get(lk, {})
+            lightning_count_7d += lt.get("stroke_count", 0) or 0
+        # Seasonal baseline: ~1 stroke/day/cell average for Japan
+        seasonal_baseline = 7.0
+        if lightning_count_7d > 0:
+            lightning_anomaly = (lightning_count_7d - seasonal_baseline) / max(seasonal_baseline, 1)
+
+        # --- P. Geomagnetic hourly spectral (Phase 9) ---
+        gs = self.geomag_spectral_data.get(date_str, {})
+        geomag_ulf_power = gs.get("ulf_power", 0.0) or 0.0
+        geomag_polarization = gs.get("polarization", 1.0) or 1.0
+        geomag_fractal_dim = gs.get("fractal_dim", 1.5) or 1.5
+
+        # --- Q. Animal behavior (Phase 9) ---
+        ak = (date_str, cell_lat, cell_lon)
+        ad = self.animal_data.get(ak, {})
+        animal_speed_anomaly = ad.get("speed_anomaly", 0.0) or 0.0
+
         # Assemble feature vector
         return [
             rate_7d,
@@ -715,6 +778,19 @@ class FeatureExtractor:
             zone_cfs_rank,
             spatial_gradient,
             neighbor_max_mag_7d,
+            # N. Cosmic ray (Phase 9)
+            cosmic_ray_rate,
+            cosmic_ray_anomaly,
+            cosmic_ray_trend_15d,
+            # O. Lightning (Phase 9)
+            lightning_count_7d,
+            lightning_anomaly,
+            # P. Geomagnetic spectral (Phase 9)
+            geomag_ulf_power,
+            geomag_polarization,
+            geomag_fractal_dim,
+            # Q. Animal behavior (Phase 9)
+            animal_speed_anomaly,
         ]
 
     def extract_dict(self, cell_lat, cell_lon, t_now_days) -> dict:

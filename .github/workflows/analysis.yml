@@ -20,7 +20,7 @@ on:
 jobs:
   analyze:
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 360
 
     steps:
       - uses: actions/checkout@v4
@@ -131,6 +131,40 @@ jobs:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
           python3 scripts/ulf_analysis.py || echo "ULF analysis skipped (insufficient data)"
+
+      # --- Phase 9: Non-traditional precursor data sources ---
+
+      - name: Fetch NMDB cosmic ray data (Homola et al. 2023)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_nmdb_cosmicray.py || echo "NMDB fetch failed (non-fatal)"
+
+      - name: Run cosmic ray anomaly analysis
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/cosmic_ray_analysis.py || echo "Cosmic ray analysis skipped (insufficient data)"
+
+      - name: Fetch Blitzortung lightning data
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_blitzortung.py || echo "Lightning fetch failed (non-fatal)"
+
+      - name: Fetch INTERMAGNET hourly + CSES satellite EM data
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_cses_satellite.py || echo "Satellite EM fetch failed (non-fatal)"
+
+      - name: Fetch Movebank animal tracking data
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          MOVEBANK_USER: ${{ secrets.MOVEBANK_USER }}
+          MOVEBANK_PASS: ${{ secrets.MOVEBANK_PASS }}
+        run: |
+          python3 scripts/fetch_movebank.py || echo "Movebank fetch failed (non-fatal)"
 
       - name: Run MODIS LST thermal anomaly analysis
         env:
