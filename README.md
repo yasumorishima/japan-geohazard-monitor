@@ -129,8 +129,8 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 - **Analysis Phase 7** ✅ Spatial correlation + GNSS + zone ETAS: 47 features (+6 GNSS crustal deformation, +6 enhanced spatial), zone-specific ETAS in feature extraction, 2-pass Gaussian spatial smoothing — **AUC 0.749 (CV 0.741)**
 - **Analysis Phase 8** ✅ Structural overhaul: multi-target (M5+/M5.5+/M6+), CSEP benchmark (4 reference models + N/L/T-test), ensemble stacking (8-input physics×ML meta-learner), ConvLSTM spatiotemporal neural network (Colab GPU)
 - **Analysis Phase 9.0** ✅ Non-traditional precursor data sources: cosmic ray neutron monitors (NMDB ✅), animal behavior GPS (Movebank ❌ no Japan data), lightning (Blitzortung ❌ archive restricted), hourly geomagnetic (INTERMAGNET ❌ API param bugs), satellite EM (CSES ❌ auth required) — CV AUC **0.728** (regression from 0.741 due to zero-filled features acting as noise)
-- **Analysis Phase 9.1** 🔄 4-bug fix: INTERMAGNET API params (SamplesPerDay/dateFormat/publicationState), lightning SQL column name, Blitzortung HTML detection, **dynamic feature selection** (auto-exclude Phase 9 groups with no data) — recovering AUC + enabling geomagnetic features
-- **Analysis Phase 10** 📋 11 unconventional data sources ("Earth's screams"): OLR thermal radiation, Earth rotation LOD/polar motion, solar wind Bz/pressure/Dst, GRACE gravity anomaly, atmospheric SO2, soil moisture, **tide gauge sea level residual, ocean color chlorophyll-a, cloud fraction anomaly, nighttime airglow, InSAR ground deformation** — 56 → 70 features, dynamic selection across 15 optional groups
+- **Analysis Phase 9.1** ✅ 4-bug fix + metadata NameError fix: INTERMAGNET API params → **36,000 records, 1,500 days** geomag data successfully fetched. Dynamic feature selection → 53/56 active features. **CV AUC 0.7316, Test AUC 0.7452**. Blitzortung/Sferics Bonn: server down (ECONNREFUSED), lightning data unavailable
+- **Analysis Phase 10/10b** 🔄 11 unconventional data sources ("Earth's screams"): OLR thermal radiation, Earth rotation LOD/polar motion, solar wind Bz/pressure/Dst, GRACE gravity anomaly, atmospheric SO2, soil moisture, **tide gauge sea level residual, ocean color chlorophyll-a, cloud fraction anomaly, nighttime airglow, InSAR ground deformation** — 56 → 70 features, dynamic selection across 15 optional groups. **Run in progress (2026-03-18)**
 - **Backfill** ✅ 2011-2026 M3+ earthquakes (29K), TEC (4M), Kp (44K), GCMT focal mechanisms
 - **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 360min timeout)
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
@@ -415,6 +415,17 @@ gh workflow run "Earthquake Correlation Analysis" \
 | `fetch_cses_satellite.py` | INTERMAGNET BGS GIN + CSES-Limadou | KAK/MMB/KNY 1-min geomag → hourly downsample (2011-2026, 7-day batch) + CSES satellite EM (2018+, auth required) |
 | `fetch_blitzortung.py` | Blitzortung.org + Univ. Bonn sferics | Lightning stroke counts aggregated to 2° grid cells (Japan region) |
 | `fetch_movebank.py` | Movebank (Max Planck) | Animal GPS tracking in Japan region: movement speed/dispersion anomalies |
+| `fetch_olr.py` | NOAA CDR THREDDS | Daily outgoing longwave radiation (2° grid, Japan region) |
+| `fetch_iers_eop.py` | IERS Rapid Service | Earth Orientation Parameters: LOD, polar motion (x/y) |
+| `fetch_solar_wind.py` | NASA OMNIWeb FTP | Hourly solar wind: Bz GSM, dynamic pressure, Dst |
+| `fetch_grace_gravity.py` | NASA PO.DAAC OPeNDAP | GRACE/GRACE-FO mascon gravity (3° resolution, Earthdata auth) |
+| `fetch_omi_so2.py` | NASA GES DISC OPeNDAP | OMI SO2 column density Level 3 (Earthdata auth) |
+| `fetch_smap_moisture.py` | NASA AppEEARS | SMAP L3 soil moisture 9km (Earthdata auth) |
+| `fetch_tide_gauge.py` | UHSLC (Univ. Hawaii) | Research-quality hourly sea level (8 Japan stations) |
+| `fetch_ocean_color.py` | NASA OB.DAAC OPeNDAP | MODIS Aqua chlorophyll-a Level 3 (Earthdata auth) |
+| `fetch_cloud_fraction.py` | NASA LAADS OPeNDAP | MODIS Terra MOD08_D3 cloud fraction (Earthdata auth) |
+| `fetch_viirs_nighttime.py` | EOG / NASA LAADS | VIIRS Day/Night Band radiance composites (Earthdata auth) |
+| `fetch_insar.py` | COMET LiCSAR | Sentinel-1 InSAR LOS velocity (Japan frames, no auth) |
 
 ### Analysis scripts
 
@@ -433,19 +444,19 @@ gh workflow run "Earthquake Correlation Analysis" \
 | `gnss_tec_analysis.py` | 3b | High-resolution GNSS-TEC (0.5°) anomaly at epicenters: day/night split, isolation filter, forward alarm evaluation | — |
 | `pattern_informatics.py` | 4 | Pattern Informatics: seismicity pattern change detection on 0.5° grid, prospective test | Rundle (2003), Tiampo (2002) |
 | `prospective_analysis.py` | 4 | **Forward-looking prediction**: ETAS residual + cumulative CFS + foreshock alarms + ML alarm. Cell-based base rate, Molchan score, information gain. Train 2011-2018, test 2019-2026 | Molchan (1991), Zechar & Jordan (2008), Ogata (1998) |
-| `ml_prediction.py` | 8-9 | Multi-target ML (M5+/M5.5+/M6+): up to 56 features (dynamic selection) → HistGradientBoosting with class weighting, walk-forward CV, zone-specific ETAS MLE, 2-pass spatial smoothing, level-0 export for stacking. Phase 9: cosmic ray, lightning, geomag spectral, animal behavior data loaders with auto-exclusion of empty sources | van den Ende & Ampuero (2020), Kato et al. (2012), Homola (2023), Wikelski (2020) |
+| `ml_prediction.py` | 8-10 | Multi-target ML (M5+/M5.5+/M6+): up to 70 features (dynamic selection across 15 groups) → HistGradientBoosting with class weighting, walk-forward CV, zone-specific ETAS MLE, 2-pass spatial smoothing, level-0 export for stacking. Phase 9: cosmic ray, geomag spectral. Phase 10/10b: OLR, Earth rotation, solar wind, GRACE gravity, SO2, soil moisture, tide gauge, ocean color, cloud fraction, nightlight, InSAR | van den Ende & Ampuero (2020), Matsuo & Heki (2011), Homola (2023) |
 | `export_csep.py` | 8 | CSEP-compatible XML/JSON forecast export from ML predictions | Schorlemmer et al. (2007) |
 | `csep_benchmark.py` | 8 | CSEP benchmark: Uniform/Smoothed/RI/ETAS reference models + N/L/T-test + Molchan diagram | Helmstetter (2007), Rhoades (2004) |
 | `stacking_analysis.py` | 8 | Ensemble stacking: 8-input level-0 (ML×3 + physics×5) → logistic/isotonic meta-learner | Wolpert (1992) |
 | `cosmic_ray_analysis.py` | 9 | Cosmic ray anomaly: 27-day solar rotation baseline deviation, 15-day trend (Homola lag), Forbush decrease detection, multi-station differential | Homola et al. (2023) |
-| `export_feature_matrix.py` | 8 | 4D tensor export (timesteps×H×W×56) for ConvLSTM GPU training | — |
+| `export_feature_matrix.py` | 8-10 | 4D tensor export (timesteps×H×W×70) for ConvLSTM GPU training | — |
 
 ### Shared modules (`src/`)
 
 | Module | Purpose |
 |---|---|
 | `physics.py` | Okada (1992) CFS, Wells & Coppersmith (1994) fault scaling, ETAS MLE (scipy L-BFGS-B), Dieterich (1994) rate-and-state, b-value (Aki-Utsu), tectonic zone classification, GNSS strain rate estimation, slow-slip transient detection |
-| `features.py` | 56 temporal features with **dynamic Phase 9 selection**: rate dynamics (acceleration, trend), zone-specific ETAS residuals, magnitude statistics (deficit, b-value trend), clustering (foreshock escalation, inter-event CV), rate-and-state CFS, Pattern Informatics, Benioff strain, GNSS crustal deformation (displacement, strain rate, SSE detection), enhanced spatial (neighbor CFS/ETAS/mag, zone rate anomaly, CFS rank, spatial gradient), **cosmic ray anomaly** (27-day baseline deviation, 15-day trend), **lightning** (7-day count, seasonal anomaly), **geomagnetic spectral** (ULF power, Sz/Sh polarization, fractal dimension), **animal behavior** (GPS speed anomaly). `get_active_feature_names()` auto-excludes Phase 9 groups with no data to prevent zero-filled noise |
+| `features.py` | **70 features** with dynamic selection across **15 optional groups**: rate dynamics (acceleration, trend), zone-specific ETAS residuals, magnitude statistics (deficit, b-value trend), clustering (foreshock escalation, inter-event CV), rate-and-state CFS, Pattern Informatics, Benioff strain, GNSS crustal deformation (displacement, strain rate, SSE detection), enhanced spatial (neighbor CFS/ETAS/mag, zone rate anomaly, CFS rank, spatial gradient), **cosmic ray** (27-day baseline deviation, trend), **geomagnetic spectral** (ULF power, polarization, fractal dim), **OLR anomaly**, **Earth rotation** (LOD rate, polar motion speed), **solar wind** (Bz, dynamic pressure, Dst), **GRACE gravity** anomaly rate, **SO2 column** anomaly, **soil moisture** anomaly, **tide gauge** residual, **ocean color** chlorophyll anomaly, **cloud fraction** anomaly, **nightlight** airglow anomaly, **InSAR** deformation rate. `get_active_feature_names()` auto-excludes groups with no data |
 | `evaluation.py` | ROC-AUC, threshold evaluation (precision/recall/gain/IGPE/Molchan), walk-forward CV splits, isotonic calibration (PAV), reliability diagram, permutation importance, Molchan area skill score |
 | `target_config.py` | Multi-target configuration: M5+/M5.5+/M6+ with per-target window, class weight, positive thresholds |
 | `csep_format.py` | CSEP XML forecast generation: probability → GR-based rate per cell/magnitude/time bin |
@@ -598,7 +609,7 @@ With only cosmic ray data available and 6 zero-filled features injected as noise
 
 Cosmic ray feature importance (small but positive): `cosmic_ray_rate` = 0.0062, `cosmic_ray_anomaly` = 0.0029.
 
-**Phase 9.1 fixes (4 bugs + dynamic feature selection)**:
+**Phase 9.1 fixes (4 bugs + dynamic feature selection + metadata fix)**:
 
 | Fix | Root Cause | Solution |
 |---|---|---|
@@ -606,6 +617,19 @@ Cosmic ray feature importance (small but positive): `cosmic_ray_rate` = 0.0062, 
 | Lightning SQL | Query references `mean_intensity_ka` column and `source` column — neither exists in the `lightning` table | Fixed to `mean_intensity`, removed `WHERE source != 'climatology'` |
 | Blitzortung HTML | Archive returns HTML login page with HTTP 200, parsed as JSON → crash | Content-Type check + body prefix detection (`<!DOCTYPE`, `<html>`) |
 | Zero-feature noise | Phase 9 features with no data default to 0.0, degrading model | `get_active_feature_names()` dynamically excludes feature groups whose data source returned empty |
+| `metadata` NameError | `train_final_model()` used `metadata` variable but it was never passed as parameter | Added `metadata` parameter + caller updated. Crash prevented feature importance, level-0 export, and stacking |
+
+**Phase 9.1 results**:
+
+| Metric | Phase 8.1 | Phase 9.1 | Notes |
+|---|---|---|---|
+| CV AUC (pooled) | 0.741 | **0.7316** | INTERMAGNET geomag data added but not yet improving |
+| Test AUC | 0.748 | **0.7452** | Stable on holdout set |
+| Active features | 47 | **53/56** | 3 excluded: lightning, animal, cosmic_ray_trend |
+
+INTERMAGNET: 36,000 hourly records (KAK/MMB/KNY × 500 days). Blitzortung: Sferics Bonn server unreachable (ECONNREFUSED), archive non-public. Lightning data currently unavailable from any free source.
+
+CV fold AUCs: 0.738, 0.689, 0.721, 0.743, 0.766, 0.756, 0.733, 0.742, 0.726
 
 ### Phase 10: Unconventional Data Sources (65 features)
 
@@ -640,11 +664,11 @@ The crust under stress doesn't just shake — it emits heat, changes gravity, al
 
 | Phase | Status | Goal |
 |---|---|---|
-| **Phase 9.1** | 🔄 Run in progress | Fix 4 bugs, recover AUC to 0.741+, enable INTERMAGNET geomagnetic features |
-| **Phase 10** | 📋 Committed locally | Add 11 unconventional data sources, 70 features, `EARTHDATA_TOKEN` configured |
-| **ConvLSTM** | 📋 Ready | Spatiotemporal neural network on Colab GPU (feature_matrix.json already exported) |
+| **Phase 10/10b** | 🔄 Run in progress | 11 new data sources, 70 features total. EARTHDATA_TOKEN for 6 NASA sources |
+| **ConvLSTM** | 📋 Ready | Spatiotemporal neural network on Colab GPU (feature_matrix.json exported) |
 | **Stacking v2** | 📋 Planned | Add LightGBM/XGBoost as diverse level-0 models to break information overlap |
-| **Blitzortung alternatives** | 📋 Planned | JMA LIDEN or WWLLN institutional access for lightning data |
+| **INTERMAGNET backfill** | 📋 Planned | Accumulate additional 500 days/run until full 15-year coverage (currently 1,500 days) |
+| **Lightning alternatives** | 📋 Planned | JMA LIDEN or WWLLN institutional access (Blitzortung/Sferics Bonn both dead) |
 
 ### Not yet implemented
 
