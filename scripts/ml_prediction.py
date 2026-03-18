@@ -164,6 +164,9 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
                    olr_data=None, earth_rotation_data=None,
                    solar_wind_data=None, gravity_data=None,
                    so2_data=None, soil_moisture_data=None,
+                   tide_gauge_data=None, ocean_color_data=None,
+                   cloud_fraction_data=None, nightlight_data=None,
+                   insar_data=None,
                    min_target_mag=None, window_days=None, step_days=None):
     """Generate feature matrix and labels.
 
@@ -216,8 +219,13 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
         gravity_data=gravity_data,
         so2_data=so2_data,
         soil_moisture_data=soil_moisture_data,
+        tide_gauge_data=tide_gauge_data,
+        ocean_color_data=ocean_color_data,
+        cloud_fraction_data=cloud_fraction_data,
+        nightlight_data=nightlight_data,
+        insar_data=insar_data,
     )
-    # Build index mask: which positions in the full 56-feature vector to keep
+    # Build index mask: which positions in the full feature vector to keep
     feature_mask = [i for i, name in enumerate(FEATURE_NAMES) if name in set(active_feature_names)]
     n_active = len(active_feature_names)
 
@@ -245,6 +253,11 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
         gravity_data=gravity_data,
         so2_data=so2_data,
         soil_moisture_data=soil_moisture_data,
+        tide_gauge_data=tide_gauge_data,
+        ocean_color_data=ocean_color_data,
+        cloud_fraction_data=cloud_fraction_data,
+        nightlight_data=nightlight_data,
+        insar_data=insar_data,
     )
 
     # Generate samples
@@ -1163,6 +1176,179 @@ async def load_phase10_soil_moisture(db_path):
         return {}
 
 
+async def load_phase10b_tide_gauge(db_path):
+    """Load tide gauge data with nearest-station residual for each date."""
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT DATE(observed_at), AVG(sea_level_mm) "
+                "FROM tide_gauge GROUP BY DATE(observed_at) ORDER BY DATE(observed_at)"
+            )
+        if not rows:
+            logger.info("  No tide gauge data available")
+            return {}
+
+        # Compute rolling stats
+        data = {}
+        values = [(r[0], r[1]) for r in rows if r[1] is not None]
+        for i, (date_str, val) in enumerate(values):
+            start_idx = max(0, i - 30)
+            window = [v for _, v in values[start_idx:i] if v is not None]
+            mean_30d = sum(window) / len(window) if window else val
+            std_30d = (sum((v - mean_30d) ** 2 for v in window) / max(len(window), 1)) ** 0.5 if len(window) > 1 else 1.0
+            data[date_str] = {
+                "residual": val - mean_30d,
+                "residual_mean_30d": 0.0,
+                "residual_std_30d": max(std_30d, 0.1),
+            }
+        logger.info("  Tide gauge data loaded: %d dates", len(data))
+        return data
+    except Exception as e:
+        logger.warning("  Tide gauge load failed (non-fatal): %s", e)
+        return {}
+
+
+async def load_phase10b_ocean_color(db_path):
+    """Load ocean color with rolling baseline."""
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT observed_at, cell_lat, cell_lon, chlor_a_mg_m3 "
+                "FROM ocean_color ORDER BY observed_at"
+            )
+        if not rows:
+            logger.info("  No ocean color data available")
+            return {}
+
+        from collections import defaultdict
+        cell_ts = defaultdict(list)
+        for r in rows:
+            cell_ts[(r[1], r[2])].append((r[0], r[3]))
+
+        data = {}
+        for (lat, lon), ts in cell_ts.items():
+            for i, (date_str, val) in enumerate(ts):
+                start_idx = max(0, i - 30)
+                window = [v for _, v in ts[start_idx:i] if v is not None]
+                mean_30d = sum(window) / len(window) if window else val
+                std_30d = (sum((v - mean_30d) ** 2 for v in window) / max(len(window), 1)) ** 0.5 if len(window) > 1 else 1.0
+                data[(date_str, lat, lon)] = {
+                    "chlor_a": val,
+                    "chlor_mean_30d": mean_30d,
+                    "chlor_std_30d": max(std_30d, 0.01),
+                }
+        logger.info("  Ocean color data loaded: %d cell-date records", len(data))
+        return data
+    except Exception as e:
+        logger.warning("  Ocean color load failed (non-fatal): %s", e)
+        return {}
+
+
+async def load_phase10b_cloud_fraction(db_path):
+    """Load cloud fraction with rolling baseline."""
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT observed_at, cell_lat, cell_lon, cloud_frac "
+                "FROM cloud_fraction ORDER BY observed_at"
+            )
+        if not rows:
+            logger.info("  No cloud fraction data available")
+            return {}
+
+        from collections import defaultdict
+        cell_ts = defaultdict(list)
+        for r in rows:
+            cell_ts[(r[1], r[2])].append((r[0], r[3]))
+
+        data = {}
+        for (lat, lon), ts in cell_ts.items():
+            for i, (date_str, val) in enumerate(ts):
+                start_idx = max(0, i - 30)
+                window = [v for _, v in ts[start_idx:i] if v is not None]
+                mean_30d = sum(window) / len(window) if window else val
+                std_30d = (sum((v - mean_30d) ** 2 for v in window) / max(len(window), 1)) ** 0.5 if len(window) > 1 else 1.0
+                data[(date_str, lat, lon)] = {
+                    "cloud_frac": val,
+                    "cloud_mean_30d": mean_30d,
+                    "cloud_std_30d": max(std_30d, 0.01),
+                }
+        logger.info("  Cloud fraction data loaded: %d cell-date records", len(data))
+        return data
+    except Exception as e:
+        logger.warning("  Cloud fraction load failed (non-fatal): %s", e)
+        return {}
+
+
+async def load_phase10b_nightlight(db_path):
+    """Load nighttime light with baseline."""
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT observed_at, cell_lat, cell_lon, radiance_nw_cm2_sr "
+                "FROM nightlight ORDER BY observed_at"
+            )
+        if not rows:
+            logger.info("  No nightlight data available")
+            return {}
+
+        from collections import defaultdict
+        cell_ts = defaultdict(list)
+        for r in rows:
+            cell_ts[(r[1], r[2])].append((r[0], r[3]))
+
+        data = {}
+        for (lat, lon), ts in cell_ts.items():
+            all_vals = [v for _, v in ts if v is not None]
+            mean_all = sum(all_vals) / len(all_vals) if all_vals else 0.0
+            std_all = (sum((v - mean_all) ** 2 for v in all_vals) / max(len(all_vals), 1)) ** 0.5 if len(all_vals) > 1 else 1.0
+            for date_str, val in ts:
+                data[(date_str, lat, lon)] = {
+                    "radiance": val,
+                    "radiance_mean_6m": mean_all,
+                    "radiance_std_6m": max(std_all, 0.01),
+                }
+        logger.info("  Nightlight data loaded: %d cell-date records", len(data))
+        return data
+    except Exception as e:
+        logger.warning("  Nightlight load failed (non-fatal): %s", e)
+        return {}
+
+
+async def load_phase10b_insar(db_path):
+    """Load InSAR deformation data."""
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT observed_at, cell_lat, cell_lon, los_velocity_mm_yr "
+                "FROM insar_deformation"
+            )
+        if not rows:
+            logger.info("  No InSAR data available")
+            return {}
+
+        # Compute per-cell mean velocity as baseline
+        from collections import defaultdict
+        cell_values = defaultdict(list)
+        for r in rows:
+            cell_values[(r[1], r[2])].append(r[3])
+
+        cell_baseline = {}
+        for k, vals in cell_values.items():
+            cell_baseline[k] = sum(vals) / len(vals) if vals else 0.0
+
+        data = {}
+        for r in rows:
+            key = (r[0], r[1], r[2])
+            baseline = cell_baseline.get((r[1], r[2]), 0.0)
+            data[key] = {"velocity_anomaly": (r[3] or 0.0) - baseline}
+        logger.info("  InSAR data loaded: %d cell-date records", len(data))
+        return data
+    except Exception as e:
+        logger.warning("  InSAR load failed (non-fatal): %s", e)
+        return {}
+
+
 def spatial_smooth_predictions(
     predictions: dict,
     active_cells: set,
@@ -1268,6 +1454,14 @@ async def run_ml_prediction():
     so2_data = await load_phase10_so2(DB_PATH)
     soil_moisture_data = await load_phase10_soil_moisture(DB_PATH)
 
+    # --- Phase 10b: Additional unconventional sources ---
+    logger.info("--- Loading Phase 10b data (tide, ocean color, cloud, nightlight, InSAR) ---")
+    tide_gauge_data = await load_phase10b_tide_gauge(DB_PATH)
+    ocean_color_data = await load_phase10b_ocean_color(DB_PATH)
+    cloud_fraction_data = await load_phase10b_cloud_fraction(DB_PATH)
+    nightlight_data = await load_phase10b_nightlight(DB_PATH)
+    insar_data = await load_phase10b_insar(DB_PATH)
+
     # Multi-target loop
     target_results = {}
     primary_metadata = None
@@ -1295,6 +1489,11 @@ async def run_ml_prediction():
             gravity_data=gravity_data,
             so2_data=so2_data,
             soil_moisture_data=soil_moisture_data,
+            tide_gauge_data=tide_gauge_data,
+            ocean_color_data=ocean_color_data,
+            cloud_fraction_data=cloud_fraction_data,
+            nightlight_data=nightlight_data,
+            insar_data=insar_data,
             min_target_mag=cfg["min_mag"],
             window_days=cfg["window_days"],
             step_days=cfg["step_days"],

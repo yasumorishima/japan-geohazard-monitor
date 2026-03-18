@@ -207,6 +207,41 @@ jobs:
         run: |
           python3 scripts/fetch_smap_moisture.py || echo "SMAP fetch failed (non-fatal)"
 
+      # --- Phase 10b: Additional unconventional sources ---
+
+      - name: Fetch UHSLC tide gauge data (no auth)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_tide_gauge.py || echo "Tide gauge fetch failed (non-fatal)"
+
+      - name: Fetch NASA ocean color chlorophyll-a (Earthdata auth optional)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+        run: |
+          python3 scripts/fetch_ocean_color.py || echo "Ocean color fetch failed (non-fatal)"
+
+      - name: Fetch MODIS cloud fraction (Earthdata auth optional)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+        run: |
+          python3 scripts/fetch_cloud_fraction.py || echo "Cloud fraction fetch failed (non-fatal)"
+
+      - name: Fetch VIIRS nighttime light/airglow
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+        run: |
+          python3 scripts/fetch_viirs_nighttime.py || echo "VIIRS fetch failed (non-fatal)"
+
+      - name: Fetch InSAR deformation (COMET LiCSAR)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_insar.py || echo "InSAR fetch failed (non-fatal)"
+
       - name: Run MODIS LST thermal anomaly analysis
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
