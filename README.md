@@ -130,11 +130,12 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 - **Analysis Phase 8** ✅ Structural overhaul: multi-target (M5+/M5.5+/M6+), CSEP benchmark (4 reference models + N/L/T-test), ensemble stacking (8-input physics×ML meta-learner), ConvLSTM spatiotemporal neural network (Colab GPU)
 - **Analysis Phase 9.0** ✅ Non-traditional precursor data sources: cosmic ray neutron monitors (NMDB ✅), animal behavior GPS (Movebank ❌ no Japan data), lightning (Blitzortung ❌ archive restricted), hourly geomagnetic (INTERMAGNET ❌ API param bugs), satellite EM (CSES ❌ auth required) — CV AUC **0.728** (regression from 0.741 due to zero-filled features acting as noise)
 - **Analysis Phase 9.1** 🔄 4-bug fix: INTERMAGNET API params (SamplesPerDay/dateFormat/publicationState), lightning SQL column name, Blitzortung HTML detection, **dynamic feature selection** (auto-exclude Phase 9 groups with no data) — recovering AUC + enabling geomagnetic features
+- **Analysis Phase 10** 📋 6 unconventional data sources beyond earthquake research: OLR thermal radiation (NOAA), Earth rotation LOD/polar motion (IERS), solar wind Bz/pressure/Dst (NASA OMNIWeb), GRACE gravity anomaly (JPL), atmospheric SO2 (OMI), soil moisture (SMAP) — 56 → 65 features, dynamic selection across all 10 optional groups
 - **Backfill** ✅ 2011-2026 M3+ earthquakes (29K), TEC (4M), Kp (44K), GCMT focal mechanisms
 - **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 360min timeout)
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
 
-## Analysis Results (2011-2026, 28K M3+ earthquakes, 4M TEC, 44K Kp, 31K GNSS-TEC, 345K ULF, 56 features)
+## Analysis Results (2011-2026, 28K M3+ earthquakes, 4M TEC, 44K Kp, 31K GNSS-TEC, 345K ULF, up to 65 features)
 
 ### Summary
 
@@ -606,6 +607,31 @@ Cosmic ray feature importance (small but positive): `cosmic_ray_rate` = 0.0062, 
 | Blitzortung HTML | Archive returns HTML login page with HTTP 200, parsed as JSON → crash | Content-Type check + body prefix detection (`<!DOCTYPE`, `<html>`) |
 | Zero-feature noise | Phase 9 features with no data default to 0.0, degrading model | `get_active_feature_names()` dynamically excludes feature groups whose data source returned empty |
 
+### Phase 10: Unconventional Data Sources (65 features)
+
+Phase 9 showed that non-traditional data can contribute (cosmic ray importance > 0), but most sources failed due to API issues. Phase 10 takes a different approach: **cast a wide net across physically independent domains** that are largely unexplored in earthquake ML. The hypothesis is that since nobody has successfully predicted earthquakes, conventional approaches are insufficient — signal may exist in overlooked data.
+
+| Data Source | Physical Mechanism (speculative) | Access | Features |
+|---|---|---|---|
+| **NOAA OLR daily** | Crustal stress → radon → aerosol → cloud → OLR anomaly (LAIC model, broad-scale) | THREDDS NCSS, **no auth** | olr_anomaly |
+| **IERS Earth Orientation** | LOD changes reflect angular momentum transfer → differential plate stress. **Novel in earthquake ML** | CSV download, **no auth** | lod_rate, polar_motion_speed |
+| **NASA OMNIWeb solar wind** | Solar wind → magnetospheric compression → induced telluric currents → fault stress modulation. Richer than Kp (raw hourly Bz, pressure, Dst) | FTP, **no auth** | sw_bz_min_24h, sw_pressure_max_24h, dst_min_24h |
+| **GRACE/GRACE-FO gravity** | Pre-seismic fluid migration → gravity change. Documented before 2011 Tohoku M9 (Matsuo & Heki 2011) | PO.DAAC OPeNDAP, Earthdata | gravity_anomaly_rate |
+| **OMI SO2 column** | Tectonic stress → volcanic conduit permeability → degassing rate change | GES DISC OPeNDAP, Earthdata | so2_column_anomaly |
+| **SMAP soil moisture** | Crustal strain → pore pressure → anomalous surface moisture near faults | AppEEARS API, Earthdata | soil_moisture_anomaly |
+
+No-auth sources (OLR, EOP, solar wind) are fetched immediately. Earthdata sources gracefully skip without `EARTHDATA_TOKEN` and are auto-excluded by dynamic feature selection.
+
+### Roadmap
+
+| Phase | Status | Goal |
+|---|---|---|
+| **Phase 9.1** | 🔄 Run in progress | Fix 4 bugs, recover AUC to 0.741+, enable INTERMAGNET geomagnetic features |
+| **Phase 10** | 📋 Committed locally | Add 6 unconventional data sources (OLR/EOP/solar wind/GRACE/SO2/SMAP), 65 features |
+| **ConvLSTM** | 📋 Ready | Spatiotemporal neural network on Colab GPU (feature_matrix.json already exported) |
+| **Stacking v2** | 📋 Planned | Add LightGBM/XGBoost as diverse level-0 models to break information overlap |
+| **Blitzortung alternatives** | 📋 Planned | JMA LIDEN or WWLLN institutional access for lightning data |
+
 ### Not yet implemented
 
 | Data | Blocker |
@@ -614,6 +640,9 @@ Cosmic ray feature importance (small but positive): `cosmic_ray_rate` = 0.0062, 
 | S-net / DONET seafloor pressure | NIED data access registration required |
 | Radon / He isotopes | AIST monitoring data has limited public access |
 | Hi-net waveforms | NIED registration + large data volume |
+| VLF radio propagation | Research data only (Tokai/Chiba University) |
+| Schumann resonance | No documented download API (HeartMath GCI live only) |
+| CTBTO infrasound | IMS data restricted (vDEC contract) |
 
 ## Data Attribution
 
@@ -629,6 +658,12 @@ Cosmic ray feature importance (small but positive): `cosmic_ray_rate` = 0.0062, 
 - Animal tracking: Movebank (movebank.org), Max Planck Institute of Animal Behavior
 - Lightning: Blitzortung.org community lightning network, University of Bonn sferics archive
 - Satellite EM: CSES-Limadou (ASI/SSDC), INTERMAGNET (BGS Edinburgh GIN)
+- Outgoing longwave radiation: NOAA Climate Data Record (CDR) OLR Daily
+- Earth orientation: IERS (International Earth Rotation and Reference Systems Service)
+- Solar wind: NASA OMNIWeb (SPDF/GSFC), ACE/DSCOVR/Wind spacecraft
+- Gravity: NASA/DLR GRACE/GRACE-FO, JPL Mascon RL06.3v04 (PO.DAAC)
+- Atmospheric SO2: NASA OMI OMSO2e Level 3 (GES DISC)
+- Soil moisture: NASA SMAP L3 (NSIDC) via AppEEARS
 
 ## Related
 
