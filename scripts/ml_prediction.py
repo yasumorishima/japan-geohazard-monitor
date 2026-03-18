@@ -167,6 +167,8 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
                    tide_gauge_data=None, ocean_color_data=None,
                    cloud_fraction_data=None, nightlight_data=None,
                    insar_data=None,
+                   goes_xray_data=None, goes_proton_data=None,
+                   tidal_stress_data=None, particle_flux_data=None,
                    min_target_mag=None, window_days=None, step_days=None):
     """Generate feature matrix and labels.
 
@@ -224,6 +226,10 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
         cloud_fraction_data=cloud_fraction_data,
         nightlight_data=nightlight_data,
         insar_data=insar_data,
+        goes_xray_data=goes_xray_data,
+        goes_proton_data=goes_proton_data,
+        tidal_stress_data=tidal_stress_data,
+        particle_flux_data=particle_flux_data,
     )
     # Build index mask: which positions in the full feature vector to keep
     feature_mask = [i for i, name in enumerate(FEATURE_NAMES) if name in set(active_feature_names)]
@@ -258,6 +264,10 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
         cloud_fraction_data=cloud_fraction_data,
         nightlight_data=nightlight_data,
         insar_data=insar_data,
+        goes_xray_data=goes_xray_data,
+        goes_proton_data=goes_proton_data,
+        tidal_stress_data=tidal_stress_data,
+        particle_flux_data=particle_flux_data,
     )
 
     # Generate samples
@@ -1349,6 +1359,120 @@ async def load_phase10b_insar(db_path):
         return {}
 
 
+async def load_phase11_goes_xray(db_path):
+    """Load GOES X-ray flux data (solar flare proxy).
+
+    Returns dict: {date_str: {xray_long_wm2, xray_short_wm2, flare_class}}
+    """
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT observed_at, xray_long_wm2, xray_short_wm2, flare_class "
+                "FROM goes_xray ORDER BY observed_at"
+            )
+        if not rows:
+            logger.info("  No GOES X-ray data available")
+            return {}
+
+        data = {}
+        for r in rows:
+            data[r[0]] = {
+                "xray_long_wm2": r[1] or 0.0,
+                "xray_short_wm2": r[2] or 0.0,
+                "flare_class": r[3] or "",
+            }
+        logger.info("  GOES X-ray data loaded: %d dates", len(data))
+        return data
+    except Exception as e:
+        logger.warning("  GOES X-ray load failed (non-fatal): %s", e)
+        return {}
+
+
+async def load_phase11_goes_proton(db_path):
+    """Load GOES proton flux data (SEP events).
+
+    Returns dict: {date_str: {proton_10mev_max, proton_60mev_max}}
+    """
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT observed_at, proton_10mev_max, proton_60mev_max "
+                "FROM goes_proton ORDER BY observed_at"
+            )
+        if not rows:
+            logger.info("  No GOES proton data available")
+            return {}
+
+        data = {}
+        for r in rows:
+            data[r[0]] = {
+                "proton_10mev_max": r[1] or 0.0,
+                "proton_60mev_max": r[2] or 0.0,
+            }
+        logger.info("  GOES proton data loaded: %d dates", len(data))
+        return data
+    except Exception as e:
+        logger.warning("  GOES proton load failed (non-fatal): %s", e)
+        return {}
+
+
+async def load_phase11_tidal_stress(db_path):
+    """Load tidal stress data (lunar+solar gravitational stress).
+
+    Returns dict: {date_str: {tidal_shear_pa, tidal_normal_pa, lunar_phase}}
+    """
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT observed_at, tidal_shear_pa, tidal_normal_pa, lunar_phase "
+                "FROM tidal_stress ORDER BY observed_at"
+            )
+        if not rows:
+            logger.info("  No tidal stress data available")
+            return {}
+
+        data = {}
+        for r in rows:
+            data[r[0]] = {
+                "tidal_shear_pa": r[1] or 0.0,
+                "tidal_normal_pa": r[2] or 0.0,
+                "lunar_phase": r[3] or 0.0,
+            }
+        logger.info("  Tidal stress data loaded: %d dates", len(data))
+        return data
+    except Exception as e:
+        logger.warning("  Tidal stress load failed (non-fatal): %s", e)
+        return {}
+
+
+async def load_phase11_particle_flux(db_path):
+    """Load particle precipitation data (GOES electron flux).
+
+    Returns dict: {date_str: {electron_2mev_max, electron_800kev_max}}
+    """
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT observed_at, electron_2mev_max, electron_800kev_max "
+                "FROM particle_flux ORDER BY observed_at"
+            )
+        if not rows:
+            logger.info("  No particle flux data available")
+            return {}
+
+        data = {}
+        for r in rows:
+            data[r[0]] = {
+                "electron_2mev_max": r[1] or 0.0,
+                "electron_800kev_max": r[2] or 0.0,
+            }
+        logger.info("  Particle flux data loaded: %d dates", len(data))
+        return data
+    except Exception as e:
+        logger.warning("  Particle flux load failed (non-fatal): %s", e)
+        return {}
+
+
 def spatial_smooth_predictions(
     predictions: dict,
     active_cells: set,
@@ -1462,6 +1586,13 @@ async def run_ml_prediction():
     nightlight_data = await load_phase10b_nightlight(DB_PATH)
     insar_data = await load_phase10b_insar(DB_PATH)
 
+    # --- Phase 11: Space/cosmic data sources ---
+    logger.info("--- Loading Phase 11 data (X-ray, proton, tidal stress, particle flux) ---")
+    goes_xray_data = await load_phase11_goes_xray(DB_PATH)
+    goes_proton_data = await load_phase11_goes_proton(DB_PATH)
+    tidal_stress_data = await load_phase11_tidal_stress(DB_PATH)
+    particle_flux_data = await load_phase11_particle_flux(DB_PATH)
+
     # Multi-target loop
     target_results = {}
     primary_metadata = None
@@ -1494,6 +1625,10 @@ async def run_ml_prediction():
             cloud_fraction_data=cloud_fraction_data,
             nightlight_data=nightlight_data,
             insar_data=insar_data,
+            goes_xray_data=goes_xray_data,
+            goes_proton_data=goes_proton_data,
+            tidal_stress_data=tidal_stress_data,
+            particle_flux_data=particle_flux_data,
             min_target_mag=cfg["min_mag"],
             window_days=cfg["window_days"],
             step_days=cfg["step_days"],

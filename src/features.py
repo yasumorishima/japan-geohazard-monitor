@@ -153,6 +153,15 @@ FEATURE_NAMES = [
     "nightlight_anomaly",   # radiance deviation from 6-month baseline (σ)
     # AB. InSAR deformation (Phase 10b) — Bürgmann et al. 2000
     "insar_deformation_rate", # LOS velocity anomaly per cell (mm/yr deviation)
+    # AC. Solar X-ray flux (Phase 11) — Sobolev 2020
+    "xray_flux_max_24h",    # peak GOES 1-8Å flux in 24h (W/m², log10 scale)
+    # AD. Solar proton flux (Phase 11) — SEP events
+    "proton_flux_max_24h",  # peak >=10 MeV proton flux in 24h (log10 pfu)
+    # AE. Tidal stress (Phase 11) — Cochran et al. 2004
+    "tidal_shear_stress",   # combined lunar+solar tidal shear at Japan (Pa)
+    "tidal_stress_rate",    # tidal shear rate of change (Pa/day)
+    # AF. Particle precipitation (Phase 11) — LAIC coupling
+    "particle_precip_rate", # GOES >=2 MeV electron flux (log10 pfu)
 ]
 
 N_FEATURES = len(FEATURE_NAMES)
@@ -179,6 +188,11 @@ OPTIONAL_FEATURE_GROUPS = {
     "cloud_fraction": ["cloud_fraction_anomaly"],
     "nightlight": ["nightlight_anomaly"],
     "insar": ["insar_deformation_rate"],
+    # Phase 11 — Space/cosmic
+    "goes_xray": ["xray_flux_max_24h"],
+    "goes_proton": ["proton_flux_max_24h"],
+    "tidal_stress": ["tidal_shear_stress", "tidal_stress_rate"],
+    "particle_flux": ["particle_precip_rate"],
 }
 
 # Backward compatibility alias
@@ -234,7 +248,11 @@ class FeatureExtractor:
                  ocean_color_data: dict = None,
                  cloud_fraction_data: dict = None,
                  nightlight_data: dict = None,
-                 insar_data: dict = None):
+                 insar_data: dict = None,
+                 goes_xray_data: dict = None,
+                 goes_proton_data: dict = None,
+                 tidal_stress_data: dict = None,
+                 particle_flux_data: dict = None):
         """
         Args:
             events: list of dicts with keys: time, mag, lat, lon, depth, t_days
@@ -276,6 +294,10 @@ class FeatureExtractor:
         self.cloud_fraction_data = cloud_fraction_data or {}
         self.nightlight_data = nightlight_data or {}
         self.insar_data = insar_data or {}
+        self.goes_xray_data = goes_xray_data or {}
+        self.goes_proton_data = goes_proton_data or {}
+        self.tidal_stress_data = tidal_stress_data or {}
+        self.particle_flux_data = particle_flux_data or {}
 
         # Pre-compute cell → zone mapping
         self.cell_zone = {}
@@ -912,6 +934,29 @@ class FeatureExtractor:
         isd = self.insar_data.get(isk, {})
         insar_deformation_rate = isd.get("velocity_anomaly", 0.0) or 0.0
 
+        # --- AC. Solar X-ray flux (Phase 11) ---
+        xr = self.goes_xray_data.get(date_str, {})
+        xray_raw = xr.get("xray_long_wm2", 0.0) or 0.0
+        xray_flux_max_24h = math.log10(max(xray_raw, 1e-9)) if xray_raw > 0 else -9.0
+
+        # --- AD. Solar proton flux (Phase 11) ---
+        pr = self.goes_proton_data.get(date_str, {})
+        proton_raw = pr.get("proton_10mev_max", 0.0) or 0.0
+        proton_flux_max_24h = math.log10(max(proton_raw, 0.01)) if proton_raw > 0 else -2.0
+
+        # --- AE. Tidal stress (Phase 11) ---
+        td = self.tidal_stress_data.get(date_str, {})
+        tidal_shear_stress = td.get("tidal_shear_pa", 0.0) or 0.0
+        prev_date = self._t_days_to_date(t_now_days - 1)
+        td_prev = self.tidal_stress_data.get(prev_date, {})
+        prev_shear = td_prev.get("tidal_shear_pa", 0.0) or 0.0
+        tidal_stress_rate = tidal_shear_stress - prev_shear
+
+        # --- AF. Particle precipitation (Phase 11) ---
+        pf = self.particle_flux_data.get(date_str, {})
+        elec_raw = pf.get("electron_2mev_max", 0.0) or 0.0
+        particle_precip_rate = math.log10(max(elec_raw, 0.1)) if elec_raw > 0 else -1.0
+
         # Assemble feature vector
         return [
             rate_7d,
@@ -1001,6 +1046,15 @@ class FeatureExtractor:
             nightlight_anomaly,
             # AB. InSAR (Phase 10b)
             insar_deformation_rate,
+            # AC. Solar X-ray (Phase 11)
+            xray_flux_max_24h,
+            # AD. Solar proton (Phase 11)
+            proton_flux_max_24h,
+            # AE. Tidal stress (Phase 11)
+            tidal_shear_stress,
+            tidal_stress_rate,
+            # AF. Particle precipitation (Phase 11)
+            particle_precip_rate,
         ]
 
     def extract_dict(self, cell_lat, cell_lon, t_now_days) -> dict:

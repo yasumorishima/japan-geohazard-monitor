@@ -242,6 +242,32 @@ jobs:
         run: |
           python3 scripts/fetch_insar.py || echo "InSAR fetch failed (non-fatal)"
 
+      # --- Phase 11: Space/cosmic data sources ---
+
+      - name: Fetch GOES X-ray flux (solar flares, no auth)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_goes_xray.py || echo "GOES X-ray fetch failed (non-fatal)"
+
+      - name: Fetch GOES proton flux (SEP events, no auth)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_goes_proton.py || echo "GOES proton fetch failed (non-fatal)"
+
+      - name: Compute tidal stress (lunar+solar, pure calculation)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_tidal_stress.py || echo "Tidal stress computation failed (non-fatal)"
+
+      - name: Fetch GOES electron flux (particle precipitation, no auth)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_poes_particles.py || echo "Particle flux fetch failed (non-fatal)"
+
       - name: Run MODIS LST thermal anomaly analysis
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
