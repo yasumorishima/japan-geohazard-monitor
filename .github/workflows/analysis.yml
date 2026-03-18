@@ -166,6 +166,47 @@ jobs:
         run: |
           python3 scripts/fetch_movebank.py || echo "Movebank fetch failed (non-fatal)"
 
+      # --- Phase 10: Unconventional data sources ---
+
+      - name: Fetch NOAA OLR daily (thermal anomaly, no auth)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_olr.py || echo "OLR fetch failed (non-fatal)"
+
+      - name: Fetch IERS Earth Orientation Parameters (no auth)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_iers_eop.py || echo "IERS EOP fetch failed (non-fatal)"
+
+      - name: Fetch NASA OMNIWeb solar wind hourly (no auth)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_solar_wind.py || echo "Solar wind fetch failed (non-fatal)"
+
+      - name: Fetch GRACE/GRACE-FO gravity anomaly (Earthdata auth optional)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+        run: |
+          python3 scripts/fetch_grace_gravity.py || echo "GRACE fetch failed (non-fatal)"
+
+      - name: Fetch OMI SO2 column data (Earthdata auth optional)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+        run: |
+          python3 scripts/fetch_omi_so2.py || echo "SO2 fetch failed (non-fatal)"
+
+      - name: Fetch SMAP soil moisture (Earthdata auth optional)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+        run: |
+          python3 scripts/fetch_smap_moisture.py || echo "SMAP fetch failed (non-fatal)"
+
       - name: Run MODIS LST thermal anomaly analysis
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db

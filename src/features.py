@@ -128,37 +128,63 @@ FEATURE_NAMES = [
     "geomag_fractal_dim",   # Higuchi fractal dimension of Z component
     # Q. Animal behavior (Phase 9) — Wikelski et al. 2020
     "animal_speed_anomaly", # GPS movement speed anomaly (σ from baseline)
+    # R. Outgoing Longwave Radiation (Phase 10) — Ouzounov et al. 2007
+    "olr_anomaly",          # OLR deviation from 30-day cell mean (σ)
+    # S. Earth rotation (Phase 10) — novel, untested in earthquake ML
+    "lod_rate",             # LOD day-to-day change rate (ms/day)
+    "polar_motion_speed",   # polar motion velocity (arcsec/day)
+    # T. Solar wind (Phase 10) — Sobolev & Zakrzhevskaya 2020
+    "sw_bz_min_24h",        # minimum IMF Bz in 24h (nT, negative = geoeffective)
+    "sw_pressure_max_24h",  # max dynamic pressure in 24h (nPa)
+    "dst_min_24h",          # minimum Dst in 24h (nT, negative = storm)
+    # U. GRACE gravity (Phase 10) — Matsuo & Heki 2011
+    "gravity_anomaly_rate", # LWE change rate per cell (cm/month)
+    # V. Atmospheric SO2 (Phase 10) — Carn et al. 2016
+    "so2_column_anomaly",   # SO2 column deviation from baseline (DU)
+    # W. Soil moisture (Phase 10) — Nissen et al. 2014
+    "soil_moisture_anomaly", # SM deviation from 30-day baseline (σ)
 ]
 
 N_FEATURES = len(FEATURE_NAMES)
 
-# Phase 9 feature groups — keyed by data source name
+# Optional feature groups — keyed by data source name.
 # Each maps to the feature names that require that data source to be present.
-PHASE9_FEATURE_GROUPS = {
+# Dynamic feature selection excludes groups whose data source returned empty.
+OPTIONAL_FEATURE_GROUPS = {
+    # Phase 9
     "cosmic_ray": ["cosmic_ray_rate", "cosmic_ray_anomaly", "cosmic_ray_trend_15d"],
     "lightning": ["lightning_count_7d", "lightning_anomaly"],
     "geomag_spectral": ["geomag_ulf_power", "geomag_polarization", "geomag_fractal_dim"],
     "animal": ["animal_speed_anomaly"],
+    # Phase 10
+    "olr": ["olr_anomaly"],
+    "earth_rotation": ["lod_rate", "polar_motion_speed"],
+    "solar_wind": ["sw_bz_min_24h", "sw_pressure_max_24h", "dst_min_24h"],
+    "gravity": ["gravity_anomaly_rate"],
+    "so2": ["so2_column_anomaly"],
+    "soil_moisture": ["soil_moisture_anomaly"],
 }
 
+# Backward compatibility alias
+PHASE9_FEATURE_GROUPS = OPTIONAL_FEATURE_GROUPS
 
-def get_active_feature_names(cosmic_ray_data=None, lightning_data=None,
-                              geomag_spectral_data=None, animal_data=None):
-    """Return feature names excluding Phase 9 groups with no data.
 
-    Instead of feeding zero-filled Phase 9 features that degrade the model,
+def get_active_feature_names(**source_data_kwargs):
+    """Return feature names excluding optional groups with no data.
+
+    Instead of feeding zero-filled features that degrade the model,
     dynamically exclude feature groups whose data source returned empty.
+
+    Pass each data source as a keyword argument matching its group name
+    (e.g., cosmic_ray_data=..., olr_data=..., solar_wind_data=...).
+    The '_data' suffix is stripped to match group names.
     """
     excluded = set()
-    source_data = {
-        "cosmic_ray": cosmic_ray_data,
-        "lightning": lightning_data,
-        "geomag_spectral": geomag_spectral_data,
-        "animal": animal_data,
-    }
-    for source_name, data in source_data.items():
-        if not data:  # None or empty dict
-            excluded.update(PHASE9_FEATURE_GROUPS[source_name])
+    for kwarg_name, data in source_data_kwargs.items():
+        # Strip '_data' suffix to get group name
+        group_name = kwarg_name.removesuffix("_data")
+        if group_name in OPTIONAL_FEATURE_GROUPS and not data:
+            excluded.update(OPTIONAL_FEATURE_GROUPS[group_name])
 
     if excluded:
         return [f for f in FEATURE_NAMES if f not in excluded]
@@ -181,7 +207,13 @@ class FeatureExtractor:
                  cosmic_ray_data: dict = None,
                  lightning_data: dict = None,
                  geomag_spectral_data: dict = None,
-                 animal_data: dict = None):
+                 animal_data: dict = None,
+                 olr_data: dict = None,
+                 earth_rotation_data: dict = None,
+                 solar_wind_data: dict = None,
+                 gravity_data: dict = None,
+                 so2_data: dict = None,
+                 soil_moisture_data: dict = None):
         """
         Args:
             events: list of dicts with keys: time, mag, lat, lon, depth, t_days
@@ -194,6 +226,12 @@ class FeatureExtractor:
             lightning_data: {(date_str, cell_lat, cell_lon): {stroke_count, ...}}
             geomag_spectral_data: {date_str: {ulf_power, polarization, fractal_dim}}
             animal_data: {(date_str, cell_lat, cell_lon): {speed_anomaly, ...}}
+            olr_data: {(date_str, cell_lat, cell_lon): {olr_wm2, olr_mean_30d, olr_std_30d}}
+            earth_rotation_data: {date_str: {lod_ms, x_arcsec, y_arcsec, prev_lod, prev_x, prev_y}}
+            solar_wind_data: {date_str: {bz_min_24h, pressure_max_24h, dst_min_24h}}
+            gravity_data: {(date_str, cell_lat, cell_lon): {lwe_cm, lwe_prev_cm}}
+            so2_data: {(date_str, cell_lat, cell_lon): {so2_du, so2_baseline}}
+            soil_moisture_data: {(date_str, cell_lat, cell_lon): {sm, sm_mean_30d, sm_std_30d}}
         """
         self.events = events
         self.fm_dict = fm_dict
@@ -206,6 +244,12 @@ class FeatureExtractor:
         self.lightning_data = lightning_data or {}
         self.geomag_spectral_data = geomag_spectral_data or {}
         self.animal_data = animal_data or {}
+        self.olr_data = olr_data or {}
+        self.earth_rotation_data = earth_rotation_data or {}
+        self.solar_wind_data = solar_wind_data or {}
+        self.gravity_data = gravity_data or {}
+        self.so2_data = so2_data or {}
+        self.soil_moisture_data = soil_moisture_data or {}
 
         # Pre-compute cell → zone mapping
         self.cell_zone = {}
@@ -759,6 +803,53 @@ class FeatureExtractor:
         ad = self.animal_data.get(ak, {})
         animal_speed_anomaly = ad.get("speed_anomaly", 0.0) or 0.0
 
+        # --- R. OLR (Phase 10) ---
+        olr_key = (date_str, cell_lat, cell_lon)
+        olr_d = self.olr_data.get(olr_key, {})
+        olr_val = olr_d.get("olr_wm2", 0.0) or 0.0
+        olr_mean = olr_d.get("olr_mean_30d", 0.0) or 0.0
+        olr_std = olr_d.get("olr_std_30d", 1.0) or 1.0
+        olr_anomaly = (olr_val - olr_mean) / max(olr_std, 0.1) if olr_val > 0 else 0.0
+
+        # --- S. Earth rotation (Phase 10) ---
+        er = self.earth_rotation_data.get(date_str, {})
+        lod_now = er.get("lod_ms", 0.0)
+        lod_prev = er.get("prev_lod", 0.0)
+        lod_rate = (lod_now - lod_prev) if (lod_now and lod_prev) else 0.0
+        x_now = er.get("x_arcsec", 0.0) or 0.0
+        y_now = er.get("y_arcsec", 0.0) or 0.0
+        x_prev = er.get("prev_x", 0.0) or 0.0
+        y_prev = er.get("prev_y", 0.0) or 0.0
+        polar_motion_speed = ((x_now - x_prev) ** 2 + (y_now - y_prev) ** 2) ** 0.5
+
+        # --- T. Solar wind (Phase 10) ---
+        sw = self.solar_wind_data.get(date_str, {})
+        sw_bz_min_24h = sw.get("bz_min_24h", 0.0) or 0.0
+        sw_pressure_max_24h = sw.get("pressure_max_24h", 0.0) or 0.0
+        dst_min_24h = sw.get("dst_min_24h", 0.0) or 0.0
+
+        # --- U. GRACE gravity (Phase 10) ---
+        gk = (date_str, cell_lat, cell_lon)
+        gd = self.gravity_data.get(gk, {})
+        lwe_now = gd.get("lwe_cm", 0.0) or 0.0
+        lwe_prev = gd.get("lwe_prev_cm", 0.0) or 0.0
+        gravity_anomaly_rate = lwe_now - lwe_prev  # cm/month
+
+        # --- V. SO2 (Phase 10) ---
+        so2k = (date_str, cell_lat, cell_lon)
+        so2d = self.so2_data.get(so2k, {})
+        so2_val = so2d.get("so2_du", 0.0) or 0.0
+        so2_baseline = so2d.get("so2_baseline", 0.0) or 0.0
+        so2_column_anomaly = so2_val - so2_baseline if so2_val > 0 else 0.0
+
+        # --- W. Soil moisture (Phase 10) ---
+        smk = (date_str, cell_lat, cell_lon)
+        smd = self.soil_moisture_data.get(smk, {})
+        sm_val = smd.get("sm", 0.0) or 0.0
+        sm_mean = smd.get("sm_mean_30d", 0.0) or 0.0
+        sm_std = smd.get("sm_std_30d", 1.0) or 1.0
+        soil_moisture_anomaly = (sm_val - sm_mean) / max(sm_std, 0.001) if sm_val > 0 else 0.0
+
         # Assemble feature vector
         return [
             rate_7d,
@@ -823,6 +914,21 @@ class FeatureExtractor:
             geomag_fractal_dim,
             # Q. Animal behavior (Phase 9)
             animal_speed_anomaly,
+            # R. OLR (Phase 10)
+            olr_anomaly,
+            # S. Earth rotation (Phase 10)
+            lod_rate,
+            polar_motion_speed,
+            # T. Solar wind (Phase 10)
+            sw_bz_min_24h,
+            sw_pressure_max_24h,
+            dst_min_24h,
+            # U. GRACE gravity (Phase 10)
+            gravity_anomaly_rate,
+            # V. SO2 (Phase 10)
+            so2_column_anomaly,
+            # W. Soil moisture (Phase 10)
+            soil_moisture_anomaly,
         ]
 
     def extract_dict(self, cell_lat, cell_lon, t_now_days) -> dict:

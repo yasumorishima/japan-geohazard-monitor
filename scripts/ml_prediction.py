@@ -161,6 +161,9 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
                    zone_etas=None, gnss_data=None,
                    cosmic_ray_data=None, lightning_data=None,
                    geomag_spectral_data=None, animal_data=None,
+                   olr_data=None, earth_rotation_data=None,
+                   solar_wind_data=None, gravity_data=None,
+                   so2_data=None, soil_moisture_data=None,
                    min_target_mag=None, window_days=None, step_days=None):
     """Generate feature matrix and labels.
 
@@ -201,12 +204,18 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
     logger.info("  Active 2° cells: %d (target M%.1f+, window %dd)",
                 len(active_cells), min_target_mag, window_days)
 
-    # Dynamic feature selection: exclude Phase 9 groups with no data
+    # Dynamic feature selection: exclude optional groups with no data
     active_feature_names = get_active_feature_names(
         cosmic_ray_data=cosmic_ray_data,
         lightning_data=lightning_data,
         geomag_spectral_data=geomag_spectral_data,
         animal_data=animal_data,
+        olr_data=olr_data,
+        earth_rotation_data=earth_rotation_data,
+        solar_wind_data=solar_wind_data,
+        gravity_data=gravity_data,
+        so2_data=so2_data,
+        soil_moisture_data=soil_moisture_data,
     )
     # Build index mask: which positions in the full 56-feature vector to keep
     feature_mask = [i for i, name in enumerate(FEATURE_NAMES) if name in set(active_feature_names)]
@@ -230,6 +239,12 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
         lightning_data=lightning_data,
         geomag_spectral_data=geomag_spectral_data,
         animal_data=animal_data,
+        olr_data=olr_data,
+        earth_rotation_data=earth_rotation_data,
+        solar_wind_data=solar_wind_data,
+        gravity_data=gravity_data,
+        so2_data=so2_data,
+        soil_moisture_data=soil_moisture_data,
     )
 
     # Generate samples
@@ -924,6 +939,230 @@ async def load_phase9_animal(db_path):
         return {}
 
 
+# ---------------------------------------------------------------------------
+# Phase 10 data loaders
+# ---------------------------------------------------------------------------
+
+async def load_phase10_olr(db_path):
+    """Load OLR data with 30-day rolling statistics for anomaly computation.
+
+    Returns dict: {(date_str, cell_lat, cell_lon): {olr_wm2, olr_mean_30d, olr_std_30d}}
+    """
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT observed_at, cell_lat, cell_lon, olr_wm2 FROM olr ORDER BY observed_at"
+            )
+        if not rows:
+            logger.info("  No OLR data available")
+            return {}
+
+        # Build per-cell time series for rolling stats
+        from collections import defaultdict
+        cell_ts = defaultdict(list)
+        for r in rows:
+            cell_ts[(r[1], r[2])].append((r[0], r[3]))
+
+        data = {}
+        for (lat, lon), ts in cell_ts.items():
+            for i, (date_str, olr) in enumerate(ts):
+                # 30-day rolling window
+                start_idx = max(0, i - 30)
+                window = [v for _, v in ts[start_idx:i] if v is not None]
+                mean_30d = sum(window) / len(window) if window else olr
+                std_30d = (sum((v - mean_30d) ** 2 for v in window) / max(len(window), 1)) ** 0.5 if len(window) > 1 else 1.0
+                data[(date_str, lat, lon)] = {
+                    "olr_wm2": olr,
+                    "olr_mean_30d": mean_30d,
+                    "olr_std_30d": max(std_30d, 0.1),
+                }
+        logger.info("  OLR data loaded: %d cell-date records", len(data))
+        return data
+    except Exception as e:
+        logger.warning("  OLR load failed (non-fatal): %s", e)
+        return {}
+
+
+async def load_phase10_earth_rotation(db_path):
+    """Load Earth Orientation Parameters with day-to-day differences.
+
+    Returns dict: {date_str: {lod_ms, x_arcsec, y_arcsec, prev_lod, prev_x, prev_y}}
+    """
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT observed_at, lod_ms, x_arcsec, y_arcsec "
+                "FROM earth_rotation ORDER BY observed_at"
+            )
+        if not rows:
+            logger.info("  No Earth rotation data available")
+            return {}
+
+        data = {}
+        prev = None
+        for r in rows:
+            date_str, lod, x, y = r[0], r[1], r[2], r[3]
+            entry = {
+                "lod_ms": lod or 0.0,
+                "x_arcsec": x or 0.0,
+                "y_arcsec": y or 0.0,
+                "prev_lod": prev[1] if prev else 0.0,
+                "prev_x": prev[2] if prev else 0.0,
+                "prev_y": prev[3] if prev else 0.0,
+            }
+            data[date_str] = entry
+            prev = r
+        logger.info("  Earth rotation data loaded: %d dates", len(data))
+        return data
+    except Exception as e:
+        logger.warning("  Earth rotation load failed (non-fatal): %s", e)
+        return {}
+
+
+async def load_phase10_solar_wind(db_path):
+    """Load solar wind data aggregated to daily min/max.
+
+    Returns dict: {date_str: {bz_min_24h, pressure_max_24h, dst_min_24h}}
+    """
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT DATE(observed_at), MIN(bz_gsm_nt), MAX(pressure_npa), MIN(dst_nt) "
+                "FROM solar_wind "
+                "WHERE bz_gsm_nt IS NOT NULL "
+                "GROUP BY DATE(observed_at) ORDER BY DATE(observed_at)"
+            )
+        if not rows:
+            logger.info("  No solar wind data available")
+            return {}
+
+        data = {}
+        for r in rows:
+            data[r[0]] = {
+                "bz_min_24h": r[1] or 0.0,
+                "pressure_max_24h": r[2] or 0.0,
+                "dst_min_24h": r[3] or 0.0,
+            }
+        logger.info("  Solar wind data loaded: %d dates", len(data))
+        return data
+    except Exception as e:
+        logger.warning("  Solar wind load failed (non-fatal): %s", e)
+        return {}
+
+
+async def load_phase10_gravity(db_path):
+    """Load GRACE gravity anomaly with month-to-month differences.
+
+    Returns dict: {(date_str, cell_lat, cell_lon): {lwe_cm, lwe_prev_cm}}
+    """
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT observed_at, cell_lat, cell_lon, lwe_thickness_cm "
+                "FROM gravity_mascon ORDER BY cell_lat, cell_lon, observed_at"
+            )
+        if not rows:
+            logger.info("  No GRACE gravity data available")
+            return {}
+
+        from collections import defaultdict
+        cell_ts = defaultdict(list)
+        for r in rows:
+            cell_ts[(r[1], r[2])].append((r[0], r[3]))
+
+        data = {}
+        for (lat, lon), ts in cell_ts.items():
+            prev_lwe = 0.0
+            for date_str, lwe in ts:
+                data[(date_str, lat, lon)] = {
+                    "lwe_cm": lwe,
+                    "lwe_prev_cm": prev_lwe,
+                }
+                prev_lwe = lwe
+        logger.info("  GRACE gravity data loaded: %d cell-date records", len(data))
+        return data
+    except Exception as e:
+        logger.warning("  GRACE gravity load failed (non-fatal): %s", e)
+        return {}
+
+
+async def load_phase10_so2(db_path):
+    """Load SO2 column data with seasonal baseline.
+
+    Returns dict: {(date_str, cell_lat, cell_lon): {so2_du, so2_baseline}}
+    """
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT observed_at, cell_lat, cell_lon, so2_du FROM so2_column"
+            )
+        if not rows:
+            logger.info("  No SO2 data available")
+            return {}
+
+        # Compute per-cell mean as baseline
+        from collections import defaultdict
+        cell_values = defaultdict(list)
+        for r in rows:
+            cell_values[(r[1], r[2])].append(r[3])
+
+        cell_baseline = {}
+        for k, vals in cell_values.items():
+            cell_baseline[k] = sum(vals) / len(vals)
+
+        data = {}
+        for r in rows:
+            key = (r[0], r[1], r[2])
+            data[key] = {
+                "so2_du": r[3],
+                "so2_baseline": cell_baseline.get((r[1], r[2]), 0.0),
+            }
+        logger.info("  SO2 data loaded: %d cell-date records", len(data))
+        return data
+    except Exception as e:
+        logger.warning("  SO2 load failed (non-fatal): %s", e)
+        return {}
+
+
+async def load_phase10_soil_moisture(db_path):
+    """Load soil moisture data with 30-day rolling statistics.
+
+    Returns dict: {(date_str, cell_lat, cell_lon): {sm, sm_mean_30d, sm_std_30d}}
+    """
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT observed_at, cell_lat, cell_lon, sm_m3m3 "
+                "FROM soil_moisture ORDER BY observed_at"
+            )
+        if not rows:
+            logger.info("  No soil moisture data available")
+            return {}
+
+        from collections import defaultdict
+        cell_ts = defaultdict(list)
+        for r in rows:
+            cell_ts[(r[1], r[2])].append((r[0], r[3]))
+
+        data = {}
+        for (lat, lon), ts in cell_ts.items():
+            for i, (date_str, sm) in enumerate(ts):
+                start_idx = max(0, i - 30)
+                window = [v for _, v in ts[start_idx:i] if v is not None]
+                mean_30d = sum(window) / len(window) if window else sm
+                std_30d = (sum((v - mean_30d) ** 2 for v in window) / max(len(window), 1)) ** 0.5 if len(window) > 1 else 1.0
+                data[(date_str, lat, lon)] = {
+                    "sm": sm,
+                    "sm_mean_30d": mean_30d,
+                    "sm_std_30d": max(std_30d, 0.001),
+                }
+        logger.info("  Soil moisture data loaded: %d cell-date records", len(data))
+        return data
+    except Exception as e:
+        logger.warning("  Soil moisture load failed (non-fatal): %s", e)
+        return {}
+
+
 def spatial_smooth_predictions(
     predictions: dict,
     active_cells: set,
@@ -1020,6 +1259,15 @@ async def run_ml_prediction():
     geomag_spectral_data = await load_phase9_geomag_spectral(DB_PATH)
     animal_data = await load_phase9_animal(DB_PATH)
 
+    # --- Phase 10: Load unconventional data sources ---
+    logger.info("--- Loading Phase 10 data (OLR, EOP, solar wind, gravity, SO2, soil moisture) ---")
+    olr_data = await load_phase10_olr(DB_PATH)
+    earth_rotation_data = await load_phase10_earth_rotation(DB_PATH)
+    solar_wind_data = await load_phase10_solar_wind(DB_PATH)
+    gravity_data = await load_phase10_gravity(DB_PATH)
+    so2_data = await load_phase10_so2(DB_PATH)
+    soil_moisture_data = await load_phase10_soil_moisture(DB_PATH)
+
     # Multi-target loop
     target_results = {}
     primary_metadata = None
@@ -1041,6 +1289,12 @@ async def run_ml_prediction():
             lightning_data=lightning_data,
             geomag_spectral_data=geomag_spectral_data,
             animal_data=animal_data,
+            olr_data=olr_data,
+            earth_rotation_data=earth_rotation_data,
+            solar_wind_data=solar_wind_data,
+            gravity_data=gravity_data,
+            so2_data=so2_data,
+            soil_moisture_data=soil_moisture_data,
             min_target_mag=cfg["min_mag"],
             window_days=cfg["window_days"],
             step_days=cfg["step_days"],
