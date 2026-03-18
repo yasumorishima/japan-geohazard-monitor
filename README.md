@@ -130,12 +130,14 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 - **Analysis Phase 8** ✅ Structural overhaul: multi-target (M5+/M5.5+/M6+), CSEP benchmark (4 reference models + N/L/T-test), ensemble stacking (8-input physics×ML meta-learner), ConvLSTM spatiotemporal neural network (Colab GPU)
 - **Analysis Phase 9.0** ✅ Non-traditional precursor data sources: cosmic ray neutron monitors (NMDB ✅), animal behavior GPS (Movebank ❌ no Japan data), lightning (Blitzortung ❌ archive restricted), hourly geomagnetic (INTERMAGNET ❌ API param bugs), satellite EM (CSES ❌ auth required) — CV AUC **0.728** (regression from 0.741 due to zero-filled features acting as noise)
 - **Analysis Phase 9.1** ✅ 4-bug fix + metadata NameError fix: INTERMAGNET API params → **36,000 records, 1,500 days** geomag data successfully fetched. Dynamic feature selection → 53/56 active features. **CV AUC 0.7316, Test AUC 0.7452**. Blitzortung/Sferics Bonn: server down (ECONNREFUSED), lightning data unavailable
-- **Analysis Phase 10/10b** 🔄 11 unconventional data sources ("Earth's screams"): OLR thermal radiation, Earth rotation LOD/polar motion, solar wind Bz/pressure/Dst, GRACE gravity anomaly, atmospheric SO2, soil moisture, **tide gauge sea level residual, ocean color chlorophyll-a, cloud fraction anomaly, nighttime airglow, InSAR ground deformation** — 56 → 70 features, dynamic selection across 15 optional groups. **Run in progress (2026-03-18)**
+- **Analysis Phase 10/10b** ✅ 11 unconventional data sources: OLR, Earth rotation, solar wind, GRACE gravity, SO2, soil moisture, tide gauge, ocean color, cloud fraction, nightlight, InSAR — 56 → 70 features. **CV AUC 0.7249** (regression: 12/70 features active, Solar Wind only new source, Earthdata auth broken, OLR/IERS/tide URLs dead)
+- **Analysis Phase 11** ✅ 4 space/cosmic data sources: GOES X-ray flux (solar flares), GOES proton flux (SEP events), tidal stress (lunar+solar, pure calculation), particle precipitation (Van Allen belt). 70 → 75 features
+- **Analysis Phase 12** 🔄 Data acquisition infrastructure overhaul + ML feature stability selection. OLR→PSL THREDDS, IERS→OBSPM, tide→UHSLC Fast Delivery, Earthdata→OAuth2 redirect handler. ML: 3-fold stability pre-filter removes noisy features before CV. **Run in progress (2026-03-18)**
 - **Backfill** ✅ 2011-2026 M3+ earthquakes (29K), TEC (4M), Kp (44K), GCMT focal mechanisms
 - **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 360min timeout)
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
 
-## Analysis Results (2011-2026, 28K M3+ earthquakes, 4M TEC, 44K Kp, 31K GNSS-TEC, 345K ULF, up to 70 features)
+## Analysis Results (2011-2026, 29K M3+ earthquakes, 4M TEC, 44K Kp, 31K GNSS-TEC, 1.3M ULF, up to 75 features)
 
 ### Summary
 
@@ -415,17 +417,22 @@ gh workflow run "Earthquake Correlation Analysis" \
 | `fetch_cses_satellite.py` | INTERMAGNET BGS GIN + CSES-Limadou | KAK/MMB/KNY 1-min geomag → hourly downsample (2011-2026, 7-day batch) + CSES satellite EM (2018+, auth required) |
 | `fetch_blitzortung.py` | Blitzortung.org + Univ. Bonn sferics | Lightning stroke counts aggregated to 2° grid cells (Japan region) |
 | `fetch_movebank.py` | Movebank (Max Planck) | Animal GPS tracking in Japan region: movement speed/dispersion anomalies |
-| `fetch_olr.py` | NOAA CDR THREDDS | Daily outgoing longwave radiation (2° grid, Japan region) |
-| `fetch_iers_eop.py` | IERS Rapid Service | Earth Orientation Parameters: LOD, polar motion (x/y) |
-| `fetch_solar_wind.py` | NASA OMNIWeb FTP | Hourly solar wind: Bz GSM, dynamic pressure, Dst |
-| `fetch_grace_gravity.py` | NASA PO.DAAC OPeNDAP | GRACE/GRACE-FO mascon gravity (3° resolution, Earthdata auth) |
-| `fetch_omi_so2.py` | NASA GES DISC OPeNDAP | OMI SO2 column density Level 3 (Earthdata auth) |
-| `fetch_smap_moisture.py` | NASA AppEEARS | SMAP L3 soil moisture 9km (Earthdata auth) |
-| `fetch_tide_gauge.py` | UHSLC (Univ. Hawaii) | Research-quality hourly sea level (8 Japan stations) |
-| `fetch_ocean_color.py` | NASA OB.DAAC OPeNDAP | MODIS Aqua chlorophyll-a Level 3 (Earthdata auth) |
-| `fetch_cloud_fraction.py` | NASA LAADS OPeNDAP | MODIS Terra MOD08_D3 cloud fraction (Earthdata auth) |
-| `fetch_viirs_nighttime.py` | EOG / NASA LAADS | VIIRS Day/Night Band radiance composites (Earthdata auth) |
+| `fetch_olr.py` | NOAA PSL THREDDS NCSS | Daily outgoing longwave radiation (2.5° grid, Japan region, no auth) |
+| `fetch_iers_eop.py` | OBSPM Paris Observatory / USNO | Earth Orientation Parameters: LOD, polar motion (eopc04 + finals2000A fallback) |
+| `fetch_solar_wind.py` | NASA OMNIWeb FTP | Hourly solar wind: Bz GSM, dynamic pressure, Dst (no auth) |
+| `fetch_grace_gravity.py` | NASA PO.DAAC / GFZ ISDC | GRACE/GRACE-FO mascon gravity (Earthdata auth via `earthdata_auth.py`) |
+| `fetch_omi_so2.py` | NASA GES DISC OPeNDAP | OMI SO2 column density Level 3 (Earthdata auth via `earthdata_auth.py`) |
+| `fetch_smap_moisture.py` | NASA AppEEARS | SMAP L3 soil moisture 9km (Earthdata auth via `earthdata_auth.py`) |
+| `fetch_tide_gauge.py` | UHSLC (Univ. Hawaii) | Fast Delivery hourly sea level (9 Japan stations, `.dat` format, no auth) |
+| `fetch_ocean_color.py` | NASA OB.DAAC OPeNDAP | MODIS Aqua chlorophyll-a Level 3 (Earthdata auth via `earthdata_auth.py`) |
+| `fetch_cloud_fraction.py` | NASA LAADS OPeNDAP | MODIS Terra MOD08_D3 cloud fraction (Earthdata auth via `earthdata_auth.py`) |
+| `fetch_viirs_nighttime.py` | EOG / NASA LAADS | VIIRS Day/Night Band radiance composites (Earthdata auth via `earthdata_auth.py`) |
 | `fetch_insar.py` | COMET LiCSAR | Sentinel-1 InSAR LOS velocity (Japan frames, no auth) |
+| `fetch_goes_xray.py` | NOAA SWPC | GOES 1-8Å X-ray flux (solar flare proxy, no auth) |
+| `fetch_goes_proton.py` | NOAA SWPC | GOES ≥10 MeV proton flux (SEP events, no auth) |
+| `fetch_tidal_stress.py` | Pure calculation | Lunar + solar tidal shear stress at Japan (no external data) |
+| `fetch_poes_particles.py` | NOAA SWPC | GOES ≥2 MeV electron flux (particle precipitation, no auth) |
+| `earthdata_auth.py` | — | Shared NASA Earthdata OAuth2 redirect handler (Bearer token + cookie flow) |
 
 ### Analysis scripts
 
@@ -444,19 +451,19 @@ gh workflow run "Earthquake Correlation Analysis" \
 | `gnss_tec_analysis.py` | 3b | High-resolution GNSS-TEC (0.5°) anomaly at epicenters: day/night split, isolation filter, forward alarm evaluation | — |
 | `pattern_informatics.py` | 4 | Pattern Informatics: seismicity pattern change detection on 0.5° grid, prospective test | Rundle (2003), Tiampo (2002) |
 | `prospective_analysis.py` | 4 | **Forward-looking prediction**: ETAS residual + cumulative CFS + foreshock alarms + ML alarm. Cell-based base rate, Molchan score, information gain. Train 2011-2018, test 2019-2026 | Molchan (1991), Zechar & Jordan (2008), Ogata (1998) |
-| `ml_prediction.py` | 8-10 | Multi-target ML (M5+/M5.5+/M6+): up to 70 features (dynamic selection across 15 groups) → HistGradientBoosting with class weighting, walk-forward CV, zone-specific ETAS MLE, 2-pass spatial smoothing, level-0 export for stacking. Phase 9: cosmic ray, geomag spectral. Phase 10/10b: OLR, Earth rotation, solar wind, GRACE gravity, SO2, soil moisture, tide gauge, ocean color, cloud fraction, nightlight, InSAR | van den Ende & Ampuero (2020), Matsuo & Heki (2011), Homola (2023) |
+| `ml_prediction.py` | 8-12 | Multi-target ML (M5+/M5.5+/M6+): up to 75 features (dynamic selection across 19 groups) → **feature stability selection** (3-fold preliminary CV, permutation importance, auto-exclude unstable features) → HistGradientBoosting with class weighting, walk-forward CV, zone-specific ETAS MLE, 2-pass spatial smoothing, level-0 export for stacking. Phase 9: cosmic ray, geomag spectral. Phase 10/10b: OLR, Earth rotation, solar wind, GRACE gravity, SO2, soil moisture, tide gauge, ocean color, cloud fraction, nightlight, InSAR. Phase 11: X-ray, proton, tidal stress, particle precipitation | van den Ende & Ampuero (2020), Matsuo & Heki (2011), Homola (2023) |
 | `export_csep.py` | 8 | CSEP-compatible XML/JSON forecast export from ML predictions | Schorlemmer et al. (2007) |
 | `csep_benchmark.py` | 8 | CSEP benchmark: Uniform/Smoothed/RI/ETAS reference models + N/L/T-test + Molchan diagram | Helmstetter (2007), Rhoades (2004) |
 | `stacking_analysis.py` | 8 | Ensemble stacking: 8-input level-0 (ML×3 + physics×5) → logistic/isotonic meta-learner | Wolpert (1992) |
 | `cosmic_ray_analysis.py` | 9 | Cosmic ray anomaly: 27-day solar rotation baseline deviation, 15-day trend (Homola lag), Forbush decrease detection, multi-station differential | Homola et al. (2023) |
-| `export_feature_matrix.py` | 8-10 | 4D tensor export (timesteps×H×W×70) for ConvLSTM GPU training | — |
+| `export_feature_matrix.py` | 8-12 | 4D tensor export (timesteps×H×W×75) for ConvLSTM GPU training | — |
 
 ### Shared modules (`src/`)
 
 | Module | Purpose |
 |---|---|
 | `physics.py` | Okada (1992) CFS, Wells & Coppersmith (1994) fault scaling, ETAS MLE (scipy L-BFGS-B), Dieterich (1994) rate-and-state, b-value (Aki-Utsu), tectonic zone classification, GNSS strain rate estimation, slow-slip transient detection |
-| `features.py` | **70 features** with dynamic selection across **15 optional groups**: rate dynamics (acceleration, trend), zone-specific ETAS residuals, magnitude statistics (deficit, b-value trend), clustering (foreshock escalation, inter-event CV), rate-and-state CFS, Pattern Informatics, Benioff strain, GNSS crustal deformation (displacement, strain rate, SSE detection), enhanced spatial (neighbor CFS/ETAS/mag, zone rate anomaly, CFS rank, spatial gradient), **cosmic ray** (27-day baseline deviation, trend), **geomagnetic spectral** (ULF power, polarization, fractal dim), **OLR anomaly**, **Earth rotation** (LOD rate, polar motion speed), **solar wind** (Bz, dynamic pressure, Dst), **GRACE gravity** anomaly rate, **SO2 column** anomaly, **soil moisture** anomaly, **tide gauge** residual, **ocean color** chlorophyll anomaly, **cloud fraction** anomaly, **nightlight** airglow anomaly, **InSAR** deformation rate. `get_active_feature_names()` auto-excludes groups with no data |
+| `features.py` | **75 features** with dynamic selection across **19 optional groups**: rate dynamics (acceleration, trend), zone-specific ETAS residuals, magnitude statistics (deficit, b-value trend), clustering (foreshock escalation, inter-event CV), rate-and-state CFS, Pattern Informatics, Benioff strain, GNSS crustal deformation (displacement, strain rate, SSE detection), enhanced spatial (neighbor CFS/ETAS/mag, zone rate anomaly, CFS rank, spatial gradient), **cosmic ray** (27-day baseline deviation, trend), **geomagnetic spectral** (ULF power, polarization, fractal dim), **OLR anomaly**, **Earth rotation** (LOD rate, polar motion speed), **solar wind** (Bz, dynamic pressure, Dst), **GRACE gravity** anomaly rate, **SO2 column** anomaly, **soil moisture** anomaly, **tide gauge** residual, **ocean color** chlorophyll anomaly, **cloud fraction** anomaly, **nightlight** airglow anomaly, **InSAR** deformation rate, **X-ray flux** (solar flare proxy), **proton flux** (SEP events), **tidal shear stress** + rate (lunar+solar), **particle precipitation** (Van Allen belt). `get_active_feature_names()` auto-excludes groups with no data |
 | `evaluation.py` | ROC-AUC, threshold evaluation (precision/recall/gain/IGPE/Molchan), walk-forward CV splits, isotonic calibration (PAV), reliability diagram, permutation importance, Molchan area skill score |
 | `target_config.py` | Multi-target configuration: M5+/M5.5+/M6+ with per-target window, class weight, positive thresholds |
 | `csep_format.py` | CSEP XML forecast generation: probability → GR-based rate per cell/magnitude/time bin |
@@ -660,11 +667,69 @@ The crust under stress doesn't just shake — it emits heat, changes gravity, al
 
 **Total: 70 features from 15 independent data domains.** Dynamic feature selection ensures only groups with actual data are used — no zero-filled noise.
 
+**Phase 10/10b results (Run 23251928585 — success 2026-03-18)**:
+
+| Metric | Phase 9.1 | Phase 10/10b | Notes |
+|---|---|---|---|
+| CV AUC (pooled) | **0.7316** | 0.7249 | **Regression**: noisy features from Solar Wind |
+| Test AUC | 0.7452 | 0.7426 | Slight drop |
+| Active features | 53/56 | **58/70** | 12 groups excluded (no data) |
+
+11 new data sources, but **only Solar Wind succeeded**. All others failed:
+
+| Source | Status | Root Cause |
+|---|---|---|
+| Solar Wind | ✅ | OMNI2 hourly data fetched |
+| OLR | ❌ | NOAA NCEI THREDDS filename pattern wrong (all years 404) |
+| IERS EOP | ❌ | datacenter.iers.org URL changed (404) |
+| Tide gauge | ❌ | UHSLC CSV path doesn't exist (404) |
+| GRACE/SO2/SMAP/Ocean/Cloud/Nightlight | ❌ | Earthdata Bearer token stripped on cross-origin redirect |
+| InSAR | ❌ | LiCSAR has no Japan frames |
+
+Stacking: Logistic AUC 0.7294, Isotonic 0.7157 — **both worse than best single model (0.7426)** due to correlated M5+/M5.5+/M6+ inputs.
+
+CV fold AUCs: 0.704, 0.688, 0.735, 0.734, 0.760, 0.751, 0.721, 0.746, 0.712
+
+### Phase 11: Space/Cosmic Data Sources (75 features)
+
+4 additional space/cosmic data sources — all using publicly available data with no authentication:
+
+| Data Source | Physical Mechanism | Access | Features |
+|---|---|---|---|
+| **GOES X-ray flux** | Solar flare → ionospheric disturbance → geomagnetically induced currents | NOAA SWPC JSON, **no auth** | xray_flux_max_24h |
+| **GOES proton flux** | Solar energetic particle events → atmospheric ionization → telluric current anomalies | NOAA SWPC JSON, **no auth** | proton_flux_max_24h |
+| **Tidal shear stress** | Lunar + solar tidal loading modulates fault stress (Cochran 2004). **Pure calculation, no external data** | Computed from ephemeris | tidal_shear_stress, tidal_stress_rate |
+| **Particle precipitation** | Van Allen belt electron precipitation → ionospheric conductivity change → GIC | NOAA SWPC JSON, **no auth** | particle_precip_rate |
+
+**Total: 75 features from 19 independent data domains.**
+
+### Phase 12: Data Acquisition Infrastructure Overhaul
+
+Phase 10/10b revealed that the data acquisition layer was fundamentally broken — not a configuration issue, but structural failures in URL patterns, authentication flow, and ML feature selection. Phase 12 addresses all three layers simultaneously.
+
+**Data source fixes (12 files changed)**:
+
+| Fix | Before | After |
+|---|---|---|
+| **OLR** | NOAA NCEI THREDDS per-year files (all 404) | NOAA PSL THREDDS NCSS single dataset (1974-present) |
+| **IERS EOP** | datacenter.iers.org (404) + USNO (stale) | OBSPM Paris Observatory eopc04 (primary, daily updated) |
+| **Tide gauge** | UHSLC CSV path (404) | UHSLC Fast Delivery `.dat` format |
+| **Earthdata auth** | `Bearer` token in `Authorization` header (stripped by aiohttp on cross-origin redirect) | Shared `earthdata_auth.py`: intercept 302 redirect, send Bearer to URS, follow back with cookies |
+
+**ML pipeline fix — feature stability selection**:
+
+The Phase 10/10b regression (0.7316 → 0.7249) demonstrated that HistGradientBoosting's L2 regularization alone cannot prevent noisy features from hurting performance. Added a 2-stage approach:
+
+1. **Stage 1: Stability pre-filter** — Quick 3-fold preliminary CV on 80% of data. For each fold, train lightweight model and compute permutation importance. Keep only features with importance > 0.001 in ≥ 2/3 folds. Base 35 features always retained.
+2. **Stage 2: Standard CV** — Walk-forward CV and final model use only stable features.
+
+This structurally prevents the "more features = worse AUC" problem that plagued Phase 9.0 and 10/10b.
+
 ### Roadmap
 
 | Phase | Status | Goal |
 |---|---|---|
-| **Phase 10/10b** | 🔄 Run in progress | 11 new data sources, 70 features total. EARTHDATA_TOKEN for 6 NASA sources |
+| **Phase 12** | 🔄 Run in progress | Data acquisition fixes + feature stability selection. Expected: recover to ≥0.7316 |
 | **ConvLSTM** | 📋 Ready | Spatiotemporal neural network on Colab GPU (feature_matrix.json exported) |
 | **Stacking v2** | 📋 Planned | Add LightGBM/XGBoost as diverse level-0 models to break information overlap |
 | **INTERMAGNET backfill** | 📋 Planned | Accumulate additional 500 days/run until full 15-year coverage (currently 1,500 days) |
