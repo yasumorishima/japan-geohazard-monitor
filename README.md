@@ -127,12 +127,13 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 - **Analysis Phase 5** ✅ ML integration: AdaBoost ensemble (11 features, pure Python) — AUC 0.73
 - **Analysis Phase 6** ✅ ML overhaul: HistGradientBoosting (35 temporal features), walk-forward CV (0.740 ± 0.016), ETAS MLE per zone, rate-and-state CFS, isotonic calibration — **AUC 0.746**
 - **Analysis Phase 7** ✅ Spatial correlation + GNSS + zone ETAS: 47 features (+6 GNSS crustal deformation, +6 enhanced spatial), zone-specific ETAS in feature extraction, 2-pass Gaussian spatial smoothing — **AUC 0.749 (CV 0.741)**
-- **Analysis Phase 8** 🔄 Structural overhaul: multi-target (M5+/M5.5+/M6+), CSEP benchmark (4 reference models + N/L/T-test), ensemble stacking (8-input physics×ML meta-learner), ConvLSTM spatiotemporal neural network (Colab GPU)
+- **Analysis Phase 8** ✅ Structural overhaul: multi-target (M5+/M5.5+/M6+), CSEP benchmark (4 reference models + N/L/T-test), ensemble stacking (8-input physics×ML meta-learner), ConvLSTM spatiotemporal neural network (Colab GPU)
+- **Analysis Phase 9** 🔄 Non-traditional precursor data sources: cosmic ray neutron monitors (NMDB), animal behavior GPS (Movebank), lightning/electromagnetic (Blitzortung), continuous hourly geomagnetic (INTERMAGNET) + satellite EM (CSES) — 47 → 56 features
 - **Backfill** ✅ 2011-2026 M3+ earthquakes (29K), TEC (4M), Kp (44K), GCMT focal mechanisms
-- **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 240min timeout)
+- **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 360min timeout)
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
 
-## Analysis Results (2011-2026, 28K M3+ earthquakes, 4M TEC, 44K Kp, 31K GNSS-TEC, 345K ULF)
+## Analysis Results (2011-2026, 28K M3+ earthquakes, 4M TEC, 44K Kp, 31K GNSS-TEC, 345K ULF, 56 features)
 
 ### Summary
 
@@ -408,6 +409,10 @@ gh workflow run "Earthquake Correlation Analysis" \
 | `fetch_gnss_tec.py` | Nagoya Univ. ISEE (AGRID2/GRID2 netCDF) | GNSS-TEC 0.5° grid, 1h temporal, 31K records (no auth, 2 hrs/day × 30 dates/run) |
 | `fetch_modis_lst.py` | ORNL DAAC TESViS API | MODIS LST 1km: M5.5+ land epicenters ±14d + random control (rate limited) |
 | `fetch_kakioka_ulf.py` | INTERMAGNET BGS GIN + WDC Kyoto | KAK/MMB/KNY 1-min geomagnetic: M6+ events ±7d (IAGA-2002 format) |
+| `fetch_nmdb_cosmicray.py` | NMDB (Neutron Monitor Database) | Daily cosmic ray count rates: IRKT/OULU/PSNM, 2011-present (no auth) |
+| `fetch_cses_satellite.py` | INTERMAGNET BGS GIN + CSES-Limadou | KAK/MMB/KNY continuous hourly geomag (2011-2026) + CSES satellite EM (2018+) |
+| `fetch_blitzortung.py` | Blitzortung.org + Univ. Bonn sferics | Lightning stroke counts aggregated to 2° grid cells (Japan region) |
+| `fetch_movebank.py` | Movebank (Max Planck) | Animal GPS tracking in Japan region: movement speed/dispersion anomalies |
 
 ### Analysis scripts
 
@@ -426,24 +431,25 @@ gh workflow run "Earthquake Correlation Analysis" \
 | `gnss_tec_analysis.py` | 3b | High-resolution GNSS-TEC (0.5°) anomaly at epicenters: day/night split, isolation filter, forward alarm evaluation | — |
 | `pattern_informatics.py` | 4 | Pattern Informatics: seismicity pattern change detection on 0.5° grid, prospective test | Rundle (2003), Tiampo (2002) |
 | `prospective_analysis.py` | 4 | **Forward-looking prediction**: ETAS residual + cumulative CFS + foreshock alarms + ML alarm. Cell-based base rate, Molchan score, information gain. Train 2011-2018, test 2019-2026 | Molchan (1991), Zechar & Jordan (2008), Ogata (1998) |
-| `ml_prediction.py` | 8 | Multi-target ML (M5+/M5.5+/M6+): 47 features → HistGradientBoosting with class weighting, walk-forward CV, zone-specific ETAS MLE, 2-pass spatial smoothing, level-0 export for stacking | van den Ende & Ampuero (2020), Kato et al. (2012) |
+| `ml_prediction.py` | 8-9 | Multi-target ML (M5+/M5.5+/M6+): 56 features → HistGradientBoosting with class weighting, walk-forward CV, zone-specific ETAS MLE, 2-pass spatial smoothing, level-0 export for stacking. Phase 9: cosmic ray, lightning, geomag spectral, animal behavior data loaders | van den Ende & Ampuero (2020), Kato et al. (2012), Homola (2023), Wikelski (2020) |
 | `export_csep.py` | 8 | CSEP-compatible XML/JSON forecast export from ML predictions | Schorlemmer et al. (2007) |
 | `csep_benchmark.py` | 8 | CSEP benchmark: Uniform/Smoothed/RI/ETAS reference models + N/L/T-test + Molchan diagram | Helmstetter (2007), Rhoades (2004) |
 | `stacking_analysis.py` | 8 | Ensemble stacking: 8-input level-0 (ML×3 + physics×5) → logistic/isotonic meta-learner | Wolpert (1992) |
-| `export_feature_matrix.py` | 8 | 4D tensor export (timesteps×H×W×47) for ConvLSTM GPU training | — |
+| `cosmic_ray_analysis.py` | 9 | Cosmic ray anomaly: 27-day solar rotation baseline deviation, 15-day trend (Homola lag), Forbush decrease detection, multi-station differential | Homola et al. (2023) |
+| `export_feature_matrix.py` | 8 | 4D tensor export (timesteps×H×W×56) for ConvLSTM GPU training | — |
 
 ### Shared modules (`src/`)
 
 | Module | Purpose |
 |---|---|
 | `physics.py` | Okada (1992) CFS, Wells & Coppersmith (1994) fault scaling, ETAS MLE (scipy L-BFGS-B), Dieterich (1994) rate-and-state, b-value (Aki-Utsu), tectonic zone classification, GNSS strain rate estimation, slow-slip transient detection |
-| `features.py` | 47 temporal features: rate dynamics (acceleration, trend), zone-specific ETAS residuals, magnitude statistics (deficit, b-value trend), clustering (foreshock escalation, inter-event CV), rate-and-state CFS, Pattern Informatics, Benioff strain, GNSS crustal deformation (displacement, strain rate, SSE detection), enhanced spatial (neighbor CFS/ETAS/mag, zone rate anomaly, CFS rank, spatial gradient) |
+| `features.py` | 56 temporal features: rate dynamics (acceleration, trend), zone-specific ETAS residuals, magnitude statistics (deficit, b-value trend), clustering (foreshock escalation, inter-event CV), rate-and-state CFS, Pattern Informatics, Benioff strain, GNSS crustal deformation (displacement, strain rate, SSE detection), enhanced spatial (neighbor CFS/ETAS/mag, zone rate anomaly, CFS rank, spatial gradient), **cosmic ray anomaly** (27-day baseline deviation, 15-day trend), **lightning** (7-day count, seasonal anomaly), **geomagnetic spectral** (ULF power, Sz/Sh polarization, fractal dimension), **animal behavior** (GPS speed anomaly) |
 | `evaluation.py` | ROC-AUC, threshold evaluation (precision/recall/gain/IGPE/Molchan), walk-forward CV splits, isotonic calibration (PAV), reliability diagram, permutation importance, Molchan area skill score |
 | `target_config.py` | Multi-target configuration: M5+/M5.5+/M6+ with per-target window, class weight, positive thresholds |
 | `csep_format.py` | CSEP XML forecast generation: probability → GR-based rate per cell/magnitude/time bin |
 | `stacking.py` | Ensemble stacking: level-0 registration, logistic/isotonic meta-learner, walk-forward stacking with temporal leak prevention |
 
-Results saved as JSON artifacts (90-day retention). Runs every Monday 12:00 JST or on demand (240-min timeout).
+Results saved as JSON artifacts (90-day retention). Runs every Monday 12:00 JST or on demand (360-min timeout).
 
 ### Phase 5 ML Results (AUC 0.73, AdaBoost baseline)
 
@@ -564,6 +570,18 @@ Phase 8.0 revealed critical bugs in stacking:
 - Walk-forward stacking with temporal leak prevention
 - Phase 8.1: exact key alignment between physics and ML predictions
 
+### Phase 9: Non-Traditional Precursor Data Sources (56 features)
+
+Phase 7-8 showed diminishing returns from seismological features (+0.003 per phase). Phase 9 introduces **physically independent data domains** — cosmic rays, animal behavior, lightning, and continuous geomagnetic monitoring — to break the AUC 0.74 ceiling through ensemble diversity.
+
+| Data Source | Physical Mechanism | Reference | Features Added |
+|---|---|---|---|
+| **NMDB cosmic rays** | Crustal stress → geomagnetic field change → cosmic ray deflection (15-day lag) | Homola et al. (2023) J. Atmos. Sol.-Terr. Phys. 247:106068 | cosmic_ray_rate, cosmic_ray_anomaly, cosmic_ray_trend_15d |
+| **INTERMAGNET hourly** | Continuous ULF monitoring enables spectral analysis: power, polarization, fractal dimension | Hattori (2004) NHESS; Hayakawa (2007) | geomag_ulf_power, geomag_polarization, geomag_fractal_dim |
+| **Blitzortung lightning** | Lithosphere-Atmosphere-Ionosphere Coupling: radon → ionization → atmospheric E-field → lightning anomaly | Pulinets & Ouzounov (2011) NHESS 11:3247 | lightning_count_7d, lightning_anomaly |
+| **Movebank animal GPS** | Animals detect pre-seismic EM emissions, radon, or infrasound 1-20 hours before M3.8+ | Wikelski et al. (2020) Ethology 126:931 | animal_speed_anomaly |
+| **CSES satellite** | Ionospheric EM anomalies detected by Zhangheng-1 satellite (2018+) | Zhima et al. (2020) Space Weather | (best effort, auth required) |
+
 ### Not yet implemented
 
 | Data | Blocker |
@@ -583,6 +601,10 @@ Phase 8.0 revealed critical bugs in stacking:
 - Ionosphere TEC: CODE (University of Bern), Nagoya University ISEE GNSS-TEC
 - Land Surface Temperature: NASA MODIS MOD11A1 via LAADS DAAC
 - GEONET: 国土地理院 (Geospatial Information Authority of Japan)
+- Cosmic rays: NMDB (Neutron Monitor Database, nmdb.eu), operated by IRKT/OULU/PSNM stations
+- Animal tracking: Movebank (movebank.org), Max Planck Institute of Animal Behavior
+- Lightning: Blitzortung.org community lightning network, University of Bonn sferics archive
+- Satellite EM: CSES-Limadou (ASI/SSDC), INTERMAGNET (BGS Edinburgh GIN)
 
 ## Related
 
