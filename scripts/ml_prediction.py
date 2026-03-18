@@ -547,7 +547,7 @@ def run_walk_forward_cv(samples, metadata, class_weight_ratio=1,
 # ---------------------------------------------------------------------------
 
 def train_final_model(samples, events_t0, class_weight_ratio=1,
-                       target_name="M5+"):
+                       target_name="M5+", metadata=None):
     """Train final model and evaluate on holdout test set.
 
     Phase 8: supports multi-target with class weighting.
@@ -666,7 +666,7 @@ def train_final_model(samples, events_t0, class_weight_ratio=1,
 
     # Feature importance (permutation-based)
     logger.info("--- Feature importance (permutation) ---")
-    active_fnames = metadata.get("features", FEATURE_NAMES)
+    active_fnames = metadata.get("features", FEATURE_NAMES) if metadata else FEATURE_NAMES
     importance = permutation_importance(predict_fn, test_X, test_y, active_fnames, n_repeats=3)
     for imp in importance[:15]:
         logger.info("  %s: importance=%.4f (±%.4f)", imp["feature"], imp["importance"], imp["std"])
@@ -1530,6 +1530,7 @@ async def run_ml_prediction():
             samples, t0,
             class_weight_ratio=cfg["class_weight_ratio"],
             target_name=target_name,
+            metadata=metadata,
         )
 
         target_results[target_name] = {
