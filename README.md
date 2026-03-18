@@ -130,12 +130,12 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 - **Analysis Phase 8** ✅ Structural overhaul: multi-target (M5+/M5.5+/M6+), CSEP benchmark (4 reference models + N/L/T-test), ensemble stacking (8-input physics×ML meta-learner), ConvLSTM spatiotemporal neural network (Colab GPU)
 - **Analysis Phase 9.0** ✅ Non-traditional precursor data sources: cosmic ray neutron monitors (NMDB ✅), animal behavior GPS (Movebank ❌ no Japan data), lightning (Blitzortung ❌ archive restricted), hourly geomagnetic (INTERMAGNET ❌ API param bugs), satellite EM (CSES ❌ auth required) — CV AUC **0.728** (regression from 0.741 due to zero-filled features acting as noise)
 - **Analysis Phase 9.1** 🔄 4-bug fix: INTERMAGNET API params (SamplesPerDay/dateFormat/publicationState), lightning SQL column name, Blitzortung HTML detection, **dynamic feature selection** (auto-exclude Phase 9 groups with no data) — recovering AUC + enabling geomagnetic features
-- **Analysis Phase 10** 📋 6 unconventional data sources beyond earthquake research: OLR thermal radiation (NOAA), Earth rotation LOD/polar motion (IERS), solar wind Bz/pressure/Dst (NASA OMNIWeb), GRACE gravity anomaly (JPL), atmospheric SO2 (OMI), soil moisture (SMAP) — 56 → 65 features, dynamic selection across all 10 optional groups
+- **Analysis Phase 10** 📋 11 unconventional data sources ("Earth's screams"): OLR thermal radiation, Earth rotation LOD/polar motion, solar wind Bz/pressure/Dst, GRACE gravity anomaly, atmospheric SO2, soil moisture, **tide gauge sea level residual, ocean color chlorophyll-a, cloud fraction anomaly, nighttime airglow, InSAR ground deformation** — 56 → 70 features, dynamic selection across 15 optional groups
 - **Backfill** ✅ 2011-2026 M3+ earthquakes (29K), TEC (4M), Kp (44K), GCMT focal mechanisms
 - **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 360min timeout)
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
 
-## Analysis Results (2011-2026, 28K M3+ earthquakes, 4M TEC, 44K Kp, 31K GNSS-TEC, 345K ULF, up to 65 features)
+## Analysis Results (2011-2026, 28K M3+ earthquakes, 4M TEC, 44K Kp, 31K GNSS-TEC, 345K ULF, up to 70 features)
 
 ### Summary
 
@@ -620,14 +620,28 @@ Phase 9 showed that non-traditional data can contribute (cosmic ray importance >
 | **OMI SO2 column** | Tectonic stress → volcanic conduit permeability → degassing rate change | GES DISC OPeNDAP, Earthdata | so2_column_anomaly |
 | **SMAP soil moisture** | Crustal strain → pore pressure → anomalous surface moisture near faults | AppEEARS API, Earthdata | soil_moisture_anomaly |
 
-No-auth sources (OLR, EOP, solar wind) are fetched immediately. Earthdata sources gracefully skip without `EARTHDATA_TOKEN` and are auto-excluded by dynamic feature selection.
+No-auth sources (OLR, EOP, solar wind, tide gauge, InSAR) are fetched immediately. Earthdata sources use `EARTHDATA_TOKEN` secret (configured) and are auto-excluded by dynamic feature selection if unavailable.
+
+**Phase 10b: "Earth's screams" — listening to every channel**
+
+The crust under stress doesn't just shake — it emits heat, changes gravity, alters ocean chemistry, modifies cloud patterns, and shifts the Earth's rotation. Phase 10b adds 5 additional channels:
+
+| Data Source | Physical Mechanism | Access | Features |
+|---|---|---|---|
+| **UHSLC tide gauge** | Slow slip → seafloor displacement → coastal sea level anomaly | UHSLC CSV, **no auth** | tide_residual_anomaly |
+| **MODIS ocean color** | Submarine hydrothermal/volcanic activity → nutrient upwelling → chlorophyll change | OB.DAAC OPeNDAP, Earthdata | ocean_color_anomaly |
+| **MODIS cloud fraction** | Radon → ionization → condensation nuclei → linear cloud formation along faults (LAIC) | LAADS OPeNDAP, Earthdata | cloud_fraction_anomaly |
+| **VIIRS nighttime light** | Acoustic-gravity waves from pre-seismic ground motion → airglow modulation at 90km | EOG composites / LAADS, Earthdata | nightlight_anomaly |
+| **Sentinel-1 InSAR** | Pre-seismic strain accumulation → mm-scale ground deformation (continuous spatial coverage vs GEONET point measurements) | COMET LiCSAR, **no auth** | insar_deformation_rate |
+
+**Total: 70 features from 15 independent data domains.** Dynamic feature selection ensures only groups with actual data are used — no zero-filled noise.
 
 ### Roadmap
 
 | Phase | Status | Goal |
 |---|---|---|
 | **Phase 9.1** | 🔄 Run in progress | Fix 4 bugs, recover AUC to 0.741+, enable INTERMAGNET geomagnetic features |
-| **Phase 10** | 📋 Committed locally | Add 6 unconventional data sources (OLR/EOP/solar wind/GRACE/SO2/SMAP), 65 features |
+| **Phase 10** | 📋 Committed locally | Add 11 unconventional data sources, 70 features, `EARTHDATA_TOKEN` configured |
 | **ConvLSTM** | 📋 Ready | Spatiotemporal neural network on Colab GPU (feature_matrix.json already exported) |
 | **Stacking v2** | 📋 Planned | Add LightGBM/XGBoost as diverse level-0 models to break information overlap |
 | **Blitzortung alternatives** | 📋 Planned | JMA LIDEN or WWLLN institutional access for lightning data |
@@ -664,6 +678,11 @@ No-auth sources (OLR, EOP, solar wind) are fetched immediately. Earthdata source
 - Gravity: NASA/DLR GRACE/GRACE-FO, JPL Mascon RL06.3v04 (PO.DAAC)
 - Atmospheric SO2: NASA OMI OMSO2e Level 3 (GES DISC)
 - Soil moisture: NASA SMAP L3 (NSIDC) via AppEEARS
+- Tide gauge: University of Hawaii Sea Level Center (UHSLC) Research Quality
+- Ocean color: NASA MODIS Aqua Level 3 chlorophyll-a (OB.DAAC)
+- Cloud fraction: NASA MODIS Terra MOD08_D3 (LAADS DAAC)
+- Nighttime light: VIIRS Day/Night Band (EOG, Colorado School of Mines / LAADS DAAC)
+- InSAR: ESA Sentinel-1 via COMET LiCSAR (NERC/JASMIN)
 
 ## Related
 
