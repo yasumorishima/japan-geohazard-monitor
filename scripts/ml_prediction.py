@@ -36,6 +36,8 @@ from config import DB_PATH
 from features import (
     FEATURE_NAMES,
     N_FEATURES,
+    PHASE9_FEATURE_GROUPS,
+    get_active_feature_names,
     FeatureExtractor,
     cell_key,
     generate_label,
@@ -162,6 +164,9 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
                    min_target_mag=None, window_days=None, step_days=None):
     """Generate feature matrix and labels.
 
+    Dynamically excludes Phase 9 feature groups whose data source is empty,
+    preventing zero-filled features from degrading model performance.
+
     Args:
         min_target_mag: minimum magnitude for target events (default: MIN_TARGET_MAG)
         window_days: prediction window in days (default: PREDICTION_WINDOW_DAYS)
@@ -170,7 +175,7 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
     Returns:
         samples: list of (cell_lat, cell_lon, t_days, features, label)
         active_cells: set of (lat, lon)
-        metadata: dict
+        metadata: dict (includes active_feature_names and feature_mask)
     """
     if min_target_mag is None:
         min_target_mag = MIN_TARGET_MAG
@@ -196,6 +201,26 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
     logger.info("  Active 2° cells: %d (target M%.1f+, window %dd)",
                 len(active_cells), min_target_mag, window_days)
 
+    # Dynamic feature selection: exclude Phase 9 groups with no data
+    active_feature_names = get_active_feature_names(
+        cosmic_ray_data=cosmic_ray_data,
+        lightning_data=lightning_data,
+        geomag_spectral_data=geomag_spectral_data,
+        animal_data=animal_data,
+    )
+    # Build index mask: which positions in the full 56-feature vector to keep
+    feature_mask = [i for i, name in enumerate(FEATURE_NAMES) if name in set(active_feature_names)]
+    n_active = len(active_feature_names)
+
+    excluded_groups = []
+    for source, feats in PHASE9_FEATURE_GROUPS.items():
+        if feats[0] not in set(active_feature_names):
+            excluded_groups.append(source)
+    if excluded_groups:
+        logger.info("  Phase 9 data sources excluded (no data): %s", ", ".join(excluded_groups))
+    logger.info("  Active features: %d / %d (excluded %d zero-filled Phase 9 features)",
+                n_active, N_FEATURES, N_FEATURES - n_active)
+
     # Feature extractor with zone-specific ETAS, GNSS, and Phase 9 data
     extractor = FeatureExtractor(
         events, fm_dict, t0, etas_params,
@@ -218,7 +243,9 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
 
     while day <= end_day:
         for clat, clon in active_cells:
-            features = extractor.extract(clat, clon, day)
+            full_features = extractor.extract(clat, clon, day)
+            # Filter to active features only
+            features = [full_features[i] for i in feature_mask]
             label = generate_label(clat, clon, day, target_by_cell, window_days)
             samples.append((clat, clon, day, features, label))
             n_total += 1
@@ -238,8 +265,10 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
         "total_samples": len(samples),
         "total_positives": n_pos,
         "positive_rate": round(n_pos / max(len(samples), 1), 5),
-        "features": FEATURE_NAMES,
-        "n_features": N_FEATURES,
+        "features": active_feature_names,
+        "n_features": n_active,
+        "feature_mask": feature_mask,
+        "excluded_phase9_groups": excluded_groups,
         "prediction_window_days": window_days,
         "min_target_mag": min_target_mag,
         "cell_size_deg": CELL_SIZE_DEG,
@@ -609,12 +638,13 @@ def train_final_model(samples, events_t0, class_weight_ratio=1,
 
     # Feature importance (permutation-based)
     logger.info("--- Feature importance (permutation) ---")
-    importance = permutation_importance(predict_fn, test_X, test_y, FEATURE_NAMES, n_repeats=3)
+    active_fnames = metadata.get("features", FEATURE_NAMES)
+    importance = permutation_importance(predict_fn, test_X, test_y, active_fnames, n_repeats=3)
     for imp in importance[:15]:
         logger.info("  %s: importance=%.4f (±%.4f)", imp["feature"], imp["importance"], imp["std"])
 
     # Single-feature AUC for comparison
-    sf_auc = single_feature_auc_ranking(test_X, test_y, FEATURE_NAMES)
+    sf_auc = single_feature_auc_ranking(test_X, test_y, active_fnames)
     logger.info("--- Single-feature AUC ranking ---")
     for sf in sf_auc[:15]:
         logger.info("  %s: AUC=%.4f (%s)", sf["feature"], sf["auc"], sf["direction"])
@@ -809,8 +839,7 @@ async def load_phase9_lightning(db_path):
         async with aiosqlite.connect(db_path) as db:
             rows = await db.execute_fetchall(
                 "SELECT observed_at, cell_lat, cell_lon, stroke_count, "
-                "mean_intensity_ka FROM lightning "
-                "WHERE source != 'climatology'"
+                "mean_intensity FROM lightning"
             )
         if not rows:
             logger.info("  No lightning data available")
@@ -948,7 +977,7 @@ async def run_ml_prediction():
     """Full ML prediction pipeline (Phase 8: multi-target)."""
     logger.info("=== ML Integrated Earthquake Prediction (Phase 8) ===")
     logger.info("Targets: %s", ", ".join(TARGET_CONFIGS.keys()))
-    logger.info("Features: %d temporal features", N_FEATURES)
+    logger.info("Features: %d total defined (%d base + %d Phase 9)", N_FEATURES, 47, 9)
 
     # Load data
     events, fm_dict, t0 = await load_events(DB_PATH)
@@ -1003,7 +1032,7 @@ async def run_ml_prediction():
         logger.info("=" * 60)
 
         # Build dataset for this target
-        logger.info("--- Building feature dataset (%d features) ---", N_FEATURES)
+        logger.info("--- Building feature dataset ---")
         samples, active_cells, metadata = build_dataset(
             events, fm_dict, t0, global_etas,
             zone_etas=zone_etas,

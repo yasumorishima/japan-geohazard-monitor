@@ -183,12 +183,29 @@ async def fetch_blitzortung_archive_month(
         try:
             async with session.get(url, timeout=TIMEOUT) as resp:
                 if resp.status == 200:
+                    content_type = resp.headers.get("Content-Type", "")
+                    # Blitzortung may return HTML login/block page with 200
+                    if "html" in content_type.lower():
+                        logger.warning(
+                            "Blitzortung archive returned HTML (access restricted) "
+                            "for %04d-%02d", year, month,
+                        )
+                        return []
+
                     raw = await resp.read()
                     try:
                         text = gzip.decompress(raw).decode("utf-8")
                     except (gzip.BadGzipFile, OSError):
                         # Not gzipped, try raw
                         text = raw.decode("utf-8")
+
+                    # Detect HTML even if Content-Type was wrong
+                    if text.lstrip().startswith(("<!DOCTYPE", "<html", "<HTML")):
+                        logger.warning(
+                            "Blitzortung archive returned HTML body "
+                            "for %04d-%02d (access restricted)", year, month,
+                        )
+                        return []
 
                     data = json.loads(text)
                     if isinstance(data, list):
@@ -468,8 +485,10 @@ async def main():
             logger.info(
                 "Trying Sferics Bonn for %d remaining dates", len(remaining_dates)
             )
-            # Limit to 200 days per run
-            bonn_batch = remaining_dates[:200]
+            # If Blitzortung archive failed entirely, increase Sferics Bonn batch
+            blitz_fetched = source_stats.get("blitzortung_archive", 0)
+            bonn_limit = 500 if blitz_fetched == 0 else 200
+            bonn_batch = remaining_dates[:bonn_limit]
 
             for i, date in enumerate(bonn_batch):
                 strokes = await fetch_sferics_bonn_day(session, date)

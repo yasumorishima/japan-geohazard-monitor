@@ -132,6 +132,38 @@ FEATURE_NAMES = [
 
 N_FEATURES = len(FEATURE_NAMES)
 
+# Phase 9 feature groups — keyed by data source name
+# Each maps to the feature names that require that data source to be present.
+PHASE9_FEATURE_GROUPS = {
+    "cosmic_ray": ["cosmic_ray_rate", "cosmic_ray_anomaly", "cosmic_ray_trend_15d"],
+    "lightning": ["lightning_count_7d", "lightning_anomaly"],
+    "geomag_spectral": ["geomag_ulf_power", "geomag_polarization", "geomag_fractal_dim"],
+    "animal": ["animal_speed_anomaly"],
+}
+
+
+def get_active_feature_names(cosmic_ray_data=None, lightning_data=None,
+                              geomag_spectral_data=None, animal_data=None):
+    """Return feature names excluding Phase 9 groups with no data.
+
+    Instead of feeding zero-filled Phase 9 features that degrade the model,
+    dynamically exclude feature groups whose data source returned empty.
+    """
+    excluded = set()
+    source_data = {
+        "cosmic_ray": cosmic_ray_data,
+        "lightning": lightning_data,
+        "geomag_spectral": geomag_spectral_data,
+        "animal": animal_data,
+    }
+    for source_name, data in source_data.items():
+        if not data:  # None or empty dict
+            excluded.update(PHASE9_FEATURE_GROUPS[source_name])
+
+    if excluded:
+        return [f for f in FEATURE_NAMES if f not in excluded]
+    return list(FEATURE_NAMES)
+
 
 class FeatureExtractor:
     """Extract temporal features for (cell, time) pairs.

@@ -128,14 +128,17 @@ async def init_satellite_tables():
         await db.commit()
 
 
-def parse_iaga2002_hourly(text: str, station: str) -> list[tuple]:
-    """Parse IAGA-2002 format hourly magnetic data.
+def parse_iaga2002_minute(text: str, station: str) -> list[tuple]:
+    """Parse IAGA-2002 format minute magnetic data and downsample to hourly.
 
-    Returns list of (station, observed_at, H, D, Z, F) tuples.
-    Hourly data has 24 rows per day (SamplesPerDay=24).
-    Missing values (99999) are stored as None.
+    BGS GIN returns 1440 rows/day (1-minute cadence). We parse all minute rows,
+    then average every 60 values to produce 24 hourly rows per day.
+
+    Returns list of (station, observed_at, H, D, Z, F) tuples at hourly cadence.
+    Missing values (99999/88888) are excluded from averaging.
     """
-    rows = []
+    # First pass: collect all minute-level rows
+    minute_rows = []
     in_data = False
     for line in text.split("\n"):
         if line.startswith("DATE"):
@@ -149,37 +152,74 @@ def parse_iaga2002_hourly(text: str, station: str) -> list[tuple]:
         try:
             date_str = parts[0]
             time_str = parts[1]
-            observed_at = f"{date_str}T{time_str[:8]}"
 
             h = float(parts[3])
             d = float(parts[4])
             z = float(parts[5])
-            f = float(parts[6])
+            f_val = float(parts[6])
 
-            # 99999 or 88888 = missing
+            # 99999 or 88888 = missing → None
             h = None if abs(h) > 90000 else h
             d = None if abs(d) > 90000 else d
             z = None if abs(z) > 90000 else z
-            f = None if abs(f) > 90000 else f
+            f_val = None if abs(f_val) > 90000 else f_val
 
-            rows.append((station, observed_at, h, d, z, f))
+            # Extract hour for grouping
+            hour = int(time_str[:2])
+            minute_rows.append((date_str, hour, h, d, z, f_val))
         except (ValueError, IndexError):
             continue
+
+    if not minute_rows:
+        return []
+
+    # Second pass: average per hour
+    from collections import defaultdict
+    hourly_buckets = defaultdict(lambda: {"h": [], "d": [], "z": [], "f": []})
+    for date_str, hour, h, d, z, f_val in minute_rows:
+        key = (date_str, hour)
+        if h is not None:
+            hourly_buckets[key]["h"].append(h)
+        if d is not None:
+            hourly_buckets[key]["d"].append(d)
+        if z is not None:
+            hourly_buckets[key]["z"].append(z)
+        if f_val is not None:
+            hourly_buckets[key]["f"].append(f_val)
+
+    rows = []
+    for (date_str, hour), vals in sorted(hourly_buckets.items()):
+        observed_at = f"{date_str}T{hour:02d}:00:00"
+        avg_h = sum(vals["h"]) / len(vals["h"]) if vals["h"] else None
+        avg_d = sum(vals["d"]) / len(vals["d"]) if vals["d"] else None
+        avg_z = sum(vals["z"]) / len(vals["z"]) if vals["z"] else None
+        avg_f = sum(vals["f"]) / len(vals["f"]) if vals["f"] else None
+        rows.append((station, observed_at, avg_h, avg_d, avg_z, avg_f))
+
     return rows
 
 
 async def fetch_intermagnet_hourly_day(session: aiohttp.ClientSession,
-                                        station: str, date: datetime) -> list[tuple]:
-    """Fetch hourly data from INTERMAGNET BGS GIN API.
+                                        station: str, date: datetime,
+                                        duration_days: int = 7) -> list[tuple]:
+    """Fetch minute data from INTERMAGNET BGS GIN API & downsample to hourly.
 
-    Uses SamplesPerDay=24 for hourly resolution (vs 1440 for 1-minute).
+    BGS GIN API only supports samplesPerDay=1440 (minute) or 86400 (second).
+    There is no hourly (24) option — requesting SamplesPerDay=24 returns HTTP 400.
+    We fetch minute data and average every 60 rows to get hourly resolution.
+
+    Fetches `duration_days` at once (default 7) to reduce request count.
+    API max is 366 days for minute data.
+
     API endpoint: GINServices?Request=GetData&format=iaga2002
+    Date format: yyyy-mm-dd only (no time/timezone suffix).
+    publicationState: best-avail (not adj-or-rep which is invalid).
     """
-    start = date.strftime("%Y-%m-%dT00:00:00Z")
+    start = date.strftime("%Y-%m-%d")
 
     url = (f"{INTERMAGNET_API}?Request=GetData&observatoryIagaCode={station}"
-           f"&SamplesPerDay=24&dataStartDate={start}&dataDuration=1"
-           f"&publicationState=adj-or-rep&format=iaga2002")
+           f"&samplesPerDay=1440&dataStartDate={start}&dataDuration={duration_days}"
+           f"&publicationState=best-avail&format=iaga2002")
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -187,7 +227,7 @@ async def fetch_intermagnet_hourly_day(session: aiohttp.ClientSession,
                 if resp.status == 200:
                     text = await resp.text()
                     if "DATE" in text:
-                        rows = parse_iaga2002_hourly(text, station)
+                        rows = parse_iaga2002_minute(text, station)
                         if rows:
                             return rows
                 elif resp.status == 204:
@@ -408,9 +448,21 @@ async def fetch_intermagnet_hourly(session: aiohttp.ClientSession, now: str):
         station_failed = 0
         current_month = None
 
-        for i, date in enumerate(dates_to_fetch):
+        # Batch dates into 7-day chunks to reduce API requests (~1/7 the calls)
+        BATCH_SIZE = 7
+        i = 0
+        while i < len(dates_to_fetch):
+            batch_start = dates_to_fetch[i]
+            # Find contiguous dates within this batch window
+            batch_end_idx = i
+            while (batch_end_idx < min(i + BATCH_SIZE, len(dates_to_fetch))
+                   and (dates_to_fetch[batch_end_idx] - batch_start).days < BATCH_SIZE):
+                batch_end_idx += 1
+            batch_count = batch_end_idx - i
+            actual_duration = (dates_to_fetch[batch_end_idx - 1] - batch_start).days + 1
+
             # Monthly progress logging
-            month_key = date.strftime("%Y-%m")
+            month_key = batch_start.strftime("%Y-%m")
             if month_key != current_month:
                 if current_month is not None:
                     logger.info(
@@ -419,7 +471,8 @@ async def fetch_intermagnet_hourly(session: aiohttp.ClientSession, now: str):
                     )
                 current_month = month_key
 
-            rows = await fetch_intermagnet_hourly_day(session, station, date)
+            rows = await fetch_intermagnet_hourly_day(
+                session, station, batch_start, duration_days=actual_duration)
             if rows:
                 async with aiosqlite.connect(DB_PATH) as db:
                     await db.executemany(
@@ -430,18 +483,19 @@ async def fetch_intermagnet_hourly(session: aiohttp.ClientSession, now: str):
                     )
                     await db.commit()
                 station_records += len(rows)
-                station_fetched += 1
+                station_fetched += batch_count
             else:
-                station_failed += 1
+                station_failed += batch_count
 
-            # Progress log every 50 dates
-            if (i + 1) % 50 == 0:
+            # Progress log every ~50 dates
+            if station_fetched % 50 < BATCH_SIZE:
                 logger.info(
-                    "  %s: %d/%d dates processed, %d records, %d failed",
-                    station, i + 1, len(dates_to_fetch),
+                    "  %s: ~%d/%d dates processed, %d records, %d failed",
+                    station, station_fetched + station_failed, len(dates_to_fetch),
                     station_records, station_failed,
                 )
 
+            i = batch_end_idx
             await asyncio.sleep(INTERMAGNET_DELAY)
 
         total_records += station_records
