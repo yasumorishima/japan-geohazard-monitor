@@ -434,6 +434,157 @@ def _train_adaboost_fallback(X_train, y_train):
 
 
 # ---------------------------------------------------------------------------
+# Feature stability selection
+# ---------------------------------------------------------------------------
+
+def select_stable_features(samples, metadata, n_preliminary_folds=3,
+                           min_stable_folds=2, min_importance=0.001):
+    """Select features that are stably important across preliminary CV folds.
+
+    Uses the first 80% of data for a quick stability check.
+    Features must have permutation importance > min_importance in at least
+    min_stable_folds out of n_preliminary_folds to be kept.
+
+    Returns:
+        stable_indices: list of feature indices to keep
+        stable_names: list of feature names to keep
+        report: dict with per-feature stability info
+    """
+    from sklearn.inspection import permutation_importance as sklearn_perm_imp
+    from sklearn.ensemble import HistGradientBoostingClassifier
+    import numpy as np
+
+    n_features = len(samples[0][3])
+    feature_names = metadata.get("features", [f"f{i}" for i in range(n_features)])
+
+    # Use first 80% of data for stability check
+    cutoff_idx = int(len(samples) * 0.8)
+    prelim_samples = samples[:cutoff_idx]
+
+    if len(prelim_samples) < 1000:
+        logger.info("  Feature selection: too few samples (%d), keeping all",
+                     len(prelim_samples))
+        return list(range(n_features)), feature_names, {}
+
+    # Split into n_preliminary_folds
+    day_min = prelim_samples[0][2]
+    day_max = prelim_samples[-1][2]
+    fold_size = (day_max - day_min) / (n_preliminary_folds + 1)
+
+    importance_counts = [0] * n_features  # count of folds where feature is important
+    importance_sums = [0.0] * n_features
+    valid_folds = 0
+
+    for fold_idx in range(n_preliminary_folds):
+        train_end = day_min + fold_size * (fold_idx + 1)
+        test_start = train_end
+        test_end = train_end + fold_size
+
+        train_X, train_y = [], []
+        test_X, test_y = [], []
+
+        for _, _, t_day, features, label in prelim_samples:
+            if t_day < train_end:
+                train_X.append(features)
+                train_y.append(label)
+            elif test_start <= t_day < test_end:
+                test_X.append(features)
+                test_y.append(label)
+
+        if not train_X or not test_X or sum(train_y) < 10 or sum(test_y) < 5:
+            continue
+
+        X_train = np.array(train_X)
+        y_train = np.array(train_y)
+        X_test = np.array(test_X)
+        y_test = np.array(test_y)
+
+        model = HistGradientBoostingClassifier(
+            max_iter=100,  # fewer iterations for speed
+            max_depth=4,
+            min_samples_leaf=50,
+            learning_rate=0.05,
+            l2_regularization=1.0,
+            early_stopping=True,
+            validation_fraction=0.15,
+            n_iter_no_change=10,
+            scoring="roc_auc",
+            random_state=42,
+        )
+        model.fit(X_train, y_train)
+
+        # Permutation importance on test set
+        result = sklearn_perm_imp(
+            model, X_test, y_test,
+            n_repeats=5,
+            scoring="roc_auc",
+            random_state=42,
+        )
+
+        valid_folds += 1
+        for fi in range(n_features):
+            if result.importances_mean[fi] > min_importance:
+                importance_counts[fi] += 1
+                importance_sums[fi] += result.importances_mean[fi]
+
+    if valid_folds == 0:
+        logger.info("  Feature selection: no valid folds, keeping all")
+        return list(range(n_features)), feature_names, {}
+
+    # Adjust threshold if fewer valid folds than requested
+    effective_min_folds = min(min_stable_folds, valid_folds)
+
+    # Select stable features
+    stable_indices = []
+    stable_names = []
+    dropped_names = []
+
+    for fi in range(n_features):
+        if importance_counts[fi] >= effective_min_folds:
+            stable_indices.append(fi)
+            stable_names.append(feature_names[fi])
+        else:
+            dropped_names.append(feature_names[fi])
+
+    # Always keep at least the base features (first 35)
+    BASE_FEATURE_COUNT = 35
+    for fi in range(min(BASE_FEATURE_COUNT, n_features)):
+        if fi not in stable_indices:
+            stable_indices.append(fi)
+            stable_names.append(feature_names[fi])
+
+    stable_indices = sorted(set(stable_indices))
+    stable_names = [feature_names[fi] for fi in stable_indices]
+
+    report = {
+        "total_features": n_features,
+        "stable_features": len(stable_indices),
+        "dropped_features": dropped_names,
+        "importance_counts": {
+            feature_names[fi]: importance_counts[fi] for fi in range(n_features)
+        },
+    }
+
+    logger.info("  Feature selection: %d/%d features stable (dropped %d: %s)",
+                len(stable_indices), n_features, len(dropped_names),
+                ", ".join(dropped_names[:10]))
+
+    return stable_indices, stable_names, report
+
+
+def apply_feature_selection(samples, stable_indices):
+    """Filter feature vectors in samples to keep only stable features.
+
+    Returns a new list of samples with filtered feature vectors.
+    """
+    filtered = []
+    for clat, clon, t_day, features, label in samples:
+        filtered_features = [features[i] for i in stable_indices]
+        filtered.append((clat, clon, t_day, filtered_features, label))
+    return filtered
+
+
+# ---------------------------------------------------------------------------
 # Walk-forward CV
 # ---------------------------------------------------------------------------
 
@@ -1643,10 +1794,27 @@ async def run_ml_prediction():
                 "error": "dataset_too_small", "metadata": metadata}
             continue
 
+        # Feature stability selection (pre-filter noisy features)
+        logger.info("--- Feature stability selection [%s] ---", target_name)
+        stable_indices, stable_names, stability_report = select_stable_features(
+            samples, metadata,
+        )
+
+        if len(stable_indices) < len(samples[0][3]):
+            logger.info("  Applying feature selection: %d -> %d features [%s]",
+                        len(samples[0][3]), len(stable_indices), target_name)
+            filtered_samples = apply_feature_selection(samples, stable_indices)
+            filtered_metadata = dict(metadata)
+            filtered_metadata["features"] = stable_names
+            filtered_metadata["feature_selection"] = stability_report
+        else:
+            filtered_samples = samples
+            filtered_metadata = metadata
+
         # Walk-forward CV
         logger.info("--- Walk-forward cross-validation [%s] ---", target_name)
         cv_folds, cv_aggregate, cv_all_y, cv_all_probs = run_walk_forward_cv(
-            samples, metadata,
+            filtered_samples, filtered_metadata,
             class_weight_ratio=cfg["class_weight_ratio"],
             min_pos_train=cfg["min_pos_train"],
             min_pos_test=cfg["min_pos_test"],
@@ -1662,15 +1830,16 @@ async def run_ml_prediction():
         logger.info("--- Training final model [%s] (train 2011-2018, test 2019-2026) ---",
                     target_name)
         final_results = train_final_model(
-            samples, t0,
+            filtered_samples, t0,
             class_weight_ratio=cfg["class_weight_ratio"],
             target_name=target_name,
-            metadata=metadata,
+            metadata=filtered_metadata,
         )
 
         target_results[target_name] = {
             "config": cfg,
-            "metadata": metadata,
+            "metadata": filtered_metadata,
+            "feature_selection": stability_report,
             "walk_forward_cv": {
                 "aggregate": cv_aggregate,
                 "folds": cv_folds,

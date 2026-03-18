@@ -31,7 +31,7 @@ References:
 import asyncio
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiohttp
@@ -105,7 +105,6 @@ def parse_omni2(text: str, year: int) -> list[dict]:
 
             # Construct datetime
             dt = datetime(yr, 1, 1, hour, 0, 0, tzinfo=timezone.utc)
-            from datetime import timedelta
             dt += timedelta(days=doy - 1)
             observed_at = dt.strftime("%Y-%m-%dT%H:%M:%S")
 

@@ -39,11 +39,10 @@ import aiosqlite
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
 from config import DB_PATH
+from earthdata_auth import get_earthdata_session, earthdata_fetch, EARTHDATA_TOKEN
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
-
-EARTHDATA_TOKEN = os.environ.get("EARTHDATA_TOKEN")
 
 # LAADS DAAC OPeNDAP for MOD08_D3 (MODIS Terra daily L3 atmosphere)
 LAADS_OPENDAP = "https://ladsweb.modaps.eosdis.nasa.gov/opendap/allData/61/MOD08_D3"
@@ -103,23 +102,18 @@ async def fetch_cloud_day(session: aiohttp.ClientSession, date: datetime) -> lis
         f"[{LON_START}:1:{LON_END}]"
     )
 
-    headers = {"Authorization": f"Bearer {EARTHDATA_TOKEN}"}
-
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            async with session.get(url, timeout=TIMEOUT, headers=headers,
-                                    allow_redirects=True) as resp:
-                if resp.status == 200:
-                    content_type = resp.headers.get("Content-Type", "")
-                    if "html" in content_type.lower():
-                        return []
-                    text = await resp.text()
-                    return _parse_cloud_ascii(text, date_str)
-                elif resp.status in (401, 403):
-                    logger.info("Cloud fraction requires Earthdata auth")
+            status, text = await earthdata_fetch(session, url, timeout=TIMEOUT)
+            if status == 200:
+                if not text or "<html" in text[:200].lower():
                     return []
-                elif resp.status == 404:
-                    return []
+                return _parse_cloud_ascii(text, date_str)
+            elif status in (401, 403):
+                logger.info("Cloud fraction requires Earthdata auth")
+                return []
+            elif status == 404:
+                return []
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             if attempt == MAX_RETRIES:
                 logger.debug("Cloud %s: %s", date_str, type(e).__name__)
@@ -210,7 +204,8 @@ async def main():
     logger.info("Cloud fraction: %d dates to fetch", len(dates_to_fetch))
 
     total_records = 0
-    async with aiohttp.ClientSession() as session:
+    session = await get_earthdata_session()
+    try:
         for i, date in enumerate(dates_to_fetch):
             rows = await fetch_cloud_day(session, date)
             if rows:
@@ -228,6 +223,8 @@ async def main():
                 logger.info("Cloud: %d/%d dates, %d records",
                             i + 1, len(dates_to_fetch), total_records)
             await asyncio.sleep(1.0)
+    finally:
+        await session.close()
 
     logger.info("Cloud fraction fetch complete: %d records", total_records)
 

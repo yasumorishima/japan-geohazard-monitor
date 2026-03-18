@@ -40,6 +40,7 @@ import aiosqlite
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
 from config import DB_PATH
+from earthdata_auth import get_earthdata_session, earthdata_fetch, EARTHDATA_TOKEN
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -53,8 +54,6 @@ GRACE_TELLUS_URL = (
     "https://podaac-tools.jpl.nasa.gov/drive/files/allData/"
     "tellus/L3/mascon/RL06.3/v04/CRI/"
 )
-
-EARTHDATA_TOKEN = os.environ.get("EARTHDATA_TOKEN")
 
 # Japan bbox (0.5-degree grid subset)
 # Lat: 24-46, Lon: 122-150
@@ -99,19 +98,15 @@ async def fetch_grace_via_tellus_ascii(session: aiohttp.ClientSession) -> list[d
         "https://podaac-tools.jpl.nasa.gov/drive/files/allData/"
         "tellus/L3/mascon/RL06.3/v04/CRI/mascon_summary.txt"
     )
-    headers = {}
-    if EARTHDATA_TOKEN:
-        headers["Authorization"] = f"Bearer {EARTHDATA_TOKEN}"
 
     try:
-        async with session.get(url, timeout=TIMEOUT, headers=headers) as resp:
-            if resp.status == 200:
-                text = await resp.text()
-                return _parse_mascon_summary(text)
-            elif resp.status in (401, 403):
-                logger.info("GRACE TELLUS requires Earthdata auth (HTTP %d)", resp.status)
-            else:
-                logger.warning("GRACE TELLUS HTTP %d", resp.status)
+        status, text = await earthdata_fetch(session, url, timeout=TIMEOUT)
+        if status == 200 and text:
+            return _parse_mascon_summary(text)
+        elif status in (401, 403):
+            logger.info("GRACE TELLUS requires Earthdata auth (HTTP %d)", status)
+        else:
+            logger.warning("GRACE TELLUS HTTP %d", status)
     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
         logger.warning("GRACE TELLUS failed: %s", type(e).__name__)
 
@@ -163,26 +158,20 @@ async def fetch_grace_monthly_json(session: aiohttp.ClientSession) -> list[dict]
         "monthly-mass-grids-land/ascii/"
     )
 
-    headers = {}
-    if EARTHDATA_TOKEN:
-        headers["Authorization"] = f"Bearer {EARTHDATA_TOKEN}"
-
     for url in [region_url, catalog_url]:
         try:
-            async with session.get(url, timeout=TIMEOUT, headers=headers,
-                                    allow_redirects=True) as resp:
-                if resp.status == 200:
-                    content_type = resp.headers.get("Content-Type", "")
-                    if "json" in content_type:
-                        data = await resp.json()
-                        return _parse_grace_json(data)
-                    elif "text" in content_type:
-                        text = await resp.text()
-                        # Check for redirects to login page
-                        if "<html" in text.lower()[:200]:
-                            logger.info("GRACE endpoint returned HTML (auth page)")
-                            continue
-                        return _parse_mascon_summary(text)
+            status, text = await earthdata_fetch(session, url, timeout=TIMEOUT)
+            if status == 200 and text:
+                if "<html" in text.lower()[:200]:
+                    logger.info("GRACE endpoint returned HTML (auth page)")
+                    continue
+                # Try JSON parse first
+                try:
+                    import json
+                    data = json.loads(text)
+                    return _parse_grace_json(data)
+                except (json.JSONDecodeError, ValueError):
+                    return _parse_mascon_summary(text)
         except (aiohttp.ClientError, asyncio.TimeoutError):
             continue
 
@@ -226,7 +215,8 @@ async def main():
             "Generate token at https://urs.earthdata.nasa.gov/"
         )
 
-    async with aiohttp.ClientSession() as session:
+    session = await get_earthdata_session()
+    try:
         # Try multiple approaches
         rows = await fetch_grace_via_tellus_ascii(session)
 
@@ -251,6 +241,8 @@ async def main():
             await db.commit()
 
         logger.info("GRACE fetch complete: %d records stored", len(rows))
+    finally:
+        await session.close()
 
 
 if __name__ == "__main__":

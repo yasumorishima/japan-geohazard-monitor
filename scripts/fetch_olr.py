@@ -7,13 +7,14 @@ attributed to the LAIC (Lithosphere-Atmosphere-Ionosphere Coupling) model:
     → cloud/thermal anomaly → OLR change
 
 Unlike MODIS LST (point measurements at epicenters), OLR captures broad-scale
-thermal anomalies over the entire Japan region at 1-degree resolution.
+thermal anomalies over the entire Japan region at 2.5-degree resolution.
 
-Data source: NOAA Climate Data Record (CDR) OLR Daily
-    - Derived from HIRS satellite observations
-    - 1-degree global grid, daily, 1979-present
+Data source: NOAA PSL (Physical Sciences Laboratory) Uninterpolated OLR Daily
+    - Derived from NOAA satellite observations
+    - 2.5-degree global grid, daily, 1974-present
+    - Single dataset file covering all years
     - No authentication required
-    - THREDDS NCSS endpoint returns CSV
+    - PSL THREDDS NCSS endpoint returns CSV
 
 Target features:
     - olr_anomaly: deviation from 30-day rolling mean (in σ units)
@@ -28,7 +29,7 @@ import csv
 import io
 import logging
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import aiohttp
@@ -41,9 +42,11 @@ from config import DB_PATH
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# NOAA THREDDS NCSS endpoint for OLR CDR daily
-# Each year is a separate file: olr-daily_v02r07_{YYYY}0101_{YYYY}1231.nc
-THREDDS_BASE = "https://www.ncei.noaa.gov/thredds/ncss/grid/cdr/olr-daily"
+# NOAA PSL THREDDS NCSS endpoint for uninterpolated OLR daily
+# Single dataset covering 1974-present (no per-year files, no version guessing)
+PSL_NCSS_BASE = (
+    "https://psl.noaa.gov/thredds/ncss/grid/Datasets/uninterp_OLR/olr.day.mean.nc"
+)
 
 # Japan bounding box
 NORTH = 46.0
@@ -53,9 +56,6 @@ EAST = 150.0
 
 MAX_RETRIES = 3
 TIMEOUT = aiohttp.ClientTimeout(total=300, connect=30)
-
-# Versions to try (NOAA updates version numbers)
-VERSIONS = ["v02r07", "v02r06", "v02r05", "v02r04", "v02r03", "v02r02", "v02r01", "v02r00"]
 
 START_YEAR = 2011
 
@@ -83,7 +83,10 @@ async def init_olr_table():
 
 async def fetch_olr_year(session: aiohttp.ClientSession, year: int,
                           start_date: str = None, end_date: str = None) -> list[dict]:
-    """Fetch OLR data for a year from NOAA THREDDS NCSS.
+    """Fetch OLR data for a year from NOAA PSL THREDDS NCSS.
+
+    The PSL dataset is a single file covering 1974-present, so we subset
+    by time_start/time_end parameters rather than guessing filenames.
 
     Returns list of {date, lat, lon, olr} dicts.
     """
@@ -92,34 +95,33 @@ async def fetch_olr_year(session: aiohttp.ClientSession, year: int,
     if end_date is None:
         end_date = f"{year}-12-31T23:59:59Z"
 
-    # Try different version numbers
-    for version in VERSIONS:
-        filename = f"olr-daily_{version}_{year}0101_{year}1231.nc"
-        url = (
-            f"{THREDDS_BASE}/{filename}"
-            f"?var=olr"
-            f"&north={NORTH}&south={SOUTH}&west={WEST}&east={EAST}"
-            f"&time_start={start_date}&time_end={end_date}"
-            f"&accept=csv"
-        )
+    url = (
+        f"{PSL_NCSS_BASE}"
+        f"?var=olr"
+        f"&north={NORTH}&south={SOUTH}&west={WEST}&east={EAST}"
+        f"&time_start={start_date}&time_end={end_date}"
+        f"&accept=csv"
+    )
 
-        for attempt in range(1, MAX_RETRIES + 1):
-            try:
-                async with session.get(url, timeout=TIMEOUT) as resp:
-                    if resp.status == 200:
-                        text = await resp.text()
-                        return _parse_ncss_csv(text)
-                    elif resp.status == 404:
-                        break  # Try next version
-                    else:
-                        if attempt == MAX_RETRIES:
-                            logger.warning("OLR %d %s: HTTP %d", year, version, resp.status)
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                if attempt == MAX_RETRIES:
-                    logger.debug("OLR %d %s: %s", year, version, type(e).__name__)
-                await asyncio.sleep(2 ** attempt)
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            async with session.get(url, timeout=TIMEOUT) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    return _parse_ncss_csv(text)
+                else:
+                    logger.warning("OLR %d attempt %d: HTTP %d", year, attempt, resp.status)
+                    if attempt == MAX_RETRIES:
+                        body_preview = (await resp.text())[:200]
+                        logger.warning("OLR %d: final failure, response: %s", year, body_preview)
+                        return []
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            logger.debug("OLR %d attempt %d: %s", year, attempt, type(e).__name__)
+            if attempt == MAX_RETRIES:
+                logger.warning("OLR %d: all retries exhausted (%s)", year, type(e).__name__)
+                return []
+        await asyncio.sleep(2 ** attempt)
 
-    logger.warning("OLR %d: no version found", year)
     return []
 
 
@@ -127,8 +129,8 @@ def _parse_ncss_csv(text: str) -> list[dict]:
     """Parse THREDDS NCSS CSV response.
 
     Expected format (header + data rows):
-        date,lat[unit="degrees_north"],lon[unit="degrees_east"],olr[unit="W m-2"]
-        2011-01-01T00:00:00Z,25.5,123.5,234.567
+        date,lat[unit="degrees_north"],lon[unit="degrees_east"],olr[unit="W/m^2"]
+        2011-01-01T00:00:00Z,25.0,122.5,234.567
     """
     rows = []
     reader = csv.reader(io.StringIO(text))

@@ -39,11 +39,10 @@ import aiosqlite
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
 from config import DB_PATH
+from earthdata_auth import get_earthdata_session, earthdata_fetch, EARTHDATA_TOKEN
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
-
-EARTHDATA_TOKEN = os.environ.get("EARTHDATA_TOKEN")
 
 # ESA CCI Soil Moisture (alternative, longer history)
 # Available as NetCDF from Climate Data Store or OPeNDAP
@@ -256,7 +255,8 @@ async def main():
     start = "2015-04-01" if not last_date else last_date
     end = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    async with aiohttp.ClientSession() as session:
+    session = await get_earthdata_session()
+    try:
         task_id = await submit_appeears_task(session, start, end)
 
         if not task_id:
@@ -291,6 +291,8 @@ async def main():
                 "AppEEARS task submitted but not yet complete (status=%s). "
                 "Results will be available in next run.", status
             )
+    finally:
+        await session.close()
 
 
 if __name__ == "__main__":

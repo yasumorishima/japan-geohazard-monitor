@@ -43,6 +43,7 @@ import aiosqlite
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
 from config import DB_PATH
+from earthdata_auth import get_earthdata_session, earthdata_fetch, EARTHDATA_TOKEN
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -124,8 +125,7 @@ async def fetch_viirs_via_laads(session: aiohttp.ClientSession,
 
     Uses the VNP46A4 monthly gridded product.
     """
-    earthdata_token = os.environ.get("EARTHDATA_TOKEN")
-    if not earthdata_token:
+    if not EARTHDATA_TOKEN:
         return []
 
     # LAADS DAAC search for VNP46A4 (monthly)
@@ -134,19 +134,21 @@ async def fetch_viirs_via_laads(session: aiohttp.ClientSession,
         f"allData/5200/VNP46A4/{year}/"
     )
 
-    headers = {"Authorization": f"Bearer {earthdata_token}"}
-
     try:
-        async with session.get(search_url, timeout=TIMEOUT, headers=headers) as resp:
-            if resp.status == 200:
-                data = await resp.json()
+        status, text = await earthdata_fetch(session, search_url, timeout=TIMEOUT)
+        if status == 200 and text:
+            try:
+                import json
+                data = json.loads(text)
                 logger.info("LAADS VNP46A4 %d: %d granules found",
                             year, len(data) if isinstance(data, list) else 0)
-                # Would need to download and parse HDF5 — complex
-                # For now, log availability
-                return []
-            elif resp.status in (401, 403):
-                logger.info("LAADS requires valid Earthdata token")
+            except (json.JSONDecodeError, ValueError):
+                pass
+            # Would need to download and parse HDF5 — complex
+            # For now, log availability
+            return []
+        elif status in (401, 403):
+            logger.info("LAADS requires valid Earthdata token")
     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
         logger.debug("LAADS VIIRS: %s", type(e).__name__)
 
@@ -170,7 +172,8 @@ async def main():
     n_existing = existing[0][0] if existing else 0
     logger.info("Nightlight existing: %d records", n_existing)
 
-    async with aiohttp.ClientSession() as session:
+    session = await get_earthdata_session()
+    try:
         # Try EOG monthly composites first (no auth)
         for year in range(2012, current_year + 1):  # VIIRS starts April 2012
             for month in range(1, 13):
@@ -192,6 +195,8 @@ async def main():
         # Try LAADS DAAC if EOG didn't work
         if n_existing == 0:
             await fetch_viirs_via_laads(session, current_year, 1)
+    finally:
+        await session.close()
 
     logger.info(
         "VIIRS nighttime fetch complete. "

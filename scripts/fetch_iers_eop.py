@@ -17,10 +17,9 @@ Physical mechanism (speculative, largely untested in earthquake ML):
 This is a novel feature for earthquake ML — virtually no prior work
 uses EOP as predictive features.
 
-Data source: IERS Rapid Service/Prediction Centre
-    - finals2000A.data: daily EOP values
-    - No authentication required
-    - Single file covers 1992-present
+Data sources (tried in order):
+    1. OBSPM (Paris Observatory) eopc04: daily EOP, updated daily
+    2. USNO finals2000A: daily EOP (backup, may be stale)
 
 Target features:
     - lod_rate: day-to-day LOD change rate (ms/day)
@@ -47,10 +46,10 @@ from config import DB_PATH
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# IERS finals2000A data (fixed-width format, most reliable)
-IERS_FINALS_URL = "https://datacenter.iers.org/data/latestVersion/finals2000A.data.txt"
+# OBSPM (Paris Observatory) eopc04 — primary source, updated daily
+OBSPM_EOPC04_URL = "https://hpiers.obspm.fr/iers/eop/eopc04/eopc04.1962-now"
 
-# Alternative: USNO (backup)
+# USNO finals2000A — backup (may be stale but format is well-known)
 USNO_FINALS_URL = "https://maia.usno.navy.mil/ser7/finals2000A.data"
 
 MAX_RETRIES = 3
@@ -76,6 +75,57 @@ async def init_eop_table():
             ON earth_rotation(observed_at)
         """)
         await db.commit()
+
+
+def parse_eopc04(text: str) -> list[dict]:
+    """Parse OBSPM eopc04.1962-now space-separated format.
+
+    Format (space-separated columns):
+        Year  Month  Day  MJD  x(")  y(")  UT1-UTC(s)  LOD(s)  dX(")  dY(")  ...
+
+    Header lines start with '#' or contain non-numeric first fields.
+    LOD is in SECONDS in eopc04 (convert to milliseconds for DB).
+    Only use data from 2011 onwards.
+    """
+    rows = []
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        parts = line.split()
+        if len(parts) < 8:
+            continue
+
+        try:
+            year = int(parts[0])
+            month = int(parts[1])
+            day = int(parts[2])
+            # parts[3] = MJD (skip)
+            x = float(parts[4])
+            y = float(parts[5])
+            dut1 = float(parts[6])
+            lod_s = float(parts[7])
+
+            if year < 2011:
+                continue
+
+            date_str = f"{year:04d}-{month:02d}-{day:02d}"
+
+            # Convert LOD from seconds to milliseconds
+            lod_ms = lod_s * 1000.0
+
+            rows.append({
+                "date": date_str,
+                "x": x,
+                "y": y,
+                "dut1": dut1,
+                "lod": lod_ms,
+            })
+        except (ValueError, IndexError):
+            continue
+
+    return rows
 
 
 def parse_finals2000a(text: str) -> list[dict]:
@@ -156,38 +206,44 @@ async def main():
     n_existing = existing[0][1] if existing else 0
     logger.info("EOP existing: %d records (latest: %s)", n_existing, last_date)
 
-    # Fetch finals2000A (single file, ~5MB, covers all dates)
-    text = None
-    urls = [IERS_FINALS_URL, USNO_FINALS_URL]
+    # Try sources in order: OBSPM eopc04 (primary), USNO finals2000A (backup)
+    sources = [
+        (OBSPM_EOPC04_URL, parse_eopc04, "OBSPM eopc04"),
+        (USNO_FINALS_URL, parse_finals2000a, "USNO finals2000A"),
+    ]
 
+    rows = []
     async with aiohttp.ClientSession() as session:
-        for url in urls:
+        for url, parser, label in sources:
+            text = None
             for attempt in range(1, MAX_RETRIES + 1):
                 try:
-                    logger.info("Fetching EOP from %s...", url.split("/")[2])
+                    logger.info("Fetching EOP from %s (%s)...", label, url.split("/")[2])
                     async with session.get(url, timeout=TIMEOUT) as resp:
                         if resp.status == 200:
                             text = await resp.text()
-                            logger.info("EOP data fetched: %.1f KB", len(text) / 1024)
+                            logger.info("EOP data fetched from %s: %.1f KB",
+                                        label, len(text) / 1024)
                             break
                         else:
-                            logger.warning("EOP HTTP %d from %s", resp.status, url)
+                            logger.warning("EOP HTTP %d from %s", resp.status, label)
                 except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                     if attempt == MAX_RETRIES:
-                        logger.warning("EOP fetch failed from %s: %s", url, type(e).__name__)
+                        logger.warning("EOP fetch failed from %s: %s",
+                                       label, type(e).__name__)
                     await asyncio.sleep(2 ** attempt)
+
             if text:
-                break
-
-    if not text:
-        logger.error("Could not fetch EOP data from any source")
-        return
-
-    # Parse
-    rows = parse_finals2000a(text)
-    logger.info("Parsed %d EOP records (2011+)", len(rows))
+                rows = parser(text)
+                if rows:
+                    logger.info("Parsed %d EOP records (2011+) from %s", len(rows), label)
+                    break
+                else:
+                    logger.warning("No parseable EOP records from %s, trying next source",
+                                   label)
 
     if not rows:
+        logger.error("Could not fetch EOP data from any source")
         return
 
     # Store in DB
