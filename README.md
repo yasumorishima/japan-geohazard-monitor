@@ -132,7 +132,7 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 - **Analysis Phase 9.1** ✅ 4-bug fix + metadata NameError fix: INTERMAGNET API params → **36,000 records, 1,500 days** geomag data successfully fetched. Dynamic feature selection → 53/56 active features. **CV AUC 0.7316, Test AUC 0.7452**. Blitzortung/Sferics Bonn: server down (ECONNREFUSED), lightning data unavailable
 - **Analysis Phase 10/10b** ✅ 11 unconventional data sources: OLR, Earth rotation, solar wind, GRACE gravity, SO2, soil moisture, tide gauge, ocean color, cloud fraction, nightlight, InSAR — 56 → 70 features. **CV AUC 0.7249** (regression: 12/70 features active, Solar Wind only new source, Earthdata auth broken, OLR/IERS/tide URLs dead)
 - **Analysis Phase 11** ✅ 4 space/cosmic data sources: GOES X-ray flux (solar flares), GOES proton flux (SEP events), tidal stress (lunar+solar, pure calculation), particle precipitation (Van Allen belt). 70 → 75 features
-- **Analysis Phase 12** 🔄 Data acquisition infrastructure overhaul + ML feature stability selection. OLR→PSL THREDDS, IERS→OBSPM, tide→UHSLC Fast Delivery, Earthdata→OAuth2 redirect handler. ML: 3-fold stability pre-filter removes noisy features before CV. **Run in progress (2026-03-18)**
+- **Analysis Phase 12** 🔄 Data acquisition infrastructure overhaul + ML feature stability selection + FeatureExtractor performance optimization. OLR→PSL THREDDS, IERS→OBSPM, tide→UHSLC Fast Delivery, Earthdata→OAuth2 redirect handler. ML: 3-fold stability pre-filter removes noisy features before CV. **Data acquisition all confirmed working** (OLR/IERS/tide/GOES/GRACE/SO2 ✅). Phase 12b: bisect-based window queries, zone stats caching, deque histories — 5-15x extract() speedup to fix ML step timeout. **Run in progress (2026-03-19)**
 - **Backfill** ✅ 2011-2026 M3+ earthquakes (29K), TEC (4M), Kp (44K), GCMT focal mechanisms
 - **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 360min timeout)
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
@@ -463,7 +463,7 @@ gh workflow run "Earthquake Correlation Analysis" \
 | Module | Purpose |
 |---|---|
 | `physics.py` | Okada (1992) CFS, Wells & Coppersmith (1994) fault scaling, ETAS MLE (scipy L-BFGS-B), Dieterich (1994) rate-and-state, b-value (Aki-Utsu), tectonic zone classification, GNSS strain rate estimation, slow-slip transient detection |
-| `features.py` | **75 features** with dynamic selection across **19 optional groups**: rate dynamics (acceleration, trend), zone-specific ETAS residuals, magnitude statistics (deficit, b-value trend), clustering (foreshock escalation, inter-event CV), rate-and-state CFS, Pattern Informatics, Benioff strain, GNSS crustal deformation (displacement, strain rate, SSE detection), enhanced spatial (neighbor CFS/ETAS/mag, zone rate anomaly, CFS rank, spatial gradient), **cosmic ray** (27-day baseline deviation, trend), **geomagnetic spectral** (ULF power, polarization, fractal dim), **OLR anomaly**, **Earth rotation** (LOD rate, polar motion speed), **solar wind** (Bz, dynamic pressure, Dst), **GRACE gravity** anomaly rate, **SO2 column** anomaly, **soil moisture** anomaly, **tide gauge** residual, **ocean color** chlorophyll anomaly, **cloud fraction** anomaly, **nightlight** airglow anomaly, **InSAR** deformation rate, **X-ray flux** (solar flare proxy), **proton flux** (SEP events), **tidal shear stress** + rate (lunar+solar), **particle precipitation** (Van Allen belt). `get_active_feature_names()` auto-excludes groups with no data |
+| `features.py` | **75 features** with dynamic selection across **19 optional groups**: rate dynamics (acceleration, trend), zone-specific ETAS residuals, magnitude statistics (deficit, b-value trend), clustering (foreshock escalation, inter-event CV), rate-and-state CFS, Pattern Informatics, Benioff strain, GNSS crustal deformation (displacement, strain rate, SSE detection), enhanced spatial (neighbor CFS/ETAS/mag, zone rate anomaly, CFS rank, spatial gradient), **cosmic ray** (27-day baseline deviation, trend), **geomagnetic spectral** (ULF power, polarization, fractal dim), **OLR anomaly**, **Earth rotation** (LOD rate, polar motion speed), **solar wind** (Bz, dynamic pressure, Dst), **GRACE gravity** anomaly rate, **SO2 column** anomaly, **soil moisture** anomaly, **tide gauge** residual, **ocean color** chlorophyll anomaly, **cloud fraction** anomaly, **nightlight** airglow anomaly, **InSAR** deformation rate, **X-ray flux** (solar flare proxy), **proton flux** (SEP events), **tidal shear stress** + rate (lunar+solar), **particle precipitation** (Van Allen belt). `get_active_feature_names()` auto-excludes groups with no data. **Performance**: bisect-based O(log n) window queries, per-day zone stats cache, deque histories — optimized for 100K+ extract() calls per target |
 | `evaluation.py` | ROC-AUC, threshold evaluation (precision/recall/gain/IGPE/Molchan), walk-forward CV splits, isotonic calibration (PAV), reliability diagram, permutation importance, Molchan area skill score |
 | `target_config.py` | Multi-target configuration: M5+/M5.5+/M6+ with per-target window, class weight, positive thresholds |
 | `csep_format.py` | CSEP XML forecast generation: probability → GR-based rate per cell/magnitude/time bin |
@@ -703,7 +703,7 @@ CV fold AUCs: 0.704, 0.688, 0.735, 0.734, 0.760, 0.751, 0.721, 0.746, 0.712
 
 **Total: 75 features from 19 independent data domains.**
 
-### Phase 12: Data Acquisition Infrastructure Overhaul
+### Phase 12: Data Acquisition Infrastructure Overhaul + Performance Optimization
 
 Phase 10/10b revealed that the data acquisition layer was fundamentally broken — not a configuration issue, but structural failures in URL patterns, authentication flow, and ML feature selection. Phase 12 addresses all three layers simultaneously.
 
@@ -716,6 +716,10 @@ Phase 10/10b revealed that the data acquisition layer was fundamentally broken �
 | **Tide gauge** | UHSLC CSV path (404) | UHSLC Fast Delivery `.dat` format |
 | **Earthdata auth** | `Bearer` token in `Authorization` header (stripped by aiohttp on cross-origin redirect) | Shared `earthdata_auth.py`: intercept 302 redirect, send Bearer to URS, follow back with cookies |
 
+**Data acquisition confirmed working (Phase 12 Run 23271449051)**:
+
+All data fetch steps succeeded — OLR (1m37s), IERS EOP (2s), tide gauge (29m), GOES X-ray/Proton/Electron, tidal stress, GRACE (1m), SO2 (3m41s). The data infrastructure overhaul is validated.
+
 **ML pipeline fix — feature stability selection**:
 
 The Phase 10/10b regression (0.7316 → 0.7249) demonstrated that HistGradientBoosting's L2 regularization alone cannot prevent noisy features from hurting performance. Added a 2-stage approach:
@@ -725,11 +729,29 @@ The Phase 10/10b regression (0.7316 → 0.7249) demonstrated that HistGradientBo
 
 This structurally prevents the "more features = worse AUC" problem that plagued Phase 9.0 and 10/10b.
 
+**Phase 12b: FeatureExtractor performance optimization**:
+
+Phase 12 Run timed out at "Run ML integrated prediction" step (~20 hours). Root cause: `extract()` is called ~100K+ times per target (cells × time steps × 3 targets), and multiple O(n) operations per call created O(n²) total complexity.
+
+| Optimization | Before | After | Impact |
+|---|---|---|---|
+| Window queries (`_events_in_window`) | O(n) linear scan × 9 per call | O(log n) `bisect` on pre-sorted arrays | **Critical**: eliminates ~900K linear scans |
+| Zone statistics | O(all_cells) scan per call | Per-day cache (computed once, shared across cells) | **Critical**: eliminates O(100K × 100) grid scans |
+| Foreshock counting | O(9 cells × n) linear scan | O(9 × log n) `bisect` | High |
+| Neighbor spatial (Section M) | Re-scans all 8 neighbors | Reuses Section J cached rates | Medium |
+| ETAS prior extraction | O(n) list comprehension | O(log n) `bisect` slice | Medium |
+| History structures | `list` with manual truncation | `deque(maxlen=N)` auto-truncation | Medium |
+| Date string | `datetime` + `strftime` per call | Per-day cache (same for all cells) | Lower |
+| GNSS transient | Full history scan | 180-day window limit | Lower |
+| CFS rank within zone | `sorted()` + linear count per call | Pre-sorted list + `bisect_right` | Lower |
+
+Expected speedup: **5-15x** on FeatureExtractor, enabling ML step to complete within the 6-hour timeout.
+
 ### Roadmap
 
 | Phase | Status | Goal |
 |---|---|---|
-| **Phase 12** | 🔄 Run in progress | Data acquisition fixes + feature stability selection. Expected: recover to ≥0.7316 |
+| **Phase 12** | 🔄 Run in progress | Data acquisition fixes (all confirmed ✅) + feature stability selection + FeatureExtractor 5-15x speedup. Expected: recover to ≥0.7316 |
 | **ConvLSTM** | 📋 Ready | Spatiotemporal neural network on Colab GPU (feature_matrix.json exported) |
 | **Stacking v2** | 📋 Planned | Add LightGBM/XGBoost as diverse level-0 models to break information overlap |
 | **INTERMAGNET backfill** | 📋 Planned | Accumulate additional 500 days/run until full 15-year coverage (currently 1,500 days) |
