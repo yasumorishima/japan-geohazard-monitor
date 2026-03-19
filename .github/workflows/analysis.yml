@@ -172,6 +172,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
+          pip install netCDF4
           python3 scripts/fetch_olr.py || echo "OLR fetch failed (non-fatal)"
 
       - name: Fetch IERS Earth Orientation Parameters (no auth)
