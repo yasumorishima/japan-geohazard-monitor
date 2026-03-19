@@ -1,12 +1,15 @@
 """ConvLSTM spatiotemporal earthquake prediction — Colab GPU training.
 
 Architecture:
-    Input: (batch, T=30, H=11, W=11, C=47) — 30 steps × 3 days = 90 days history
-    → Conv2D(47→64, 3×3, padding=1) — spatial feature extraction
+    Input: (batch, T=30, H=11, W=11, C) — 30 steps × 3 days = 90 days history
+    → Conv2D(C→64, 3×3, padding=1) — spatial feature extraction
     → ConvLSTM2d(64→64, 3×3, padding=1) × 2 layers
     → Conv2D(64→1, 1×1) — per-cell probability
     → Sigmoid
     Output: (batch, H=11, W=11)
+
+    C is dynamic (read from feature_matrix.json metadata).
+    Phase 13: up to 79 features; stability selection may reduce to ~64.
 
 Loss: BCE with pos_weight=20
 Optimizer: Adam, lr=1e-3, weight_decay=1e-5
@@ -125,7 +128,7 @@ class ConvLSTMCell(nn.Module):
 class ConvLSTMPredictor(nn.Module):
     """ConvLSTM for spatiotemporal earthquake prediction."""
 
-    def __init__(self, n_features=47, hidden_channels=64, n_layers=2):
+    def __init__(self, n_features=64, hidden_channels=64, n_layers=2):
         super().__init__()
 
         # Spatial feature extraction

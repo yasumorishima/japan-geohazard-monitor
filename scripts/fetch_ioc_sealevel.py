@@ -107,6 +107,7 @@ async def fetch_station_list(session: aiohttp.ClientSession) -> list[dict]:
         "format": "json",
     }
 
+    data = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             async with session.get(IOC_BASE, params=params, timeout=TIMEOUT) as resp:
@@ -122,26 +123,45 @@ async def fetch_station_list(session: aiohttp.ClientSession) -> list[dict]:
                 logger.warning("IOC station list: %s", type(e).__name__)
                 return []
             await asyncio.sleep(2 ** attempt)
-    else:
-        return []
 
     if not data:
         logger.warning("IOC station list: empty response")
         return []
 
+    # Handle both list and dict response formats
+    if isinstance(data, dict):
+        # API might wrap stations in a key
+        for key in ("stations", "data", "results"):
+            if key in data and isinstance(data[key], list):
+                data = data[key]
+                break
+        else:
+            logger.warning("IOC station list: unexpected dict format (keys: %s)",
+                          list(data.keys())[:10])
+            return []
+
+    if not isinstance(data, list):
+        logger.warning("IOC station list: unexpected type %s", type(data).__name__)
+        return []
+
     # Filter to Japan area
     japan_stations = []
     for station in data:
+        if not isinstance(station, dict):
+            continue
         try:
-            lat = float(station.get("lat", 0))
-            lon = float(station.get("lon", 0))
+            lat = float(station.get("lat") or station.get("Lat") or 0)
+            lon = float(station.get("lon") or station.get("Lon") or 0)
         except (ValueError, TypeError):
             continue
 
         if (JAPAN_LAT_MIN <= lat <= JAPAN_LAT_MAX
                 and JAPAN_LON_MIN <= lon <= JAPAN_LON_MAX):
-            code = station.get("code", "").strip()
-            name = station.get("name", "").strip()
+            # Handle None/non-string code values safely
+            raw_code = station.get("code") or station.get("Code") or ""
+            code = str(raw_code).strip() if raw_code else ""
+            raw_name = station.get("name") or station.get("Location") or ""
+            name = str(raw_name).strip() if raw_name else ""
             if code:
                 japan_stations.append({
                     "code": code,

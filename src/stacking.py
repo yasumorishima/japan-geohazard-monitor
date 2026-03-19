@@ -28,7 +28,8 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-LEVEL0_FEATURE_NAMES = [
+# Base level-0 features (HistGBT + physics)
+LEVEL0_FEATURE_NAMES_BASE = [
     "ml_m5_prob",
     "ml_m55_prob",
     "ml_m6_prob",
@@ -38,6 +39,19 @@ LEVEL0_FEATURE_NAMES = [
     "foreshock_alarm",
     "n_alarms",
 ]
+
+# Extended level-0 features (diverse models: RandomForest + LogisticRegression)
+LEVEL0_FEATURE_NAMES_DIVERSE = [
+    "rf_m5_prob",
+    "rf_m55_prob",
+    "rf_m6_prob",
+    "lr_m5_prob",
+    "lr_m55_prob",
+    "lr_m6_prob",
+]
+
+# Full feature list: base + diverse models (used when diverse predictions available)
+LEVEL0_FEATURE_NAMES = LEVEL0_FEATURE_NAMES_BASE + LEVEL0_FEATURE_NAMES_DIVERSE
 
 
 class StackingEnsemble:

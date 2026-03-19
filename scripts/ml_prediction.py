@@ -377,6 +377,80 @@ def train_model(X_train, y_train, class_weight_ratio=1):
         return _train_adaboost_fallback(X_train, y_train)
 
 
+def train_random_forest(X_train, y_train, class_weight_ratio=1):
+    """Train RandomForestClassifier as a diverse level-0 model.
+
+    Bagging-based ensemble: different error pattern from boosting (HistGBT).
+    Falls back gracefully if sklearn not available.
+    """
+    sample_weight = None
+    if class_weight_ratio > 1:
+        sample_weight = [class_weight_ratio if y == 1 else 1.0 for y in y_train]
+
+    try:
+        from sklearn.ensemble import RandomForestClassifier
+        logger.info("  Training RandomForest (level-0 diversity)")
+
+        model = RandomForestClassifier(
+            n_estimators=300,
+            max_depth=8,
+            min_samples_leaf=30,
+            max_features="sqrt",
+            random_state=42,
+            n_jobs=-1,
+        )
+        model.fit(X_train, y_train, sample_weight=sample_weight)
+
+        def predict_fn(X):
+            return model.predict_proba(X)[:, 1].tolist()
+
+        return predict_fn, {"type": "RandomForest", "n_estimators": 300, "max_depth": 8}
+
+    except ImportError:
+        logger.warning("  sklearn not available, skipping RandomForest")
+        return None, None
+
+
+def train_logistic(X_train, y_train, class_weight_ratio=1):
+    """Train LogisticRegression with L2 as a linear level-0 model.
+
+    Linear model: fundamentally different from tree ensembles.
+    Provides genuine diversity in stacking level-0.
+    """
+    try:
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.preprocessing import StandardScaler
+        logger.info("  Training LogisticRegression L2 (level-0 diversity)")
+
+        # Standardize features for logistic regression
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X_train)
+
+        class_weight = None
+        if class_weight_ratio > 1:
+            class_weight = {0: 1, 1: class_weight_ratio}
+
+        model = LogisticRegression(
+            C=0.1,
+            penalty="l2",
+            solver="lbfgs",
+            max_iter=500,
+            class_weight=class_weight,
+            random_state=42,
+        )
+        model.fit(X_scaled, y_train)
+
+        def predict_fn(X):
+            X_s = scaler.transform(X)
+            return model.predict_proba(X_s)[:, 1].tolist()
+
+        return predict_fn, {"type": "LogisticRegression", "C": 0.1, "penalty": "l2"}
+
+    except ImportError:
+        logger.warning("  sklearn not available, skipping LogisticRegression")
+        return None, None
+
+
 def _train_adaboost_fallback(X_train, y_train):
     """Fallback: pure Python AdaBoost with decision stumps."""
     n = len(y_train)
@@ -847,8 +921,28 @@ def train_final_model(samples, events_t0, class_weight_ratio=1,
         logger.info("  %s: AUC=%.4f (%s)", sf["feature"], sf["auc"], sf["direction"])
 
     # Export level-0 predictions for ensemble stacking (Initiative 4)
+    # Primary model: HistGBT
     export_level0_predictions(
         target_name, test_probs_cal, test_y, test_cells, test_t_days)
+
+    # Diverse level-0 models: RandomForest + LogisticRegression
+    # These provide genuinely different error patterns for stacking.
+    diverse_models_info = {}
+    for model_name, train_fn in [("rf", train_random_forest),
+                                  ("lr", train_logistic)]:
+        logger.info("--- Training %s for level-0 diversity [%s] ---", model_name, target_name)
+        alt_predict_fn, alt_info = train_fn(train_X, train_y, class_weight_ratio)
+        if alt_predict_fn is not None:
+            alt_probs = alt_predict_fn(test_X)
+            _, alt_auc = compute_roc(test_y, alt_probs)
+            logger.info("  %s test AUC: %.4f [%s]", model_name, alt_auc, target_name)
+            export_level0_predictions(
+                target_name, alt_probs, test_y, test_cells, test_t_days,
+                model_prefix=model_name)
+            diverse_models_info[model_name] = {
+                "info": alt_info,
+                "auc_test": round(alt_auc, 4),
+            }
 
     return {
         "target": target_name,
@@ -880,15 +974,23 @@ def train_final_model(samples, events_t0, class_weight_ratio=1,
 # Level-0 prediction export (for ensemble stacking)
 # ---------------------------------------------------------------------------
 
-def export_level0_predictions(target_name, probs, labels, cells, t_days_list):
+def export_level0_predictions(target_name, probs, labels, cells, t_days_list,
+                              model_prefix=""):
     """Export level-0 predictions for ensemble stacking.
 
-    Saves to results/level0_predictions_{target}.json with per-sample
+    Saves to results/level0_predictions_{model}_{target}.json with per-sample
     probability, label, cell coordinates, and time step.
+
+    Args:
+        model_prefix: "" for HistGBT (default), "rf" for RandomForest,
+                      "lr" for LogisticRegression.
     """
     RESULTS_DIR.mkdir(exist_ok=True)
     safe_name = target_name.replace("+", "plus").replace(".", "")
-    out_path = RESULTS_DIR / f"level0_predictions_{safe_name}.json"
+    if model_prefix:
+        out_path = RESULTS_DIR / f"level0_predictions_{model_prefix}_{safe_name}.json"
+    else:
+        out_path = RESULTS_DIR / f"level0_predictions_{safe_name}.json"
 
     records = []
     for prob, label, (clat, clon), t_day in zip(probs, labels, cells, t_days_list):
@@ -910,6 +1012,124 @@ def export_level0_predictions(target_name, probs, labels, cells, t_days_list):
     with open(out_path, "w") as f:
         json.dump(data, f, indent=None, ensure_ascii=False)
     logger.info("  Level-0 predictions exported: %s (%d samples)", out_path.name, len(records))
+
+
+def export_spatial_feature_matrix(events, fm_dict, t0, etas_params=None,
+                                   zone_etas=None, gnss_data=None,
+                                   metadata=None, **data_kwargs):
+    """Export full spatial feature matrix for ConvLSTM training.
+
+    Uses the same FeatureExtractor and data sources as ml_prediction,
+    so all features have real data (not zero-filled).
+
+    Output: results/feature_matrix.json — 4D tensor (T, H=11, W=11, C)
+    """
+    active_feature_names = metadata.get("features", FEATURE_NAMES) if metadata else FEATURE_NAMES
+    feature_mask = metadata.get("feature_mask") if metadata else list(range(N_FEATURES))
+    n_features = len(active_feature_names)
+
+    # Grid dimensions
+    GRID_H = int((GRID_LAT_MAX - GRID_LAT_MIN) / CELL_SIZE_DEG) + 1
+    GRID_W = int((GRID_LON_MAX - GRID_LON_MIN) / CELL_SIZE_DEG) + 1
+
+    # Build extractor with all data sources
+    extractor = FeatureExtractor(
+        events, fm_dict, t0, etas_params,
+        zone_etas_params=zone_etas,
+        gnss_data=gnss_data,
+        **data_kwargs,
+    )
+
+    # Target events by cell (M5+ for ConvLSTM)
+    target_by_cell = {}
+    for e in events:
+        if e["mag"] >= 5.0:
+            ck = cell_key(e["lat"], e["lon"])
+            target_by_cell.setdefault(ck, []).append(e["t_days"])
+
+    # Grid cell coordinates
+    cell_coords_grid = []
+    for lat in range(GRID_LAT_MIN, GRID_LAT_MAX + 1, int(CELL_SIZE_DEG)):
+        row = []
+        for lon in range(GRID_LON_MIN, GRID_LON_MAX + 1, int(CELL_SIZE_DEG)):
+            row.append([float(lat), float(lon)])
+        cell_coords_grid.append(row)
+
+    # Generate time steps
+    total_t_days = events[-1]["t_days"]
+    start_day = 180
+    end_day = total_t_days - 7  # 7-day prediction window
+
+    timestep_features = []
+    day = start_day
+    n_steps = 0
+
+    while day <= end_day:
+        features_grid = []
+        labels_grid = []
+
+        for lat in range(GRID_LAT_MIN, GRID_LAT_MAX + 1, int(CELL_SIZE_DEG)):
+            feat_row = []
+            label_row = []
+            for lon in range(GRID_LON_MIN, GRID_LON_MAX + 1, int(CELL_SIZE_DEG)):
+                clat, clon = float(lat), float(lon)
+                full_features = extractor.extract(clat, clon, day)
+                # Apply same feature mask as ML pipeline
+                features = [full_features[i] for i in feature_mask]
+                label = generate_label(clat, clon, day, target_by_cell, 7)
+                feat_row.append(features)
+                label_row.append(label)
+            features_grid.append(feat_row)
+            labels_grid.append(label_row)
+
+        timestep_features.append({
+            "t_days": round(day, 1),
+            "features": features_grid,
+            "labels": labels_grid,
+        })
+
+        n_steps += 1
+        day += 3  # same step_days as M5+ target
+
+        if n_steps % 500 == 0:
+            logger.info("  Feature matrix: %d time steps (day %.0f/%.0f)...",
+                        n_steps, day, end_day)
+
+    total_pos = sum(
+        sum(sum(row) for row in ts["labels"])
+        for ts in timestep_features
+    )
+
+    logger.info("  Feature matrix: %d steps, grid %d×%d, %d features, %d positive cells",
+                n_steps, GRID_H, GRID_W, n_features, total_pos)
+
+    # Save
+    output_data = {
+        "metadata": {
+            "n_timesteps": n_steps,
+            "grid_h": GRID_H,
+            "grid_w": GRID_W,
+            "n_features": n_features,
+            "feature_names": active_feature_names,
+            "cell_size_deg": CELL_SIZE_DEG,
+            "grid_lat_range": [GRID_LAT_MIN, GRID_LAT_MAX],
+            "grid_lon_range": [GRID_LON_MIN, GRID_LON_MAX],
+            "prediction_window_days": 7,
+            "min_target_mag": 5.0,
+            "step_days": 3,
+            "total_positives": total_pos,
+        },
+        "cell_coords": cell_coords_grid,
+        "timesteps": timestep_features,
+    }
+
+    RESULTS_DIR.mkdir(exist_ok=True)
+    out_path = RESULTS_DIR / "feature_matrix.json"
+    with open(out_path, "w") as f:
+        json.dump(output_data, f, indent=None, ensure_ascii=False)
+
+    size_mb = out_path.stat().st_size / (1024 * 1024)
+    logger.info("  Feature matrix saved: %s (%.1f MB)", out_path, size_mb)
 
 
 # ---------------------------------------------------------------------------
@@ -1967,6 +2187,42 @@ async def run_ml_prediction():
             },
             "final_model": final_results,
         }
+
+    # --- Export spatial feature matrix for ConvLSTM ---
+    # Uses the same data sources loaded above, so all features have real data.
+    if primary_metadata:
+        logger.info("--- Exporting spatial feature matrix for ConvLSTM ---")
+        try:
+            export_spatial_feature_matrix(
+                events, fm_dict, t0, global_etas,
+                zone_etas=zone_etas,
+                gnss_data=gnss_data,
+                cosmic_ray_data=cosmic_ray_data,
+                lightning_data=lightning_data,
+                geomag_spectral_data=geomag_spectral_data,
+                animal_data=animal_data,
+                olr_data=olr_data,
+                earth_rotation_data=earth_rotation_data,
+                solar_wind_data=solar_wind_data,
+                gravity_data=gravity_data,
+                so2_data=so2_data,
+                soil_moisture_data=soil_moisture_data,
+                tide_gauge_data=tide_gauge_data,
+                ocean_color_data=ocean_color_data,
+                cloud_fraction_data=cloud_fraction_data,
+                nightlight_data=nightlight_data,
+                insar_data=insar_data,
+                goes_xray_data=goes_xray_data,
+                goes_proton_data=goes_proton_data,
+                tidal_stress_data=tidal_stress_data,
+                particle_flux_data=particle_flux_data,
+                dart_pressure_data=dart_pressure_data,
+                ioc_sealevel_data=ioc_sealevel_data,
+                snet_pressure_data=snet_pressure_data,
+                metadata=primary_metadata,
+            )
+        except Exception as e:
+            logger.warning("Feature matrix export failed (non-fatal): %s", e)
 
     # Compile results
     results = {

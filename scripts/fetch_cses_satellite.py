@@ -73,8 +73,10 @@ CSES_DELAY = 2.0
 HOURLY_START_YEAR = 2011
 HOURLY_END_YEAR = 2026
 
-# Max days per station per run to avoid extremely long runs
-MAX_DAYS_PER_STATION = 500
+# Max days per station per run — increased from 500 to 2000 for faster backfill.
+# 3 stations × 2000 days ÷ 7-day batches ≈ 860 requests at 2s delay ≈ 30 min.
+# Well within GitHub Actions 6h limit.
+MAX_DAYS_PER_STATION = 2000
 
 
 async def init_satellite_tables():

@@ -17,6 +17,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from stacking import (
     LEVEL0_FEATURE_NAMES,
+    LEVEL0_FEATURE_NAMES_BASE,
+    LEVEL0_FEATURE_NAMES_DIVERSE,
     StackingEnsemble,
     walk_forward_stacking,
 )
@@ -29,13 +31,15 @@ RESULTS_DIR = Path(__file__).parent.parent / "results"
 
 
 def load_level0_predictions():
-    """Load ML level-0 predictions for all targets.
+    """Load ML level-0 predictions for all targets and models.
 
     Returns:
         dict: {target_name: {(cell_lat, cell_lon, t_days): probability}}
+        Also loads diverse model predictions (rf_, lr_) when available.
     """
     predictions = {}
 
+    # HistGBT (primary)
     for target_suffix in ["M5plus", "M55plus", "M6plus"]:
         target_file = RESULTS_DIR / f"level0_predictions_{target_suffix}.json"
         if not target_file.exists():
@@ -56,6 +60,29 @@ def load_level0_predictions():
 
         predictions[target_name] = preds
         logger.info("  Loaded %s: %d predictions", target_name, len(preds))
+
+    # Diverse models (rf_, lr_) — optional
+    for model_prefix in ["rf", "lr"]:
+        for target_suffix in ["M5plus", "M55plus", "M6plus"]:
+            target_file = RESULTS_DIR / f"level0_predictions_{model_prefix}_{target_suffix}.json"
+            if not target_file.exists():
+                continue
+
+            with open(target_file) as f:
+                data = json.load(f)
+
+            target_name = data.get("target", target_suffix)
+            key_name = f"{model_prefix}_{target_name}"
+            preds = {}
+            for rec in data.get("predictions", []):
+                key = (rec["cell_lat"], rec["cell_lon"], rec["t_days"])
+                preds[key] = {
+                    "prob": rec["prob"],
+                    "label": rec["label"],
+                }
+
+            predictions[key_name] = preds
+            logger.info("  Loaded %s: %d predictions", key_name, len(preds))
 
     return predictions
 
@@ -95,11 +122,15 @@ def merge_level0_features(ml_predictions, physics_alarms):
     Phase 8.1 fix: physics alarms are now generated at the same (cell, t_days)
     keys as ML level-0, so exact key matching works. No fuzzy matching needed.
 
+    Supports diverse models (rf_, lr_) when available. Falls back to base
+    8-feature vector if diverse model predictions are missing.
+
     Returns:
-        level0_data: list of feature vectors (8 features each)
+        level0_data: list of feature vectors (8 or 14 features each)
         labels: list of binary labels
         t_days_list: list of time values
         keys: list of (cell_lat, cell_lon, t_days) tuples
+        active_feature_names: list of feature names actually used
     """
     # Get the primary target (M5+) as reference for keys and labels
     m5_preds = ml_predictions.get("M5+", {})
@@ -108,7 +139,33 @@ def merge_level0_features(ml_predictions, physics_alarms):
 
     if not m5_preds:
         logger.error("  No M5+ predictions available for stacking")
-        return [], [], [], []
+        return [], [], [], [], []
+
+    # Check for diverse model predictions
+    rf_m5 = ml_predictions.get("rf_M5+", {})
+    rf_m55 = ml_predictions.get("rf_M5.5+", {})
+    rf_m6 = ml_predictions.get("rf_M6+", {})
+    lr_m5 = ml_predictions.get("lr_M5+", {})
+    lr_m55 = ml_predictions.get("lr_M5.5+", {})
+    lr_m6 = ml_predictions.get("lr_M6+", {})
+
+    has_rf = bool(rf_m5)
+    has_lr = bool(lr_m5)
+
+    if has_rf and has_lr:
+        logger.info("  Diverse models available: RF + LR → 14 level-0 features")
+        active_feature_names = list(LEVEL0_FEATURE_NAMES)
+    elif has_rf:
+        logger.info("  Diverse models: RF only → 11 level-0 features")
+        active_feature_names = list(LEVEL0_FEATURE_NAMES_BASE) + [
+            "rf_m5_prob", "rf_m55_prob", "rf_m6_prob"]
+    elif has_lr:
+        logger.info("  Diverse models: LR only → 11 level-0 features")
+        active_feature_names = list(LEVEL0_FEATURE_NAMES_BASE) + [
+            "lr_m5_prob", "lr_m55_prob", "lr_m6_prob"]
+    else:
+        logger.info("  No diverse models available, using base 8 features")
+        active_feature_names = list(LEVEL0_FEATURE_NAMES_BASE)
 
     level0_data = []
     labels = []
@@ -120,7 +177,7 @@ def merge_level0_features(ml_predictions, physics_alarms):
     for key, m5_info in m5_preds.items():
         cell_lat, cell_lon, t_days = key
 
-        # ML probabilities
+        # HistGBT ML probabilities
         ml_m5 = m5_info["prob"]
         ml_m55 = m55_preds.get(key, {}).get("prob", 0.0)
         ml_m6 = m6_preds.get(key, {}).get("prob", 0.0)
@@ -151,6 +208,20 @@ def merge_level0_features(ml_predictions, physics_alarms):
             physics["n_alarms"],
         ]
 
+        # Append diverse model predictions (when available)
+        if has_rf:
+            feature_vec.extend([
+                rf_m5.get(key, {}).get("prob", ml_m5 * 0.5),  # fallback: dampened HistGBT
+                rf_m55.get(key, {}).get("prob", ml_m55 * 0.5),
+                rf_m6.get(key, {}).get("prob", ml_m6 * 0.5),
+            ])
+        if has_lr:
+            feature_vec.extend([
+                lr_m5.get(key, {}).get("prob", ml_m5 * 0.5),
+                lr_m55.get(key, {}).get("prob", ml_m55 * 0.5),
+                lr_m6.get(key, {}).get("prob", ml_m6 * 0.5),
+            ])
+
         level0_data.append(feature_vec)
         labels.append(m5_info["label"])
         t_days_list.append(t_days)
@@ -159,22 +230,26 @@ def merge_level0_features(ml_predictions, physics_alarms):
     match_rate = n_matched / max(n_matched + n_missed, 1) * 100
     logger.info("  Physics alarm match rate: %d/%d (%.1f%%)",
                 n_matched, n_matched + n_missed, match_rate)
-    logger.info("  Merged stacking dataset: %d samples, %d positive (%.2f%%)",
+    logger.info("  Merged stacking dataset: %d samples, %d positive (%.2f%%), %d features",
                 len(labels), sum(labels),
-                100 * sum(labels) / max(len(labels), 1))
+                100 * sum(labels) / max(len(labels), 1),
+                len(active_feature_names))
 
-    return level0_data, labels, t_days_list, keys
+    return level0_data, labels, t_days_list, keys, active_feature_names
 
 
-def compare_with_single_models(level0_data, labels, t_days_list):
+def compare_with_single_models(level0_data, labels, t_days_list,
+                               active_feature_names=None):
     """Compare stacked ensemble vs best single model AUC."""
     if not level0_data or not labels:
         return {}
 
+    feature_names = active_feature_names or LEVEL0_FEATURE_NAMES
+
     results = {}
 
     # Individual feature AUCs
-    for i, name in enumerate(LEVEL0_FEATURE_NAMES[:len(level0_data[0])]):
+    for i, name in enumerate(feature_names[:len(level0_data[0])]):
         vals = [row[i] for row in level0_data]
         if len(set(vals)) < 2:
             results[name] = {"auc": 0.5}
@@ -182,10 +257,22 @@ def compare_with_single_models(level0_data, labels, t_days_list):
         _, auc = compute_roc(labels, vals)
         results[name] = {"auc": round(auc, 4)}
 
-    # Simple average of ML probs
+    # Simple average of HistGBT ML probs
     avg_probs = [sum(row[:3]) / 3 for row in level0_data]
     _, avg_auc = compute_roc(labels, avg_probs)
     results["ml_average"] = {"auc": round(avg_auc, 4)}
+
+    # If diverse models available, average ALL ML probs
+    n_features = len(level0_data[0])
+    if n_features > 8:
+        # Indices 0-2: HistGBT, 8-10: RF (if present), 11-13: LR (if present)
+        ml_indices = [i for i, name in enumerate(feature_names)
+                      if name.endswith("_prob")]
+        if ml_indices:
+            all_ml_avg = [sum(row[i] for i in ml_indices) / len(ml_indices)
+                          for row in level0_data]
+            _, all_avg_auc = compute_roc(labels, all_ml_avg)
+            results["ml_all_average"] = {"auc": round(all_avg_auc, 4)}
 
     return results
 
@@ -210,7 +297,7 @@ def main():
 
     # Merge features
     logger.info("--- Merging level-0 features ---")
-    level0_data, labels, t_days_list, keys = merge_level0_features(
+    level0_data, labels, t_days_list, keys, active_feature_names = merge_level0_features(
         ml_predictions, physics_alarms)
 
     if len(level0_data) < 100:
@@ -219,7 +306,8 @@ def main():
 
     # Compare individual features
     logger.info("--- Individual feature AUCs ---")
-    single_results = compare_with_single_models(level0_data, labels, t_days_list)
+    single_results = compare_with_single_models(
+        level0_data, labels, t_days_list, active_feature_names)
     for name, info in sorted(single_results.items(), key=lambda x: -x[1].get("auc", 0)):
         logger.info("  %s: AUC=%.4f", name, info.get("auc", 0))
 
@@ -257,7 +345,7 @@ def main():
         "timestamp": timestamp,
         "n_samples": len(level0_data),
         "n_positive": sum(labels),
-        "level0_features": LEVEL0_FEATURE_NAMES[:len(level0_data[0])] if level0_data else [],
+        "level0_features": active_feature_names or LEVEL0_FEATURE_NAMES_BASE,
         "single_model_aucs": single_results,
         "stacking": stacking_results,
         "comparison": {
