@@ -19,6 +19,7 @@ All features are STRICTLY prospective: only data before t_now is used.
 import bisect
 import logging
 import math
+from collections import deque
 from typing import Optional
 
 from physics import (
@@ -299,24 +300,36 @@ class FeatureExtractor:
         self.tidal_stress_data = tidal_stress_data or {}
         self.particle_flux_data = particle_flux_data or {}
 
-        # Pre-compute cell → zone mapping
+        # Pre-compute cell → zone mapping + zone → cells index
         self.cell_zone = {}
+        self.zone_cells = {}  # zone_name -> list of cell_keys
         for lat in range(GRID_LAT_MIN, GRID_LAT_MAX + 1, int(CELL_SIZE_DEG)):
             for lon in range(GRID_LON_MIN, GRID_LON_MAX + 1, int(CELL_SIZE_DEG)):
                 ck = (float(lat), float(lon))
-                self.cell_zone[ck] = classify_tectonic_zone(float(lat), float(lon))
+                zone = classify_tectonic_zone(float(lat), float(lon))
+                self.cell_zone[ck] = zone
+                self.zone_cells.setdefault(zone, []).append(ck)
 
-        # Index events by 2° cell
+        # Index events by 2° cell (sorted by t_days for bisect)
         self.cell_events = {}
         for e in events:
             ck = cell_key(e["lat"], e["lon"])
             self.cell_events.setdefault(ck, []).append(e)
+        # Sort and build bisect key arrays
+        self.cell_events_tdays = {}  # cell -> sorted list of t_days
+        for ck, evs in self.cell_events.items():
+            evs.sort(key=lambda e: e["t_days"])
+            self.cell_events_tdays[ck] = [e["t_days"] for e in evs]
 
-        # Index by 1° cell (foreshock counting)
+        # Index by 1° cell (foreshock counting, sorted)
         self.cell_events_1deg = {}
+        self.cell_events_1deg_tdays = {}
         for e in events:
             k1 = (round(e["lat"]), round(e["lon"]))
             self.cell_events_1deg.setdefault(k1, []).append(e)
+        for k1, evs in self.cell_events_1deg.items():
+            evs.sort(key=lambda e: e["t_days"])
+            self.cell_events_1deg_tdays[k1] = [e["t_days"] for e in evs]
 
         # Long-term rates per cell
         total_days = max(self.all_t_days[-1] - self.all_t_days[0], 1)
@@ -335,17 +348,22 @@ class FeatureExtractor:
         self._cfs_idx = 0
         self._m55_events = [e for e in events if e["mag"] >= 5.5]
 
-        # PI rate history per cell
-        self.pi_history = {}
+        # PI rate history per cell (deque for auto-truncation)
+        self.pi_history = {}  # cell -> deque(maxlen=240)
 
         # Rate history per cell (for trend computation)
-        self.rate_history = {}  # cell -> list of (t_days, rate_7d)
+        self.rate_history = {}  # cell -> deque(maxlen=20)
 
         # b-value history per cell (for trend)
-        self.b_history = {}  # cell -> list of (t_days, b_value)
+        self.b_history = {}  # cell -> deque(maxlen=20)
 
         # ETAS residual history per cell (for trend)
-        self.etas_resid_history = {}
+        self.etas_resid_history = {}  # cell -> deque(maxlen=20)
+
+        # Per-day caches (reset when t_now_days changes)
+        self._cached_day = None
+        self._cached_date_str = None
+        self._cached_zone_stats = {}  # zone -> (mean_rate, cfs_values_sorted)
 
     def _update_cfs(self, t_now_days):
         """Incrementally add CFS from M5.5+ events up to t_now."""
@@ -377,19 +395,53 @@ class FeatureExtractor:
 
             self._cfs_idx += 1
 
-    def _count_in_window(self, cell_evs, t_start, t_end):
-        """Count events in [t_start, t_end) using linear scan."""
-        return sum(1 for e in cell_evs if t_start <= e["t_days"] < t_end)
+    def _count_in_window_bisect(self, tdays_list, t_start, t_end):
+        """Count events in [t_start, t_end) using bisect on sorted t_days."""
+        lo = bisect.bisect_left(tdays_list, t_start)
+        hi = bisect.bisect_left(tdays_list, t_end)
+        return hi - lo
 
-    def _events_in_window(self, cell_evs, t_start, t_end):
-        """Get events in [t_start, t_end)."""
-        return [e for e in cell_evs if t_start <= e["t_days"] < t_end]
+    def _events_in_window_bisect(self, cell_evs, tdays_list, t_start, t_end):
+        """Get events in [t_start, t_end) using bisect on sorted t_days."""
+        lo = bisect.bisect_left(tdays_list, t_start)
+        hi = bisect.bisect_left(tdays_list, t_end)
+        return cell_evs[lo:hi]
 
     def _t_days_to_date(self, t_days: float) -> str:
         """Convert t_days offset to YYYY-MM-DD date string."""
         from datetime import timedelta
         dt = self.t0 + timedelta(days=t_days)
         return dt.strftime("%Y-%m-%d")
+
+    def _get_date_str(self, t_now_days: float) -> str:
+        """Cached date string conversion (same for all cells at same day)."""
+        if self._cached_day != t_now_days:
+            self._cached_day = t_now_days
+            self._cached_date_str = self._t_days_to_date(t_now_days)
+            self._cached_zone_stats = {}  # invalidate zone cache
+        return self._cached_date_str
+
+    def _get_zone_stats(self, zone, t_7, t_now_days):
+        """Cached zone-level rate stats (computed once per day per zone)."""
+        if zone in self._cached_zone_stats:
+            return self._cached_zone_stats[zone]
+
+        zone_rates = []
+        zone_cfs_values = []
+        for other_ck in self.zone_cells.get(zone, []):
+            other_tdays = self.cell_events_tdays.get(other_ck, [])
+            other_rate = self._count_in_window_bisect(other_tdays, t_7, t_now_days)
+            zone_rates.append((other_ck, other_rate))
+            zone_cfs_values.append(self.cfs_map.get(other_ck, 0.0))
+
+        result = {
+            "rates": zone_rates,  # list of (ck, rate)
+            "mean_rate": (sum(r for _, r in zone_rates) / max(len(zone_rates), 1)
+                          if zone_rates else 0.0),
+            "cfs_sorted": sorted(zone_cfs_values),
+        }
+        self._cached_zone_stats[zone] = result
+        return result
 
     def _get_etas_for_cell(self, cell_lat, cell_lon):
         """Get ETAS parameters for a cell, using zone-specific if available."""
@@ -405,8 +457,12 @@ class FeatureExtractor:
         ck = (cell_lat, cell_lon) if cell_lat is not None else (0, 0)
         mu = self.mu_bg.get(ck, 0.01)
         t_start = t_now_days - window_days
-        prior = [(e["t_days"], e["mag"]) for e in cell_evs if e["t_days"] < t_start]
-        prior = prior[-2000:]  # limit for speed
+        # Use bisect to find events before t_start efficiently
+        tdays_list = self.cell_events_tdays.get(ck, [])
+        hi = bisect.bisect_left(tdays_list, t_start)
+        # Take last 2000 events before t_start
+        lo = max(0, hi - 2000)
+        prior = [(cell_evs[i]["t_days"], cell_evs[i]["mag"]) for i in range(lo, hi)]
 
         # Use zone-specific ETAS parameters if available
         if cell_lat is not None and cell_lon is not None:
@@ -453,6 +509,7 @@ class FeatureExtractor:
         """
         ck = (cell_lat, cell_lon)
         cell_evs = self.cell_events.get(ck, [])
+        cell_tdays = self.cell_events_tdays.get(ck, [])
 
         # Time windows
         t_3 = t_now_days - 3
@@ -464,17 +521,17 @@ class FeatureExtractor:
         t_180 = t_now_days - 180
         t_365 = t_now_days - 365
 
-        evs_3d = self._events_in_window(cell_evs, t_3, t_now_days)
-        evs_7d = self._events_in_window(cell_evs, t_7, t_now_days)
-        evs_14d = self._events_in_window(cell_evs, t_14, t_now_days)
-        evs_30d = self._events_in_window(cell_evs, t_30, t_now_days)
-        evs_90d = self._events_in_window(cell_evs, t_90, t_now_days)
-        evs_180d = self._events_in_window(cell_evs, t_180, t_now_days)
+        evs_3d = self._events_in_window_bisect(cell_evs, cell_tdays, t_3, t_now_days)
+        evs_7d = self._events_in_window_bisect(cell_evs, cell_tdays, t_7, t_now_days)
+        evs_14d = self._events_in_window_bisect(cell_evs, cell_tdays, t_14, t_now_days)
+        evs_30d = self._events_in_window_bisect(cell_evs, cell_tdays, t_30, t_now_days)
+        evs_90d = self._events_in_window_bisect(cell_evs, cell_tdays, t_90, t_now_days)
+        evs_180d = self._events_in_window_bisect(cell_evs, cell_tdays, t_180, t_now_days)
 
         # Previous windows (for acceleration)
-        evs_prev_7d = self._events_in_window(cell_evs, t_14, t_7)
-        evs_prev_30d = self._events_in_window(cell_evs, t_60, t_30)
-        evs_prev_3d = self._events_in_window(cell_evs, t_7 + 1, t_3)
+        evs_prev_7d = self._events_in_window_bisect(cell_evs, cell_tdays, t_14, t_7)
+        evs_prev_30d = self._events_in_window_bisect(cell_evs, cell_tdays, t_60, t_30)
+        evs_prev_3d = self._events_in_window_bisect(cell_evs, cell_tdays, t_7 + 1, t_3)
 
         # --- A. Rate statistics ---
         rate_7d = len(evs_7d)
@@ -493,13 +550,11 @@ class FeatureExtractor:
         rate_accel_30d = (rate_30d - rate_prev_30d) / 30.0
 
         # Rate trend: linear slope of 7d-rate sampled every 7d over 60 days
-        hist = self.rate_history.get(ck, [])
-        hist.append((t_now_days, rate_7d))
-        # Keep only last 20 entries (140 days if step=7d)
-        if len(hist) > 20:
-            hist = hist[-20:]
-        self.rate_history[ck] = hist
-        rate_values = [v for _, v in hist[-9:]]  # last ~60 days
+        if ck not in self.rate_history:
+            self.rate_history[ck] = deque(maxlen=20)
+        self.rate_history[ck].append((t_now_days, rate_7d))
+        hist = self.rate_history[ck]
+        rate_values = [v for _, v in list(hist)[-9:]]  # last ~60 days
         rate_trend_slope = self._linear_slope(rate_values)
 
         # --- C. ETAS residuals (zone-aware) ---
@@ -511,12 +566,10 @@ class FeatureExtractor:
         etas_residual_30d = rate_30d / max(etas_exp_30d, 0.1)
 
         # ETAS residual trend
-        resid_hist = self.etas_resid_history.get(ck, [])
-        resid_hist.append(etas_residual_7d)
-        if len(resid_hist) > 20:
-            resid_hist = resid_hist[-20:]
-        self.etas_resid_history[ck] = resid_hist
-        etas_residual_trend = self._linear_slope(resid_hist[-9:])
+        if ck not in self.etas_resid_history:
+            self.etas_resid_history[ck] = deque(maxlen=20)
+        self.etas_resid_history[ck].append(etas_residual_7d)
+        etas_residual_trend = self._linear_slope(list(self.etas_resid_history[ck])[-9:])
 
         # --- D. Magnitude statistics ---
         max_mag_7d = max((e["mag"] for e in evs_7d), default=0.0)
@@ -536,22 +589,19 @@ class FeatureExtractor:
         b_val = b_value_aki(mags_90d) or 1.0
 
         # b-value trend
-        b_hist = self.b_history.get(ck, [])
-        b_hist.append(b_val)
-        if len(b_hist) > 20:
-            b_hist = b_hist[-20:]
-        self.b_history[ck] = b_hist
-        b_value_trend = self._linear_slope(b_hist[-6:])  # ~6 months
+        if ck not in self.b_history:
+            self.b_history[ck] = deque(maxlen=20)
+        self.b_history[ck].append(b_val)
+        b_value_trend = self._linear_slope(list(self.b_history[ck])[-6:])
 
         # --- E. Clustering ---
-        # Foreshock count (1° box, 7 days)
+        # Foreshock count (1° box, 7 days) — bisect
         n_foreshock = 0
         for dlat in (-1, 0, 1):
             for dlon in (-1, 0, 1):
                 k1 = (round(cell_lat) + dlat, round(cell_lon) + dlon)
-                for e in self.cell_events_1deg.get(k1, []):
-                    if t_7 <= e["t_days"] < t_now_days:
-                        n_foreshock += 1
+                k1_tdays = self.cell_events_1deg_tdays.get(k1, [])
+                n_foreshock += self._count_in_window_bisect(k1_tdays, t_7, t_now_days)
 
         # Foreshock magnitude escalation
         max_mag_prev_3d = max((e["mag"] for e in evs_prev_3d), default=0.0)
@@ -606,13 +656,12 @@ class FeatureExtractor:
         )
 
         # --- G. Pattern Informatics ---
-        pi_hist = self.pi_history.get(ck, [])
-        pi_hist.append(rate_7d)
-        if len(pi_hist) > 240:
-            pi_hist = pi_hist[-240:]
-        self.pi_history[ck] = pi_hist
+        if ck not in self.pi_history:
+            self.pi_history[ck] = deque(maxlen=240)
+        self.pi_history[ck].append(rate_7d)
+        pi_hist = self.pi_history[ck]
 
-        recent_pi = pi_hist[-240:]
+        recent_pi = list(pi_hist)
         if len(recent_pi) >= 4:
             changes = [recent_pi[i] - recent_pi[i - 1] for i in range(1, len(recent_pi))]
             mean_c = sum(changes) / len(changes)
@@ -652,18 +701,20 @@ class FeatureExtractor:
 
         log_days_since_m5 = math.log10(days_since_m5 + 1)
 
-        # --- J. Spatial context ---
+        # --- J. Spatial context --- (bisect + cache neighbor rates for M reuse)
         neighbor_rate_sum = 0
         neighbor_rates = []
+        _neighbor_data = {}  # nk -> {rate, evs, tdays} for reuse in section M
         for dlat in (-CELL_SIZE_DEG, 0, CELL_SIZE_DEG):
             for dlon in (-CELL_SIZE_DEG, 0, CELL_SIZE_DEG):
                 if dlat == 0 and dlon == 0:
                     continue
                 nk = (cell_lat + dlat, cell_lon + dlon)
-                n_evs = self.cell_events.get(nk, [])
-                n_rate = sum(1 for e in n_evs if t_7 <= e["t_days"] < t_now_days)
+                n_tdays = self.cell_events_tdays.get(nk, [])
+                n_rate = self._count_in_window_bisect(n_tdays, t_7, t_now_days)
                 neighbor_rate_sum += n_rate
                 neighbor_rates.append(n_rate)
+                _neighbor_data[nk] = {"rate": n_rate, "tdays": n_tdays}
 
         mean_neighbor_rate = sum(neighbor_rates) / max(len(neighbor_rates), 1)
         rate_spatial_anomaly = rate_7d / max(mean_neighbor_rate, 0.1)
@@ -733,9 +784,11 @@ class FeatureExtractor:
                         gnss_vertical_rate = (vert_data[-1][1] - vert_data[0][1]) / vdt
 
                 # Transient score (slow-slip detection)
+                # Limit to last 180 days for efficiency
                 disp_timeseries = []
+                t_trans_start = t_now_days - 180
                 for snapshot in cell_gnss:
-                    if snapshot["t_days"] < t_now_days:
+                    if t_trans_start <= snapshot["t_days"] < t_now_days:
                         total_d = 0
                         n_s = 0
                         for s in snapshot.get("stations", []):
@@ -764,53 +817,43 @@ class FeatureExtractor:
                     gnss_disp_accel = mean_recent / max(mean_prev, 0.01)
 
         # --- M. Enhanced spatial features (Phase 7) ---
+        # Reuse neighbor data from section J (no re-scanning)
         neighbor_cfs_max = 0.0
         neighbor_etas_resid_max = 0.0
         neighbor_max_mag_7d = 0.0
 
-        for dlat in (-CELL_SIZE_DEG, 0, CELL_SIZE_DEG):
-            for dlon in (-CELL_SIZE_DEG, 0, CELL_SIZE_DEG):
-                if dlat == 0 and dlon == 0:
-                    continue
-                nk = (cell_lat + dlat, cell_lon + dlon)
+        for nk, nd in _neighbor_data.items():
+            # Neighbor CFS
+            n_cfs = self.cfs_map.get(nk, 0.0)
+            if n_cfs > neighbor_cfs_max:
+                neighbor_cfs_max = n_cfs
 
-                # Neighbor CFS
-                n_cfs = self.cfs_map.get(nk, 0.0)
-                if n_cfs > neighbor_cfs_max:
-                    neighbor_cfs_max = n_cfs
+            # Neighbor ETAS residual (reuse cached rate)
+            n_evs = self.cell_events.get(nk, [])
+            n_etas_exp = self._compute_etas_expected(n_evs, t_now_days, 7, nk[0], nk[1])
+            n_etas_resid = nd["rate"] / max(n_etas_exp, 0.1)
+            if n_etas_resid > neighbor_etas_resid_max:
+                neighbor_etas_resid_max = n_etas_resid
 
-                # Neighbor ETAS residual
-                n_evs = self.cell_events.get(nk, [])
-                n_rate_7d = sum(1 for e in n_evs if t_7 <= e["t_days"] < t_now_days)
-                n_etas_exp = self._compute_etas_expected(n_evs, t_now_days, 7, nk[0], nk[1])
-                n_etas_resid = n_rate_7d / max(n_etas_exp, 0.1)
-                if n_etas_resid > neighbor_etas_resid_max:
-                    neighbor_etas_resid_max = n_etas_resid
+            # Neighbor max magnitude (7d) — bisect
+            n_tdays = nd["tdays"]
+            lo = bisect.bisect_left(n_tdays, t_7)
+            hi = bisect.bisect_left(n_tdays, t_now_days)
+            for idx in range(lo, hi):
+                mag = n_evs[idx]["mag"]
+                if mag > neighbor_max_mag_7d:
+                    neighbor_max_mag_7d = mag
 
-                # Neighbor max magnitude (7d)
-                for e in n_evs:
-                    if t_7 <= e["t_days"] < t_now_days and e["mag"] > neighbor_max_mag_7d:
-                        neighbor_max_mag_7d = e["mag"]
-
-        # Zone-level statistics
+        # Zone-level statistics (cached per day)
         zone = self.cell_zone.get(ck, "other")
-        zone_rates = []
-        zone_cfs_values = []
-        for other_ck, other_zone in self.cell_zone.items():
-            if other_zone == zone and other_ck != ck:
-                other_evs = self.cell_events.get(other_ck, [])
-                other_rate = sum(1 for e in other_evs if t_7 <= e["t_days"] < t_now_days)
-                zone_rates.append(other_rate)
-                zone_cfs_values.append(self.cfs_map.get(other_ck, 0.0))
-
-        zone_mean_rate = sum(zone_rates) / max(len(zone_rates), 1) if zone_rates else rate_7d
+        zstats = self._get_zone_stats(zone, t_7, t_now_days)
+        zone_mean_rate = zstats["mean_rate"] if zstats["mean_rate"] > 0 else rate_7d
         zone_rate_anomaly = rate_7d / max(zone_mean_rate, 0.1)
 
-        # CFS rank within zone
-        if zone_cfs_values:
-            zone_cfs_values_sorted = sorted(zone_cfs_values)
-            n_below = sum(1 for v in zone_cfs_values_sorted if v <= cfs_cumulative_kpa)
-            zone_cfs_rank = n_below / max(len(zone_cfs_values_sorted), 1)
+        # CFS rank within zone (using pre-sorted list)
+        cfs_sorted = zstats["cfs_sorted"]
+        if cfs_sorted:
+            zone_cfs_rank = bisect.bisect_right(cfs_sorted, cfs_cumulative_kpa) / len(cfs_sorted)
         else:
             zone_cfs_rank = 0.5
 
@@ -821,7 +864,7 @@ class FeatureExtractor:
             spatial_gradient = 0.0
 
         # --- N. Cosmic ray features (Phase 9) ---
-        date_str = self._t_days_to_date(t_now_days)
+        date_str = self._get_date_str(t_now_days)
         cr = self.cosmic_ray_data.get(date_str, {})
         cosmic_ray_rate = cr.get("cosmic_ray_rate", 0.0) or 0.0
         cosmic_ray_anomaly = cr.get("cosmic_ray_anomaly", 0.0) or 0.0
