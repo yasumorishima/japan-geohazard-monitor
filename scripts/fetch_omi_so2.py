@@ -38,7 +38,10 @@ import aiosqlite
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
 from config import DB_PATH
-from earthdata_auth import get_earthdata_session, earthdata_fetch, EARTHDATA_TOKEN
+from earthdata_auth import (
+    get_earthdata_session, earthdata_fetch,
+    EARTHDATA_TOKEN, EARTHDATA_USERNAME, EARTHDATA_PASSWORD,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -86,20 +89,42 @@ async def fetch_so2_day(session: aiohttp.ClientSession, date: datetime) -> list[
 
     Uses ASCII output from OPeNDAP to avoid netCDF dependency.
     """
-    if not EARTHDATA_TOKEN:
+    has_auth = (EARTHDATA_USERNAME and EARTHDATA_PASSWORD) or EARTHDATA_TOKEN
+    if not has_auth:
         return []
 
     date_str = date.strftime("%Y-%m-%d")
     doy = date.timetuple().tm_yday
     year = date.year
 
-    # OMSO2e filename pattern: OMI-Aura_L3-OMSO2e_YYYY-MM-DD_v003-YYYY...
-    # OPeNDAP URL with subsetting
-    filename = f"OMI-Aura_L3-OMSO2e_{date_str}m{doy:03d}_v003"
+    # OMSO2e filename: OMI-Aura_L3-OMSO2e_YYYY-MM-DDmDDD_v003-REVISION.he5
+    # The revision timestamp varies, so we need to discover the exact filename.
+    # OPeNDAP catalog lists available files for each date.
+    # Try direct pattern first (without revision), fall back to catalog listing.
+    base_pattern = f"OMI-Aura_L3-OMSO2e_{date_str}m{doy:03d}_v003"
 
-    # Try to get PBL (planetary boundary layer) SO2 column
+    # First try: catalog listing to find exact filename
+    catalog_url = f"{GESDISC_OPENDAP}/{year}/catalog.xml"
+    exact_filename = None
+    try:
+        status, text = await earthdata_fetch(session, catalog_url, timeout=TIMEOUT)
+        if status == 200 and text and base_pattern.replace("_v003", "") in text:
+            # Extract matching filename from catalog XML
+            import re
+            pattern = re.compile(rf'({re.escape(base_pattern)}[^"<\s]*\.he5)')
+            match = pattern.search(text)
+            if match:
+                exact_filename = match.group(1)
+    except Exception:
+        pass
+
+    if not exact_filename:
+        # Fallback: use base pattern (may 404 if revision suffix needed)
+        exact_filename = f"{base_pattern}.he5"
+
+    # OPeNDAP ASCII subsetting for PBL SO2 column
     url = (
-        f"{GESDISC_OPENDAP}/{year}/{filename}.he5.ascii"
+        f"{GESDISC_OPENDAP}/{year}/{exact_filename}.ascii"
         f"?ColumnAmountSO2_PBL"
         f"[{LAT_START}:1:{LAT_END}]"
         f"[{LON_START}:1:{LON_END}]"
