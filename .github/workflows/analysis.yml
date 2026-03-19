@@ -190,6 +190,8 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         run: |
           python3 scripts/fetch_grace_gravity.py || echo "GRACE fetch failed (non-fatal)"
 
@@ -197,6 +199,8 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         run: |
           python3 scripts/fetch_omi_so2.py || echo "SO2 fetch failed (non-fatal)"
 
@@ -204,6 +208,8 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         run: |
           python3 scripts/fetch_smap_moisture.py || echo "SMAP fetch failed (non-fatal)"
 
@@ -219,6 +225,8 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         run: |
           python3 scripts/fetch_ocean_color.py || echo "Ocean color fetch failed (non-fatal)"
 
@@ -226,6 +234,8 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         run: |
           python3 scripts/fetch_cloud_fraction.py || echo "Cloud fraction fetch failed (non-fatal)"
 
@@ -233,6 +243,8 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         run: |
           python3 scripts/fetch_viirs_nighttime.py || echo "VIIRS fetch failed (non-fatal)"
 
