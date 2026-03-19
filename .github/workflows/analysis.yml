@@ -253,6 +253,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
+          pip install rasterio 2>/dev/null || true
           python3 scripts/fetch_insar.py || echo "InSAR fetch failed (non-fatal)"
 
       # --- Phase 11: Space/cosmic data sources ---
