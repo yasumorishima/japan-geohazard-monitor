@@ -97,7 +97,7 @@ async def fetch_cloud_day(session: aiohttp.ClientSession, date: datetime) -> lis
     # OPeNDAP with subsetting for Cloud_Fraction_Mean
     url = (
         f"{LAADS_OPENDAP}/{year}/{doy:03d}/"
-        f"?Cloud_Fraction_Mean_Mean"
+        f"?Cloud_Fraction_Mean"
         f"[{LAT_START}:1:{LAT_END}]"
         f"[{LON_START}:1:{LON_END}]"
     )
