@@ -686,10 +686,10 @@ class FeatureExtractor:
         else:
             pi_score = 0.0
 
-        # PI trend (recent vs older)
-        if len(pi_hist) >= 6:
-            pi_recent = sum(pi_hist[-3:]) / 3
-            pi_older = sum(pi_hist[-6:-3]) / 3
+        # PI trend (recent vs older) — use list for slicing (deque doesn't support slices)
+        if len(recent_pi) >= 6:
+            pi_recent = sum(recent_pi[-3:]) / 3
+            pi_older = sum(recent_pi[-6:-3]) / 3
             pi_trend = pi_recent - pi_older
         else:
             pi_trend = 0.0
