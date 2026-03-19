@@ -268,6 +268,27 @@ jobs:
         run: |
           python3 scripts/fetch_poes_particles.py || echo "Particle flux fetch failed (non-fatal)"
 
+      - name: Fetch NOAA DART ocean bottom pressure (no auth)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_dart_pressure.py || echo "DART pressure fetch failed (non-fatal)"
+
+      - name: Fetch IOC sea level monitoring (no auth)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_ioc_sealevel.py || echo "IOC sea level fetch failed (non-fatal)"
+
+      - name: Fetch S-net seafloor pressure (NIED credentials required)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          HINET_USER: ${{ secrets.HINET_USER }}
+          HINET_PASS: ${{ secrets.HINET_PASS }}
+        run: |
+          pip install HinetPy 2>/dev/null || true
+          python3 scripts/fetch_snet_pressure.py || echo "S-net pressure fetch failed (non-fatal)"
+
       - name: Run MODIS LST thermal anomaly analysis
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db

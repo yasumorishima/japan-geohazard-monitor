@@ -169,6 +169,8 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
                    insar_data=None,
                    goes_xray_data=None, goes_proton_data=None,
                    tidal_stress_data=None, particle_flux_data=None,
+                   dart_pressure_data=None, ioc_sealevel_data=None,
+                   snet_pressure_data=None,
                    min_target_mag=None, window_days=None, step_days=None):
     """Generate feature matrix and labels.
 
@@ -230,6 +232,9 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
         goes_proton_data=goes_proton_data,
         tidal_stress_data=tidal_stress_data,
         particle_flux_data=particle_flux_data,
+        dart_pressure_data=dart_pressure_data,
+        ioc_sealevel_data=ioc_sealevel_data,
+        snet_pressure_data=snet_pressure_data,
     )
     # Build index mask: which positions in the full feature vector to keep
     feature_mask = [i for i, name in enumerate(FEATURE_NAMES) if name in set(active_feature_names)]
@@ -268,6 +273,9 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
         goes_proton_data=goes_proton_data,
         tidal_stress_data=tidal_stress_data,
         particle_flux_data=particle_flux_data,
+        dart_pressure_data=dart_pressure_data,
+        ioc_sealevel_data=ioc_sealevel_data,
+        snet_pressure_data=snet_pressure_data,
     )
 
     # Generate samples
@@ -1624,6 +1632,110 @@ async def load_phase11_particle_flux(db_path):
         return {}
 
 
+async def load_phase13_dart_pressure(db_path):
+    """Load DART ocean bottom pressure with rolling baseline.
+
+    Returns dict: {date_str: {height_m, height_mean_30d, height_std_30d, height_prev_day}}
+    """
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT DATE(observed_at), AVG(water_height_m) "
+                "FROM dart_pressure GROUP BY DATE(observed_at) ORDER BY DATE(observed_at)"
+            )
+        if not rows:
+            logger.info("  No DART pressure data available")
+            return {}
+
+        data = {}
+        values = [(r[0], r[1]) for r in rows if r[1] is not None]
+        for i, (date_str, val) in enumerate(values):
+            start_idx = max(0, i - 30)
+            window = [v for _, v in values[start_idx:i] if v is not None]
+            mean_30d = sum(window) / len(window) if window else val
+            std_30d = (sum((v - mean_30d) ** 2 for v in window) / max(len(window), 1)) ** 0.5 if len(window) > 1 else 0.001
+            prev_val = values[i - 1][1] if i > 0 else 0.0
+            data[date_str] = {
+                "height_m": val,
+                "height_mean_30d": mean_30d,
+                "height_std_30d": max(std_30d, 0.001),
+                "height_prev_day": prev_val,
+            }
+        logger.info("  DART pressure data loaded: %d dates", len(data))
+        return data
+    except Exception as e:
+        logger.warning("  DART pressure load failed (non-fatal): %s", e)
+        return {}
+
+
+async def load_phase13_ioc_sealevel(db_path):
+    """Load IOC sea level monitoring data with rolling baseline.
+
+    Returns dict: {date_str: {level_m, level_mean_30d, level_std_30d}}
+    """
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT DATE(observed_at), AVG(sea_level_m) "
+                "FROM ioc_sea_level GROUP BY DATE(observed_at) ORDER BY DATE(observed_at)"
+            )
+        if not rows:
+            logger.info("  No IOC sea level data available")
+            return {}
+
+        data = {}
+        values = [(r[0], r[1]) for r in rows if r[1] is not None]
+        for i, (date_str, val) in enumerate(values):
+            start_idx = max(0, i - 30)
+            window = [v for _, v in values[start_idx:i] if v is not None]
+            mean_30d = sum(window) / len(window) if window else val
+            std_30d = (sum((v - mean_30d) ** 2 for v in window) / max(len(window), 1)) ** 0.5 if len(window) > 1 else 0.001
+            data[date_str] = {
+                "level_m": val,
+                "level_mean_30d": mean_30d,
+                "level_std_30d": max(std_30d, 0.001),
+            }
+        logger.info("  IOC sea level data loaded: %d dates", len(data))
+        return data
+    except Exception as e:
+        logger.warning("  IOC sea level load failed (non-fatal): %s", e)
+        return {}
+
+
+async def load_phase13_snet_pressure(db_path):
+    """Load S-net seafloor pressure data with rolling baseline.
+
+    Returns dict: {date_str: {pressure_hpa, pressure_mean_30d, pressure_std_30d}}
+    """
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT DATE(observed_at), AVG(pressure_mean_hpa) "
+                "FROM snet_pressure GROUP BY DATE(observed_at) ORDER BY DATE(observed_at)"
+            )
+        if not rows:
+            logger.info("  No S-net pressure data available")
+            return {}
+
+        data = {}
+        values = [(r[0], r[1]) for r in rows if r[1] is not None]
+        for i, (date_str, val) in enumerate(values):
+            start_idx = max(0, i - 30)
+            window = [v for _, v in values[start_idx:i] if v is not None]
+            mean_30d = sum(window) / len(window) if window else val
+            std_30d = (sum((v - mean_30d) ** 2 for v in window) / max(len(window), 1)) ** 0.5 if len(window) > 1 else 0.001
+            data[date_str] = {
+                "pressure_hpa": val,
+                "pressure_mean_30d": mean_30d,
+                "pressure_std_30d": max(std_30d, 0.001),
+            }
+        logger.info("  S-net pressure data loaded: %d dates", len(data))
+        return data
+    except Exception as e:
+        logger.warning("  S-net pressure load failed (non-fatal): %s", e)
+        return {}
+
+
 def spatial_smooth_predictions(
     predictions: dict,
     active_cells: set,
@@ -1744,6 +1856,12 @@ async def run_ml_prediction():
     tidal_stress_data = await load_phase11_tidal_stress(DB_PATH)
     particle_flux_data = await load_phase11_particle_flux(DB_PATH)
 
+    # --- Phase 13: Seafloor/ocean bottom data sources ---
+    logger.info("--- Loading Phase 13 data (DART pressure, IOC sea level, S-net) ---")
+    dart_pressure_data = await load_phase13_dart_pressure(DB_PATH)
+    ioc_sealevel_data = await load_phase13_ioc_sealevel(DB_PATH)
+    snet_pressure_data = await load_phase13_snet_pressure(DB_PATH)
+
     # Multi-target loop
     target_results = {}
     primary_metadata = None
@@ -1780,6 +1898,9 @@ async def run_ml_prediction():
             goes_proton_data=goes_proton_data,
             tidal_stress_data=tidal_stress_data,
             particle_flux_data=particle_flux_data,
+            dart_pressure_data=dart_pressure_data,
+            ioc_sealevel_data=ioc_sealevel_data,
+            snet_pressure_data=snet_pressure_data,
             min_target_mag=cfg["min_mag"],
             window_days=cfg["window_days"],
             step_days=cfg["step_days"],

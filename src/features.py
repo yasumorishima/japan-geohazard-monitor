@@ -163,6 +163,13 @@ FEATURE_NAMES = [
     "tidal_stress_rate",    # tidal shear rate of change (Pa/day)
     # AF. Particle precipitation (Phase 11) — LAIC coupling
     "particle_precip_rate", # GOES >=2 MeV electron flux (log10 pfu)
+    # AG. DART ocean bottom pressure (Phase 13) — Baba et al. 2020
+    "dart_pressure_anomaly",  # nearest DART station pressure deviation from 30-day mean (σ)
+    "dart_pressure_rate",     # pressure rate of change (m/day)
+    # AH. IOC sea level (Phase 13) — additional coastal stations
+    "ioc_sealevel_anomaly",   # IOC sea level deviation from 30-day mean (σ)
+    # AI. S-net seafloor pressure (Phase 13) — Aoi et al. 2020
+    "snet_pressure_anomaly",  # S-net water pressure deviation from baseline (σ)
 ]
 
 N_FEATURES = len(FEATURE_NAMES)
@@ -194,6 +201,10 @@ OPTIONAL_FEATURE_GROUPS = {
     "goes_proton": ["proton_flux_max_24h"],
     "tidal_stress": ["tidal_shear_stress", "tidal_stress_rate"],
     "particle_flux": ["particle_precip_rate"],
+    # Phase 13 — Seafloor/ocean bottom
+    "dart_pressure": ["dart_pressure_anomaly", "dart_pressure_rate"],
+    "ioc_sealevel": ["ioc_sealevel_anomaly"],
+    "snet_pressure": ["snet_pressure_anomaly"],
 }
 
 # Backward compatibility alias
@@ -253,7 +264,10 @@ class FeatureExtractor:
                  goes_xray_data: dict = None,
                  goes_proton_data: dict = None,
                  tidal_stress_data: dict = None,
-                 particle_flux_data: dict = None):
+                 particle_flux_data: dict = None,
+                 dart_pressure_data: dict = None,
+                 ioc_sealevel_data: dict = None,
+                 snet_pressure_data: dict = None):
         """
         Args:
             events: list of dicts with keys: time, mag, lat, lon, depth, t_days
@@ -299,6 +313,9 @@ class FeatureExtractor:
         self.goes_proton_data = goes_proton_data or {}
         self.tidal_stress_data = tidal_stress_data or {}
         self.particle_flux_data = particle_flux_data or {}
+        self.dart_pressure_data = dart_pressure_data or {}
+        self.ioc_sealevel_data = ioc_sealevel_data or {}
+        self.snet_pressure_data = snet_pressure_data or {}
 
         # Pre-compute cell → zone mapping + zone → cells index
         self.cell_zone = {}
@@ -1000,6 +1017,30 @@ class FeatureExtractor:
         elec_raw = pf.get("electron_2mev_max", 0.0) or 0.0
         particle_precip_rate = math.log10(max(elec_raw, 0.1)) if elec_raw > 0 else -1.0
 
+        # --- AG. DART ocean bottom pressure (Phase 13) ---
+        # DART data keyed by date_str (nearest station aggregated)
+        dp = self.dart_pressure_data.get(date_str, {})
+        dp_val = dp.get("height_m", 0.0) or 0.0
+        dp_mean = dp.get("height_mean_30d", 0.0) or 0.0
+        dp_std = dp.get("height_std_30d", 1.0) or 1.0
+        dart_pressure_anomaly = (dp_val - dp_mean) / max(dp_std, 0.001) if dp_val > 0 else 0.0
+        dp_prev = dp.get("height_prev_day", 0.0) or 0.0
+        dart_pressure_rate = dp_val - dp_prev if (dp_val > 0 and dp_prev > 0) else 0.0
+
+        # --- AH. IOC sea level (Phase 13) ---
+        ioc = self.ioc_sealevel_data.get(date_str, {})
+        ioc_val = ioc.get("level_m", 0.0) or 0.0
+        ioc_mean = ioc.get("level_mean_30d", 0.0) or 0.0
+        ioc_std = ioc.get("level_std_30d", 1.0) or 1.0
+        ioc_sealevel_anomaly = (ioc_val - ioc_mean) / max(ioc_std, 0.001) if ioc_val != 0 else 0.0
+
+        # --- AI. S-net seafloor pressure (Phase 13) ---
+        sn = self.snet_pressure_data.get(date_str, {})
+        sn_val = sn.get("pressure_hpa", 0.0) or 0.0
+        sn_mean = sn.get("pressure_mean_30d", 0.0) or 0.0
+        sn_std = sn.get("pressure_std_30d", 1.0) or 1.0
+        snet_pressure_anomaly = (sn_val - sn_mean) / max(sn_std, 0.001) if sn_val > 0 else 0.0
+
         # Assemble feature vector
         return [
             rate_7d,
@@ -1098,6 +1139,13 @@ class FeatureExtractor:
             tidal_stress_rate,
             # AF. Particle precipitation (Phase 11)
             particle_precip_rate,
+            # AG. DART ocean bottom pressure (Phase 13)
+            dart_pressure_anomaly,
+            dart_pressure_rate,
+            # AH. IOC sea level (Phase 13)
+            ioc_sealevel_anomaly,
+            # AI. S-net seafloor pressure (Phase 13)
+            snet_pressure_anomaly,
         ]
 
     def extract_dict(self, cell_lat, cell_lon, t_now_days) -> dict:
