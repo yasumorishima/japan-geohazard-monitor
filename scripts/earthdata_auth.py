@@ -1,24 +1,15 @@
 """NASA Earthdata authentication helper.
 
-NASA's OPeNDAP/DAAC endpoints use OAuth2 redirect flow:
-1. Request to data endpoint -> 302 redirect to urs.earthdata.nasa.gov
-2. Authenticate at URS -> 302 redirect back with session cookie
-3. Data returned with cookie
+Authentication strategy (2026-03 update):
+- Bearer token is now the primary method (URS Basic Auth API deprecated)
+- LAADS DAAC (VIIRS, MODIS cloud) accepts Bearer directly
+- OPeNDAP endpoints (GES DISC SO2) use redirect flow with Basic Auth at URS
+- Both methods are tried: Bearer first, then Basic Auth redirect fallback
 
-Two authentication methods supported:
-A. Username/Password (recommended for OPeNDAP redirect flow):
-   - EARTHDATA_USERNAME + EARTHDATA_PASSWORD env vars
-   - Creates .netrc-style BasicAuth for URS redirect
-   - Works with all OPeNDAP endpoints
-B. Bearer Token (for direct API access like AppEEARS):
-   - EARTHDATA_TOKEN env var
-   - Works for POST/GET to endpoints that accept Bearer directly
-   - Does NOT work for OPeNDAP redirect flow
-
-The core problem with Bearer tokens: aiohttp's allow_redirects=True follows
-redirects but strips the Authorization header on cross-origin redirects.
-Bearer tokens sent to gesdisc.eosdis.nasa.gov never reach urs.earthdata.nasa.gov.
-Username/password via BasicAuth at URS solves this cleanly.
+Environment variables:
+  EARTHDATA_TOKEN     - Bearer token (generate at urs.earthdata.nasa.gov/profile)
+  EARTHDATA_USERNAME  - URS username (for OPeNDAP redirect flow fallback)
+  EARTHDATA_PASSWORD  - URS password (for OPeNDAP redirect flow fallback)
 """
 
 import logging
@@ -36,51 +27,23 @@ URS_HOST = "urs.earthdata.nasa.gov"
 
 
 async def get_earthdata_session() -> aiohttp.ClientSession:
-    """Create an aiohttp session with Earthdata authentication.
+    """Create an aiohttp session for Earthdata access.
 
-    If EARTHDATA_USERNAME/PASSWORD are set, pre-authenticates at URS
-    to establish session cookies. Otherwise falls back to Bearer token.
+    No pre-authentication (URS profile API no longer accepts Basic Auth).
+    Auth is handled per-request in earthdata_fetch/earthdata_fetch_bytes.
     """
-    # unsafe=True allows cookies for IP-based URLs and cross-domain
     jar = aiohttp.CookieJar(unsafe=True)
     session = aiohttp.ClientSession(cookie_jar=jar)
 
-    if EARTHDATA_USERNAME and EARTHDATA_PASSWORD:
-        # Pre-authenticate at URS with Basic auth to get session cookies
-        try:
-            auth = aiohttp.BasicAuth(EARTHDATA_USERNAME, EARTHDATA_PASSWORD)
-            auth_url = f"https://{URS_HOST}/api/users/{EARTHDATA_USERNAME}"
-            async with session.get(auth_url, auth=auth) as resp:
-                if resp.status == 200:
-                    logger.info("Earthdata session authenticated via username/password")
-                elif resp.status == 401:
-                    body = await resp.text()
-                    logger.warning(
-                        "Earthdata auth failed: HTTP 401 (invalid credentials or password expired). "
-                        "Check https://urs.earthdata.nasa.gov/ — NASA requires periodic password changes. "
-                        "Response: %s", body[:300]
-                    )
-                else:
-                    body = await resp.text()
-                    logger.warning("Earthdata auth failed: HTTP %d — %s", resp.status, body[:300])
-        except Exception as e:
-            logger.warning("Earthdata auth error: %s", e)
+    has_token = bool(EARTHDATA_TOKEN)
+    has_credentials = EARTHDATA_USERNAME and EARTHDATA_PASSWORD
 
-    elif EARTHDATA_TOKEN:
-        # Fallback: Bearer token (limited to direct API endpoints)
-        try:
-            auth_url = f"https://{URS_HOST}/api/users/tokens"
-            headers = {"Authorization": f"Bearer {EARTHDATA_TOKEN}"}
-            async with session.get(auth_url, headers=headers) as resp:
-                if resp.status == 200:
-                    logger.info("Earthdata session authenticated via Bearer token")
-                else:
-                    logger.warning("Earthdata auth (Bearer) failed: HTTP %d", resp.status)
-        except Exception as e:
-            logger.warning("Earthdata auth error: %s", e)
-
+    if has_token:
+        logger.info("Earthdata session created (Bearer token available, len=%d)", len(EARTHDATA_TOKEN))
+    elif has_credentials:
+        logger.info("Earthdata session created (username/password available, no token)")
     else:
-        logger.info("No Earthdata credentials set (EARTHDATA_USERNAME/PASSWORD or EARTHDATA_TOKEN)")
+        logger.info("No Earthdata credentials set")
 
     return session
 
@@ -92,19 +55,17 @@ async def earthdata_fetch(
 ) -> tuple[int, str]:
     """Fetch a URL with Earthdata auth handling.
 
-    For OPeNDAP redirect flow:
-    1. Request data URL (gets 302 to URS)
-    2. If we have username/password, send BasicAuth to URS
-    3. URS redirects back to data URL with auth code
-    4. Session cookies handle the rest
+    Strategy:
+    1. Try Bearer token (works for LAADS DAAC, some direct APIs)
+    2. If redirect to URS detected, use Basic Auth (works for OPeNDAP)
+    3. Fallback: no auth
 
     Returns (status_code, response_text) tuple.
     """
-    has_credentials = EARTHDATA_USERNAME and EARTHDATA_PASSWORD
     has_token = bool(EARTHDATA_TOKEN)
+    has_credentials = EARTHDATA_USERNAME and EARTHDATA_PASSWORD
 
-    if not has_credentials and not has_token:
-        # No auth at all - just do a plain GET
+    if not has_token and not has_credentials:
         try:
             async with session.get(url, timeout=timeout, allow_redirects=True) as resp:
                 text = await resp.text()
@@ -113,11 +74,43 @@ async def earthdata_fetch(
             logger.warning("Fetch failed (no auth): %s", e)
             return 0, ""
 
-    # --- Method A: Username/Password (handles OPeNDAP redirect flow) ---
-    if has_credentials:
-        urs_auth = aiohttp.BasicAuth(EARTHDATA_USERNAME, EARTHDATA_PASSWORD)
+    # --- Try Bearer token first ---
+    if has_token:
+        headers = {"Authorization": f"Bearer {EARTHDATA_TOKEN}"}
+        try:
+            async with session.get(url, headers=headers, timeout=timeout, allow_redirects=False) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    return 200, text
 
-        # Step 1: Initial request with auto-redirect disabled
+                if resp.status in (301, 302, 303, 307, 308):
+                    redirect_url = str(resp.headers.get("Location", ""))
+
+                    if URS_HOST in redirect_url and has_credentials:
+                        # OPeNDAP redirect: Bearer won't work, use Basic Auth
+                        return await _fetch_with_basic_auth(session, redirect_url, timeout)
+
+                    # Non-URS redirect: follow with Bearer
+                    async with session.get(
+                        redirect_url, headers=headers,
+                        allow_redirects=True, timeout=timeout,
+                    ) as redir_resp:
+                        text = await redir_resp.text()
+                        return redir_resp.status, text
+
+                # Other status codes (401, 403, etc.) - fall through to Basic Auth
+                if resp.status in (401, 403) and has_credentials:
+                    logger.info("Bearer rejected (HTTP %d), trying Basic Auth redirect", resp.status)
+                else:
+                    return resp.status, ""
+
+        except (aiohttp.ClientError, TimeoutError) as e:
+            logger.warning("Earthdata fetch error (Bearer): %s", e)
+            if not has_credentials:
+                return 0, ""
+
+    # --- Fallback: Basic Auth redirect flow ---
+    if has_credentials:
         try:
             async with session.get(url, timeout=timeout, allow_redirects=False) as resp:
                 if resp.status == 200:
@@ -126,85 +119,44 @@ async def earthdata_fetch(
 
                 if resp.status in (301, 302, 303, 307, 308):
                     redirect_url = str(resp.headers.get("Location", ""))
-
                     if URS_HOST in redirect_url:
-                        # Step 2: Authenticate at URS with Basic auth
-                        # allow_redirects=True so URS can redirect back to data URL
-                        async with session.get(
-                            redirect_url,
-                            auth=urs_auth,
-                            allow_redirects=True,
-                            timeout=timeout,
-                        ) as auth_resp:
-                            # Check if we got data or HTML login page
-                            content_type = auth_resp.headers.get("Content-Type", "")
-                            if "html" in content_type.lower():
-                                body = await auth_resp.text()
-                                if "<form" in body.lower() or "login" in body.lower():
-                                    logger.warning("Earthdata auth: still on login page (bad credentials?)")
-                                    return 401, ""
-                                # Some data comes as HTML (e.g., OPeNDAP catalog)
-                                return auth_resp.status, body
-                            text = await auth_resp.text()
-                            return auth_resp.status, text
-                    else:
-                        # Non-URS redirect, follow normally
-                        async with session.get(
-                            redirect_url,
-                            allow_redirects=True,
-                            timeout=timeout,
-                        ) as redir_resp:
-                            text = await redir_resp.text()
-                            return redir_resp.status, text
-
-                return resp.status, ""
-
-        except (aiohttp.ClientError, TimeoutError) as e:
-            logger.warning("Earthdata fetch error: %s", e)
-            return 0, ""
-
-    # --- Method B: Bearer Token (direct API only, no redirect support) ---
-    headers = {"Authorization": f"Bearer {EARTHDATA_TOKEN}"}
-
-    try:
-        # Try direct access with Bearer header
-        async with session.get(url, headers=headers, timeout=timeout, allow_redirects=False) as resp:
-            if resp.status == 200:
-                text = await resp.text()
-                return 200, text
-
-            if resp.status in (301, 302, 303, 307, 308):
-                redirect_url = str(resp.headers.get("Location", ""))
-
-                if URS_HOST in redirect_url:
-                    # Bearer tokens don't work well with redirect flow
-                    # Try sending Bearer to URS anyway (works for some endpoints)
+                        return await _fetch_with_basic_auth(session, redirect_url, timeout)
+                    # Non-URS redirect
                     async with session.get(
-                        redirect_url,
-                        headers=headers,
-                        allow_redirects=True,
-                        timeout=timeout,
-                    ) as auth_resp:
-                        content_type = auth_resp.headers.get("Content-Type", "")
-                        if "html" in content_type.lower():
-                            return 401, ""
-                        text = await auth_resp.text()
-                        return auth_resp.status, text
-                else:
-                    async with session.get(
-                        redirect_url,
-                        headers=headers,
-                        allow_redirects=True,
-                        timeout=timeout,
+                        redirect_url, allow_redirects=True, timeout=timeout,
                     ) as redir_resp:
                         text = await redir_resp.text()
                         return redir_resp.status, text
 
-            return resp.status, ""
+                return resp.status, ""
 
-    except (aiohttp.ClientError, TimeoutError) as e:
-        logger.warning("Earthdata fetch error (Bearer): %s", e)
-        return 0, ""
+        except (aiohttp.ClientError, TimeoutError) as e:
+            logger.warning("Earthdata fetch error (Basic Auth): %s", e)
+            return 0, ""
+
+    return 0, ""
+
+
+async def _fetch_with_basic_auth(
+    session: aiohttp.ClientSession,
+    urs_redirect_url: str,
+    timeout: aiohttp.ClientTimeout | None,
+) -> tuple[int, str]:
+    """Follow URS redirect with Basic Auth credentials."""
+    urs_auth = aiohttp.BasicAuth(EARTHDATA_USERNAME, EARTHDATA_PASSWORD)
+    async with session.get(
+        urs_redirect_url, auth=urs_auth,
+        allow_redirects=True, timeout=timeout,
+    ) as auth_resp:
+        content_type = auth_resp.headers.get("Content-Type", "")
+        if "html" in content_type.lower():
+            body = await auth_resp.text()
+            if "<form" in body.lower() or "login" in body.lower():
+                logger.warning("Earthdata auth: still on login page (bad credentials?)")
+                return 401, ""
+            return auth_resp.status, body
+        text = await auth_resp.text()
+        return auth_resp.status, text
 
 
 async def earthdata_fetch_bytes(
@@ -214,13 +166,47 @@ async def earthdata_fetch_bytes(
 ) -> tuple[int, bytes]:
     """Fetch binary data (NetCDF, HDF5, etc.) with Earthdata auth.
 
-    Same redirect handling as earthdata_fetch but returns bytes.
+    Strategy: Bearer token first, Basic Auth redirect fallback.
     """
+    has_token = bool(EARTHDATA_TOKEN)
     has_credentials = EARTHDATA_USERNAME and EARTHDATA_PASSWORD
 
+    # --- Try Bearer token first ---
+    if has_token:
+        headers = {"Authorization": f"Bearer {EARTHDATA_TOKEN}"}
+        try:
+            async with session.get(url, headers=headers, timeout=timeout, allow_redirects=False) as resp:
+                if resp.status == 200:
+                    data = await resp.read()
+                    return 200, data
+
+                if resp.status in (301, 302, 303, 307, 308):
+                    redirect_url = str(resp.headers.get("Location", ""))
+
+                    if URS_HOST in redirect_url and has_credentials:
+                        return await _fetch_bytes_with_basic_auth(session, redirect_url, timeout)
+
+                    # Non-URS redirect: follow with Bearer
+                    async with session.get(
+                        redirect_url, headers=headers,
+                        allow_redirects=True, timeout=timeout,
+                    ) as redir_resp:
+                        data = await redir_resp.read()
+                        return redir_resp.status, data
+
+                if resp.status in (401, 403) and has_credentials:
+                    logger.info("Bearer rejected (HTTP %d), trying Basic Auth redirect", resp.status)
+                else:
+                    return resp.status, b""
+
+        except (aiohttp.ClientError, TimeoutError) as e:
+            logger.warning("Earthdata fetch_bytes error (Bearer): %s", e)
+            if not has_credentials:
+                return 0, b""
+
+    # --- Fallback: Basic Auth redirect flow ---
     if has_credentials:
         urs_auth = aiohttp.BasicAuth(EARTHDATA_USERNAME, EARTHDATA_PASSWORD)
-
         try:
             async with session.get(url, timeout=timeout, allow_redirects=False) as resp:
                 if resp.status == 200:
@@ -230,40 +216,41 @@ async def earthdata_fetch_bytes(
                 if resp.status in (301, 302, 303, 307, 308):
                     redirect_url = str(resp.headers.get("Location", ""))
                     if URS_HOST in redirect_url:
-                        async with session.get(
-                            redirect_url,
-                            auth=urs_auth,
-                            allow_redirects=True,
-                            timeout=timeout,
-                        ) as auth_resp:
-                            if auth_resp.status == 200:
-                                data = await auth_resp.read()
-                                return 200, data
-                            return auth_resp.status, b""
-                    else:
-                        async with session.get(
-                            redirect_url,
-                            allow_redirects=True,
-                            timeout=timeout,
-                        ) as redir_resp:
-                            data = await redir_resp.read()
-                            return redir_resp.status, data
+                        return await _fetch_bytes_with_basic_auth(session, redirect_url, timeout)
+                    async with session.get(
+                        redirect_url, allow_redirects=True, timeout=timeout,
+                    ) as redir_resp:
+                        data = await redir_resp.read()
+                        return redir_resp.status, data
 
                 return resp.status, b""
 
         except (aiohttp.ClientError, TimeoutError) as e:
-            logger.warning("Earthdata fetch_bytes error: %s", e)
+            logger.warning("Earthdata fetch_bytes error (Basic Auth): %s", e)
             return 0, b""
 
-    # Bearer fallback
-    headers = {}
-    if EARTHDATA_TOKEN:
-        headers["Authorization"] = f"Bearer {EARTHDATA_TOKEN}"
-
+    # No auth
     try:
-        async with session.get(url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
+        async with session.get(url, timeout=timeout, allow_redirects=True) as resp:
             data = await resp.read()
             return resp.status, data
     except (aiohttp.ClientError, TimeoutError) as e:
         logger.warning("Earthdata fetch_bytes error: %s", e)
         return 0, b""
+
+
+async def _fetch_bytes_with_basic_auth(
+    session: aiohttp.ClientSession,
+    urs_redirect_url: str,
+    timeout: aiohttp.ClientTimeout | None,
+) -> tuple[int, bytes]:
+    """Follow URS redirect with Basic Auth credentials (binary)."""
+    urs_auth = aiohttp.BasicAuth(EARTHDATA_USERNAME, EARTHDATA_PASSWORD)
+    async with session.get(
+        urs_redirect_url, auth=urs_auth,
+        allow_redirects=True, timeout=timeout,
+    ) as auth_resp:
+        if auth_resp.status == 200:
+            data = await auth_resp.read()
+            return 200, data
+        return auth_resp.status, b""
