@@ -256,6 +256,7 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
         pred = model(x)
         loss = criterion(pred, y)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 
         total_loss += loss.item()
@@ -387,17 +388,18 @@ def walk_forward_cv(features, labels, times, n_features,
 
         # Model
         model = ConvLSTMPredictor(n_features=n_features).to(device)
-        optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
-        criterion = nn.BCELoss(
-            weight=None,
-            reduction='none',
-        )
+        optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
 
         def weighted_bce(pred, target):
             """BCE with pos_weight for imbalanced data."""
             weight = torch.where(target >= 0.5, POS_WEIGHT, 1.0)
             loss = nn.functional.binary_cross_entropy(pred, target, reduction='none')
             return (loss * weight).mean()
+
+        n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        if fold_idx == 0:
+            print(f"  Model parameters: {n_params:,}")
 
         # Training loop
         best_auc = 0
@@ -406,10 +408,12 @@ def walk_forward_cv(features, labels, times, n_features,
 
         for epoch in range(MAX_EPOCHS):
             train_loss = train_one_epoch(model, train_loader, optimizer, weighted_bce, device)
+            scheduler.step()
             test_auc, _, _ = evaluate(model, test_loader, device)
 
             if (epoch + 1) % 5 == 0:
-                print(f"  Epoch {epoch+1}: loss={train_loss:.4f} test_AUC={test_auc:.4f}")
+                print(f"  Epoch {epoch+1}: loss={train_loss:.4f} test_AUC={test_auc:.4f} "
+                      f"lr={scheduler.get_last_lr()[0]:.6f}")
 
             if test_auc > best_auc:
                 best_auc = test_auc
