@@ -49,7 +49,10 @@ async def main():
                     print(f"User: {data.get('uid', '?')}")
                     print("PASS: Credentials valid")
                 elif resp.status == 401:
-                    print("FAIL: Invalid username or password")
+                    body = (await resp.text())[:500]
+                    print(f"FAIL: Invalid username or password")
+                    print(f"Response headers: {dict(resp.headers)}")
+                    print(f"Response body: {body}")
                     ok = False
                 else:
                     print(f"UNEXPECTED: {(await resp.text())[:200]}")
