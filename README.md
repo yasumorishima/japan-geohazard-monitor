@@ -135,6 +135,7 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 - **Analysis Phase 12** ✅ Data acquisition infrastructure overhaul + ML feature stability selection + FeatureExtractor performance optimization. OLR→PSL THREDDS, IERS→OBSPM, tide→UHSLC Fast Delivery, Earthdata→OAuth2 redirect handler. ML: 3-fold stability pre-filter removes noisy features before CV. **Data acquisition all confirmed working** (OLR/IERS/tide/GOES/GRACE/SO2 ✅). Phase 12b: bisect-based window queries, zone stats caching, deque histories — extract() 20h→12min. deque slice bug fixed in Phase 13
 - **Analysis Phase 13** ✅ Seafloor/ocean bottom data sources: NOAA DART bottom pressure (5 stations near Japan, 3 returned data, no auth), IOC sea level monitoring (❌ API crash on None station codes), NIED S-net seafloor pressure (❌ NIED credentials pending). 75 → 79 features (64 active after stability selection). DATA_LICENSES.md added (all 19 source policies documented). **CV AUC 0.7416 (best ever), Test AUC 0.7481**
 - **Analysis Phase 14** 🔄 Four-axis improvement: (1) IOC fetch crash fix (None-safe parsing + dict/list response support), (2) INTERMAGNET backfill 4x acceleration (500→2000 days/station/run), (3) Diverse stacking level-0 models (RandomForest + LogisticRegression alongside HistGBT → 14-feature meta-learner), (4) ConvLSTM full-feature export (feature_matrix.json now includes all Phase 9+ data, not zero-filled). **Run in progress (2026-03-19)**
+- **Analysis Phase 14b** ✅ Data acquisition overhaul: **11 of 15 broken data sources fixed**. 6 switched to auth-free alternatives (ERDDAP/GFZ/NCEI), Earthdata username/password configured for NASA OPeNDAP. OLR→NCEI CDR, GRACE→GFZ GravIS, Ocean Color→CoastWatch ERDDAP, Soil Moisture→NOAA SMOPS, Tide Gauge→UHSLC ERDDAP (19 stations), GOES X-ray→LISIRD 1-min, InSAR→LiCSAR 34 Japan frames, IOC sea level crash fix, Cloud Fraction variable name fix, SO2 filename discovery, Earthdata auth rewrite
 - **Backfill** ✅ 2011-2026 M3+ earthquakes (29K), TEC (4M), Kp (44K), GCMT focal mechanisms
 - **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 360min timeout)
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
@@ -785,6 +786,26 @@ Recovery from Phase 10/10b regression — stability selection effectively filter
 
 Stacking still underperforms best single model: Logistic 0.7404 vs HistGBT 0.7481 (−0.008). Correlated M5+/M5.5+/M6+ HistGBT predictions limit meta-learner diversity — Phase 14 addresses this.
 
+### Phase 14b: Data Acquisition Overhaul — 11 broken sources fixed
+
+Phase 13 revealed that 15 out of 27 data sources had been silently failing. Phase 14b systematically rewrites every broken fetch script with working public APIs:
+
+| Source | Before (broken) | After (fixed) | Auth |
+|---|---|---|---|
+| **OLR** | PSL THREDDS NCSS (`accept=csv` unsupported, data through 2023) | NCEI CDR direct NetCDF download (through 2025, 2-day lag) | None |
+| **GRACE gravity** | JPL PO.DAAC OPeNDAP (Earthdata 401) | GFZ GravIS RL06 TWS (public HTTPS, 496MB cached) | None |
+| **Ocean color** | NASA OB.DAAC OPeNDAP (Earthdata 401, wrong filename) | NOAA CoastWatch ERDDAP `erdMH1chlamday` (monthly chl-a CSV) | None |
+| **Soil moisture** | NASA AppEEARS (Earthdata 401, task submit failed) | NOAA SMOPS CDR daily (2017+) + CPC monthly (2011-2016) via ERDDAP | None |
+| **Tide gauge** | UHSLC `.dat` files (404, URLs moved) | UHSLC ERDDAP `global_hourly_fast` (19 Japan stations, was 9) | None |
+| **GOES X-ray** | LISIRD `goes_xrs_flare_daily` (endpoint removed) | LISIRD `noaa_goes16_xrs_1m` (2017+) + `goes15` (2011-2016), daily max aggregation | None |
+| **InSAR** | LiCSAR wrong frame IDs + broken catalog API | 34 correct Japan frames (Morishita 2021) + GeoTIFF parser + rasterio | None |
+| **IOC sea level** | `station.get("code")` crash on None values | None-safe parsing + dict/list response support + case-insensitive keys | None |
+| **Cloud fraction** | Variable name `Cloud_Fraction_Mean_Mean` (wrong) | Fixed to `Cloud_Fraction_Mean` | Earthdata |
+| **SO2** | Filename pattern missing revision timestamp | OPeNDAP catalog-based filename discovery | Earthdata |
+| **Earthdata auth** | Bearer token stripped on cross-origin redirect (all OPeNDAP 401) | Username/password BasicAuth for URS redirect flow | Credentials set |
+
+**Net result**: 6 sources switched to completely auth-free alternatives (ERDDAP/GFZ/NCEI). Earthdata username/password configured for remaining NASA OPeNDAP sources.
+
 ### Roadmap
 
 | Phase | Status | Goal |
@@ -792,6 +813,7 @@ Stacking still underperforms best single model: Logistic 0.7404 vs HistGBT 0.748
 | **Phase 12** | ✅ Complete | Data acquisition fixes (all ✅) + feature stability selection + FeatureExtractor 20h→12min |
 | **Phase 13** | ✅ Complete | DART ✅, IOC ❌ (crash), S-net ❌ (auth). **CV 0.7416** (best). Stability selection validated |
 | **Phase 14** | 🔄 Run in progress | IOC fix + INTERMAGNET 4x backfill + diverse stacking (RF/LR) + ConvLSTM full features |
+| **Phase 14b** | ✅ Complete | Data acquisition overhaul: 11 broken sources fixed (see table above) |
 | **ConvLSTM** | 📋 Ready | Spatiotemporal neural network on Colab GPU (feature_matrix.json now with full Phase 9+ data) |
 | **S-net** | ⏳ Awaiting NIED approval | 150 stations, sub-Pa pressure at Japan Trench. Registration submitted 2026-03-19 |
 | **INTERMAGNET backfill** | 🔄 In progress | 2000 days/station/run (4x faster). Full 15-year coverage in ~4 weekly runs |
