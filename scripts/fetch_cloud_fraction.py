@@ -91,8 +91,11 @@ async def _resolve_filename(session: aiohttp.ClientSession, year: int, doy: int)
             if resp.status != 200:
                 return None
             data = await resp.json(content_type=None)
-            # LAADS returns list of file objects
-            for item in data:
+            # LAADS returns {"content": [file objects]}
+            items = data.get("content", data) if isinstance(data, dict) else data
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
                 name = item.get("name", "")
                 if name.startswith("MOD08_D3") and name.endswith(".hdf"):
                     return name
