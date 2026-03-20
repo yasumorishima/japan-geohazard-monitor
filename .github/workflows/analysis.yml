@@ -115,6 +115,7 @@ jobs:
           python3 scripts/nowcast_analysis.py
 
       - name: Fetch MODIS LST (thermal anomaly discovery)
+        timeout-minutes: 90
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
@@ -163,6 +164,7 @@ jobs:
           python3 scripts/fetch_iss_lis_lightning.py || echo "ISS LIS fetch failed (non-fatal)"
 
       - name: Fetch INTERMAGNET hourly + CSES satellite EM data
+        timeout-minutes: 60
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
@@ -314,6 +316,29 @@ jobs:
           pip install HinetPy 2>/dev/null || true
           python3 scripts/fetch_snet_pressure.py || echo "S-net pressure fetch failed (non-fatal)"
 
+      # ====== DATA PRESERVATION CHECKPOINT ======
+      # All fetch steps complete. Validate + save DB before analysis.
+      # This ensures data survives even if analysis steps fail/timeout.
+
+      - name: Validate data completeness
+        if: always()
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/validate_data.py
+
+      - name: Upload database checkpoint (post-fetch)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: database-checkpoint-${{ github.run_id }}
+          path: |
+            data/geohazard.db
+            results/data_validation.json
+          retention-days: 90
+
+      # ====== ANALYSIS PHASE ======
+
       - name: Run MODIS LST thermal anomaly analysis
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
@@ -372,9 +397,28 @@ jobs:
             --min-mag ${{ github.event.inputs.min_mag || '5.0' }} \
             --type ${{ github.event.inputs.analysis_type || 'all' }}
 
+      - name: Final data validation
+        if: always()
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/validate_data.py
+          echo ""
+          echo "=== Database file size ==="
+          ls -lh data/geohazard.db 2>/dev/null || echo "DB file not found!"
+
       - name: Upload results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: analysis-results-${{ github.run_id }}
           path: results/
+          retention-days: 90
+
+      - name: Upload final database
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: database-final-${{ github.run_id }}
+          path: data/geohazard.db
           retention-days: 90
