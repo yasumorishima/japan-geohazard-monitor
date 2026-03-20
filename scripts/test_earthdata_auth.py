@@ -97,8 +97,37 @@ async def main():
             print(f"ERROR: {e}")
             ok = False
 
-        # Test 3: CoastWatch ERDDAP (no auth, just verify connectivity)
-        print("\n--- Test 3: CoastWatch ERDDAP (no auth) ---")
+        # Test 3: Bearer token validation
+        if token:
+            print("\n--- Test 3: Bearer Token Validation ---")
+            try:
+                async with session.get(
+                    "https://urs.earthdata.nasa.gov/api/users/tokens",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=timeout,
+                ) as resp:
+                    print(f"HTTP {resp.status}")
+                    if resp.status == 200:
+                        data = await resp.json()
+                        print(f"Token count: {len(data)}")
+                        if data:
+                            exp = data[0].get("expiration_date", "unknown")
+                            print(f"Token expiration: {exp}")
+                        print("PASS: Bearer token valid")
+                    elif resp.status == 401:
+                        print("FAIL: Bearer token invalid/expired")
+                        ok = False
+                    else:
+                        body = (await resp.text())[:200]
+                        print(f"UNEXPECTED: {body}")
+            except Exception as e:
+                print(f"ERROR: {e}")
+        else:
+            print("\n--- Test 3: Bearer Token Validation ---")
+            print("SKIP: EARTHDATA_TOKEN not set")
+
+        # Test 4: CoastWatch ERDDAP (no auth, just verify connectivity)
+        print("\n--- Test 4: CoastWatch ERDDAP (no auth) ---")
         try:
             erddap_url = (
                 "https://coastwatch.pfeg.noaa.gov/erddap/griddap/erdMH1chlamday.csv"

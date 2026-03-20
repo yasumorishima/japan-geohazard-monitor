@@ -1,0 +1,29 @@
+name: Test Earthdata Auth
+
+on:
+  workflow_dispatch:
+    inputs:
+      memo:
+        description: 'What are you testing?'
+        required: true
+
+jobs:
+  test-auth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install aiohttp
+
+      - name: Test Earthdata credentials
+        env:
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+        run: python3 scripts/test_earthdata_auth.py

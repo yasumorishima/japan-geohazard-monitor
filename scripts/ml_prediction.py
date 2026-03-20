@@ -1248,25 +1248,47 @@ async def load_phase9_cosmic_ray(db_path):
 
 
 async def load_phase9_lightning(db_path):
-    """Load lightning data from DB.
+    """Load lightning data from DB (Blitzortung + ISS LIS).
 
     Returns dict: {(date_str, cell_lat, cell_lon): {stroke_count, ...}}
+    Merges both sources: Blitzortung stroke_count and ISS LIS flash_count
+    are combined as stroke_count for ML features.
     """
+    data = {}
     try:
         async with aiosqlite.connect(db_path) as db:
+            # Blitzortung lightning (stroke_count, mean_intensity)
             rows = await db.execute_fetchall(
                 "SELECT observed_at, cell_lat, cell_lon, stroke_count, "
                 "mean_intensity FROM lightning"
             )
-        if not rows:
+            for r in rows:
+                key = (r[0], r[1], r[2])
+                data[key] = {"stroke_count": r[3] or 0, "mean_intensity": r[4]}
+
+            # ISS LIS lightning (flash_count, mean_radiance) — separate table
+            try:
+                lis_rows = await db.execute_fetchall(
+                    "SELECT observed_at, cell_lat, cell_lon, flash_count, "
+                    "mean_radiance FROM iss_lis_lightning"
+                )
+                for r in lis_rows:
+                    key = (r[0], r[1], r[2])
+                    if key in data:
+                        # Merge: add ISS LIS flashes to Blitzortung strokes
+                        data[key]["stroke_count"] += (r[3] or 0)
+                    else:
+                        data[key] = {"stroke_count": r[3] or 0, "mean_intensity": r[4]}
+                if lis_rows:
+                    logger.info("  ISS LIS lightning: %d cell-date records merged", len(lis_rows))
+            except Exception:
+                pass  # Table may not exist yet
+
+        if not data:
             logger.info("  No lightning data available")
             return {}
 
-        data = {}
-        for r in rows:
-            key = (r[0], r[1], r[2])
-            data[key] = {"stroke_count": r[3] or 0, "mean_intensity": r[4]}
-        logger.info("  Lightning data loaded: %d cell-date records", len(data))
+        logger.info("  Lightning data loaded: %d cell-date records (Blitzortung + ISS LIS)", len(data))
         return data
     except Exception as e:
         logger.warning("  Lightning load failed (non-fatal): %s", e)

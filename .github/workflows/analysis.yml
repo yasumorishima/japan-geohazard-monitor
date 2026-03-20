@@ -20,7 +20,7 @@ on:
 jobs:
   analyze:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 420
 
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +33,16 @@ jobs:
         run: |
           pip install aiohttp aiosqlite scikit-learn scipy
           sudo apt-get install -y ncompress  # For .Z IONEX decompression
+
+      - name: Validate Earthdata credentials
+        id: earthdata_check
+        env:
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+        run: |
+          python3 scripts/test_earthdata_auth.py && echo "earthdata_ok=true" >> "$GITHUB_OUTPUT" || echo "earthdata_ok=false" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
 
       - name: Fetch earthquake data (M3+, 2011-2026)
         env:
@@ -154,6 +164,7 @@ jobs:
           python3 scripts/fetch_blitzortung.py || echo "Lightning fetch failed (non-fatal)"
 
       - name: Fetch ISS LIS lightning data (Earthdata auth, 2017-2023)
+        if: steps.earthdata_check.outputs.earthdata_ok == 'true'
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
@@ -208,7 +219,8 @@ jobs:
         run: |
           python3 scripts/fetch_grace_gravity.py || echo "GRACE fetch failed (non-fatal)"
 
-      - name: Fetch OMI SO2 column data (Earthdata auth optional)
+      - name: Fetch OMI SO2 column data (Earthdata auth)
+        if: steps.earthdata_check.outputs.earthdata_ok == 'true'
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
@@ -243,7 +255,8 @@ jobs:
         run: |
           python3 scripts/fetch_ocean_color.py || echo "Ocean color fetch failed (non-fatal)"
 
-      - name: Fetch MODIS cloud fraction (Earthdata auth optional)
+      - name: Fetch MODIS cloud fraction (Earthdata auth)
+        if: steps.earthdata_check.outputs.earthdata_ok == 'true'
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
@@ -252,7 +265,8 @@ jobs:
         run: |
           python3 scripts/fetch_cloud_fraction.py || echo "Cloud fraction fetch failed (non-fatal)"
 
-      - name: Fetch VIIRS nighttime light/airglow
+      - name: Fetch VIIRS nighttime light/airglow (Earthdata auth)
+        if: steps.earthdata_check.outputs.earthdata_ok == 'true'
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
@@ -374,6 +388,22 @@ jobs:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
           python3 scripts/export_feature_matrix.py || echo "Feature matrix export failed (non-fatal)"
+
+      # ====== CRITICAL RESULTS CHECKPOINT ======
+      # Save ML results + feature matrix before running slower benchmarks.
+      # This ensures core outputs survive if remaining steps timeout.
+
+      - name: Upload ML results checkpoint
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ml-results-${{ github.run_id }}
+          path: |
+            results/feature_matrix.json
+            results/ml_prediction_*.json
+            results/prospective_*.json
+          retention-days: 90
+          if-no-files-found: warn
 
       - name: Export CSEP forecast and run benchmark
         env:

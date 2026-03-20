@@ -53,8 +53,16 @@ async def get_earthdata_session() -> aiohttp.ClientSession:
             async with session.get(auth_url, auth=auth) as resp:
                 if resp.status == 200:
                     logger.info("Earthdata session authenticated via username/password")
+                elif resp.status == 401:
+                    body = await resp.text()
+                    logger.warning(
+                        "Earthdata auth failed: HTTP 401 (invalid credentials or password expired). "
+                        "Check https://urs.earthdata.nasa.gov/ — NASA requires periodic password changes. "
+                        "Response: %s", body[:300]
+                    )
                 else:
-                    logger.warning("Earthdata auth failed: HTTP %d", resp.status)
+                    body = await resp.text()
+                    logger.warning("Earthdata auth failed: HTTP %d — %s", resp.status, body[:300])
         except Exception as e:
             logger.warning("Earthdata auth error: %s", e)
 

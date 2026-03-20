@@ -72,11 +72,11 @@ TIMEOUT = aiohttp.ClientTimeout(total=120, connect=30)
 MAX_GRANULES_PER_RUN = 200
 
 
-async def init_lightning_table():
-    """Create lightning table (reuse existing schema if present)."""
+async def init_iss_lis_table():
+    """Create ISS LIS lightning table (separate from Blitzortung lightning)."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
-            CREATE TABLE IF NOT EXISTS lightning (
+            CREATE TABLE IF NOT EXISTS iss_lis_lightning (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 observed_at TEXT NOT NULL,
                 cell_lat REAL NOT NULL,
@@ -88,8 +88,8 @@ async def init_lightning_table():
             )
         """)
         await db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_lightning_time
-            ON lightning(observed_at)
+            CREATE INDEX IF NOT EXISTS idx_iss_lis_lightning_time
+            ON iss_lis_lightning(observed_at)
         """)
         await db.commit()
 
@@ -269,7 +269,7 @@ def aggregate_daily_cells(flashes):
 
 async def main():
     await init_db()
-    await init_lightning_table()
+    await init_iss_lis_table()
 
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
@@ -282,7 +282,7 @@ async def main():
     # Check existing data
     async with aiosqlite.connect(DB_PATH) as db:
         existing = await db.execute_fetchall(
-            "SELECT MAX(observed_at), COUNT(*) FROM lightning"
+            "SELECT MAX(observed_at), COUNT(*) FROM iss_lis_lightning"
         )
     last_date = existing[0][0] if existing and existing[0][0] else None
     n_existing = existing[0][1] if existing else 0
@@ -345,7 +345,7 @@ async def main():
             if daily_cells:
                 async with aiosqlite.connect(DB_PATH) as db:
                     await db.executemany(
-                        """INSERT OR IGNORE INTO lightning
+                        """INSERT OR IGNORE INTO iss_lis_lightning
                            (observed_at, cell_lat, cell_lon, flash_count,
                             mean_radiance, received_at)
                            VALUES (?, ?, ?, ?, ?, ?)""",

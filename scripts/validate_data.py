@@ -36,6 +36,7 @@ EXPECTED_TABLES = {
     "cosmic_ray":        {"min_rows": 100,   "time_col": "observed_at", "critical": False},
     "gnss_tec":          {"min_rows": 10,    "time_col": "observed_at", "critical": False},
     "lightning":         {"min_rows": 10,    "time_col": "observed_at", "critical": False},
+    "iss_lis_lightning": {"min_rows": 0,     "time_col": "observed_at", "critical": False},
     # Phase 9: INTERMAGNET, CSES, Movebank
     "geomag_hourly":     {"min_rows": 100,   "time_col": "observed_at", "critical": False},
     "satellite_em":      {"min_rows": 0,     "time_col": "observed_at", "critical": False},
