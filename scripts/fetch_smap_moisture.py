@@ -47,13 +47,14 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 # ── ERDDAP endpoints (public, no auth) ──────────────────────────────
-# Primary: NOAA SMOPS CDR — daily blended satellite soil moisture
-SMOPS_ERDDAP_BASE = "https://coastwatch.noaa.gov/erddap/griddap"
-SMOPS_DATASET_ID = "noaacwSMcdrDaily"
-
-# Backfill: NOAA CPC Soil Moisture v2 — monthly model reanalysis
+# Primary: NOAA CPC Soil Moisture v2 — monthly model reanalysis (1948-present)
+# SMOPS CDR ended at 2022-12, so CPC is now the primary source.
 CPC_ERDDAP_BASE = "https://upwell.pfeg.noaa.gov/erddap/griddap"
 CPC_DATASET_ID = "noaa_psl_bec3_56fa_c395"
+
+# Fallback: NOAA SMOPS CDR — daily blended satellite (2017-2022 only)
+SMOPS_ERDDAP_BASE = "https://coastwatch.noaa.gov/erddap/griddap"
+SMOPS_DATASET_ID = "noaacwSMcdrDaily"
 
 # Japan bbox
 LAT_MIN = 24.0

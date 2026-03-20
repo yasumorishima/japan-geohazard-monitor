@@ -49,9 +49,11 @@ from config import DB_PATH
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# NOAA CoastWatch ERDDAP - MODIS Aqua monthly chlorophyll-a
+# NOAA CoastWatch ERDDAP - VIIRS+OLCI DINEOF gap-filled daily chlorophyll-a
+# noaacwNPPN20S3ASCIDINEOF2kmDaily: 2018-present (updated ~weekly)
+# Redirects from pfeg to coastwatch.noaa.gov — aiohttp needs allow_redirects=True
 ERDDAP_BASE = "https://coastwatch.pfeg.noaa.gov/erddap/griddap"
-DATASET_ID = "erdMH1chlamday"
+DATASET_ID = "noaacwNPPN20S3ASCIDINEOF2kmDaily"
 
 # Japan ocean bbox (wider than land to cover subduction zones)
 LAT_MIN = 24.0
@@ -64,18 +66,18 @@ CELL_DEG = 2.0
 
 MAX_RETRIES = 3
 TIMEOUT = aiohttp.ClientTimeout(total=300, connect=60)
-START_YEAR = 2011
+START_YEAR = 2018  # DINEOF dataset starts 2018-01-01
 
 
 def _build_erddap_url(time_iso: str) -> str:
     """Build ERDDAP griddap CSV URL for a single monthly time step.
 
-    The erdMH1chlamday dataset has monthly composites. The time
-    parameter selects the nearest available month.
+    The DINEOF dataset has daily composites with altitude dimension.
+    We sample monthly (1st of each month) to match prediction cadence.
     """
     return (
         f"{ERDDAP_BASE}/{DATASET_ID}.csv"
-        f"?chlorophyll[({time_iso})]"
+        f"?chlor_a[({time_iso})][(0.0)]"
         f"[({LAT_MIN}):({LAT_MAX})]"
         f"[({LON_MIN}):({LON_MAX})]"
     )
@@ -125,7 +127,7 @@ def _parse_erddap_csv(text: str) -> list[dict]:
     time_idx = col_map.get("time")
     lat_idx = col_map.get("latitude")
     lon_idx = col_map.get("longitude")
-    chl_idx = col_map.get("chlorophyll")
+    chl_idx = col_map.get("chlor_a") or col_map.get("chlorophyll")
 
     if any(idx is None for idx in (time_idx, lat_idx, lon_idx, chl_idx)):
         logger.warning("ERDDAP CSV missing expected columns: %s", header)
