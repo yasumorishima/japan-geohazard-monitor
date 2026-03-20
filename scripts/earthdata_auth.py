@@ -29,6 +29,8 @@ URS_HOST = "urs.earthdata.nasa.gov"
 
 def _resolve_redirect(base_url: str, location: str) -> str:
     """Resolve a redirect Location header, handling relative paths."""
+    if not location:
+        return ""
     if location.startswith("http://") or location.startswith("https://"):
         return location
     return urljoin(base_url, location)
@@ -95,6 +97,10 @@ async def earthdata_fetch(
                     redirect_url = _resolve_redirect(
                         url, str(resp.headers.get("Location", "")))
 
+                    if not redirect_url:
+                        logger.warning("Redirect with empty Location header")
+                        return resp.status, ""
+
                     if URS_HOST in redirect_url and has_credentials:
                         # OPeNDAP redirect: Bearer won't work, use Basic Auth
                         return await _fetch_with_basic_auth(session, redirect_url, timeout)
@@ -129,6 +135,8 @@ async def earthdata_fetch(
                 if resp.status in (301, 302, 303, 307, 308):
                     redirect_url = _resolve_redirect(
                         url, str(resp.headers.get("Location", "")))
+                    if not redirect_url:
+                        return resp.status, ""
                     if URS_HOST in redirect_url:
                         return await _fetch_with_basic_auth(session, redirect_url, timeout)
                     # Non-URS redirect
@@ -194,6 +202,10 @@ async def earthdata_fetch_bytes(
                     redirect_url = _resolve_redirect(
                         url, str(resp.headers.get("Location", "")))
 
+                    if not redirect_url:
+                        logger.warning("Redirect with empty Location header")
+                        return resp.status, b""
+
                     if URS_HOST in redirect_url and has_credentials:
                         return await _fetch_bytes_with_basic_auth(session, redirect_url, timeout)
 
@@ -227,6 +239,8 @@ async def earthdata_fetch_bytes(
                 if resp.status in (301, 302, 303, 307, 308):
                     redirect_url = _resolve_redirect(
                         url, str(resp.headers.get("Location", "")))
+                    if not redirect_url:
+                        return resp.status, b""
                     if URS_HOST in redirect_url:
                         return await _fetch_bytes_with_basic_auth(session, redirect_url, timeout)
                     async with session.get(

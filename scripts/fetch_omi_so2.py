@@ -28,6 +28,7 @@ References:
 import asyncio
 import logging
 import os
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -92,7 +93,7 @@ async def _resolve_so2_filename(session: aiohttp.ClientSession, year: int, date_
     OMSO2G files are stored directly under year/ (no DOY subdirectory).
     Filename: OMI-Aura_L2G-OMSO2G_{YYYY}m{MMDD}_v003-{revision}.he5
     """
-    import re
+
     mmdd = date_str[5:7] + date_str[8:10]  # "2024-01-15" -> "0115"
     pattern_str = f"OMI-Aura_L2G-OMSO2G_{year}m{mmdd}"
 
@@ -203,7 +204,7 @@ def _parse_opendap_ascii(text: str, date_str: str) -> list[dict]:
             idx_part = line[:first_comma].strip()
             # Extract lat index: last bracketed number
             # "[0][5]" -> 5, "[5]" -> 5
-            import re
+        
             bracket_nums = re.findall(r'\[(\d+)\]', idx_part)
             if not bracket_nums:
                 continue
