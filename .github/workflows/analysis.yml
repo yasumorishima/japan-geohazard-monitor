@@ -257,6 +257,7 @@ jobs:
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         run: |
+          pip install h5py 2>/dev/null || true
           python3 scripts/fetch_viirs_nighttime.py || echo "VIIRS fetch failed (non-fatal)"
 
       - name: Fetch InSAR deformation (COMET LiCSAR)
