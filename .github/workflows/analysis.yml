@@ -41,7 +41,15 @@ jobs:
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         run: |
-          python3 scripts/test_earthdata_auth.py && echo "earthdata_ok=true" >> "$GITHUB_OUTPUT" || echo "earthdata_ok=false" >> "$GITHUB_OUTPUT"
+          if python3 scripts/test_earthdata_auth.py; then
+            echo "earthdata_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "earthdata_ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Earthdata auth FAILED — cloud_fraction, SO2, nightlight, ISS LIS will be SKIPPED"
+            echo "### ⚠️ Earthdata Auth Failed" >> "$GITHUB_STEP_SUMMARY"
+            echo "cloud_fraction, SO2, nightlight, ISS LIS sources will be skipped this run." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+          fi
         continue-on-error: true
 
       - name: Fetch earthquake data (M3+, 2011-2026)

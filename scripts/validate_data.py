@@ -204,7 +204,61 @@ def validate():
             f.write(f"ok_tables={ok_count}\n")
             f.write(f"total_tables={total}\n")
 
+    # Write Job Summary (visible on GitHub Actions Run page)
+    github_summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if github_summary:
+        with open(github_summary, "a") as f:
+            f.write(f"## Data Validation: {overall}\n\n")
+            f.write(f"**{ok_count} OK** / {warn_count} LOW / ")
+            f.write(f"**{empty_count} EMPTY** / **{missing_count} MISSING** (of {total})\n\n")
+
+            # Show problems first — EMPTY and MISSING tables
+            problems = [
+                (t, e) for t, e in report.items()
+                if e["status"] in ("EMPTY", "MISSING")
+            ]
+            if problems:
+                f.write("### ❌ Data Gaps (action needed)\n\n")
+                f.write("| Table | Status | Reason |\n")
+                f.write("|---|---|---|\n")
+                for t, e in sorted(problems):
+                    reason = _gap_reason(t)
+                    f.write(f"| `{t}` | {e['status']} | {reason} |\n")
+                f.write("\n")
+
+            # Show OK tables compactly
+            ok_tables = [
+                (t, e) for t, e in report.items()
+                if e["status"] == "OK"
+            ]
+            if ok_tables:
+                f.write("<details><summary>✅ OK tables ({} sources)</summary>\n\n".format(len(ok_tables)))
+                f.write("| Table | Rows | Date Range |\n")
+                f.write("|---|---|---|\n")
+                for t, e in sorted(ok_tables):
+                    dates = ""
+                    if e["min_date"] and e["max_date"]:
+                        dates = f"{e['min_date'][:10]} → {e['max_date'][:10]}"
+                    f.write(f"| `{t}` | {e['rows']:,} | {dates} |\n")
+                f.write("\n</details>\n")
+
     return summary
+
+
+def _gap_reason(table: str) -> str:
+    """Return known reason for a data gap."""
+    reasons = {
+        "cloud_fraction": "Earthdata auth (MODIS OPeNDAP)",
+        "so2_column": "Earthdata auth (OMI OPeNDAP)",
+        "nightlight": "Earthdata auth (VIIRS LAADS)",
+        "iss_lis_lightning": "Earthdata auth (GHRC DAAC)",
+        "lightning": "Blitzortung archive restricted",
+        "insar_deformation": "LiCSAR: no Japan frames returned",
+        "satellite_em": "CSES: registration required",
+        "snet_pressure": "NIED: approval pending",
+        "collector_status": "Analysis-derived (RPi5 only)",
+    }
+    return reasons.get(table, "Unknown")
 
 
 if __name__ == "__main__":
