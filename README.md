@@ -464,7 +464,9 @@ gh workflow run "Earthquake Correlation Analysis" \
 | `csep_benchmark.py` | 8 | CSEP benchmark: Uniform/Smoothed/RI/ETAS reference models + N/L/T-test + Molchan diagram | Helmstetter (2007), Rhoades (2004) |
 | `stacking_analysis.py` | 8-14 | Ensemble stacking: up to 14-input level-0 (HistGBT×3 + RF×3 + LR×3 + physics×5) → logistic/isotonic meta-learner. Auto-fallback to 8 features when diverse models unavailable | Wolpert (1992) |
 | `cosmic_ray_analysis.py` | 9 | Cosmic ray anomaly: 27-day solar rotation baseline deviation, 15-day trend (Homola lag), Forbush decrease detection, multi-station differential | Homola et al. (2023) |
-| `export_feature_matrix.py` | 8-14 | 4D tensor export (timesteps×H×W×C) for ConvLSTM GPU training. Phase 14: also exported from ml_prediction.py with full Phase 9+ data (not zero-filled) | — |
+| `export_feature_matrix.py` | 8-14 | 4D tensor export (timesteps×H×W×C) for ConvLSTM/GNN GPU training. Phase 14: also exported from ml_prediction.py with full Phase 9+ data (not zero-filled) | — |
+| `colab/geohazard_convlstm.py` | 8+ | ConvLSTM spatiotemporal: 2-layer ConvLSTM + SE attention, AdamW + CosineAnnealingLR, walk-forward CV | Shi et al. (2015), DeVries et al. (2018) |
+| `colab/geohazard_gnn.py` | 8+ | SeismoGNN: GATv2Conv×3 (4-head) + GRU temporal, fault-network graph (8-neighbor + tectonic zone edges), walk-forward CV | SeismoQuakeGNN (2025), Stein (1999) |
 
 ### Shared modules (`src/`)
 
@@ -575,11 +577,31 @@ Phase 8.0 revealed critical bugs in stacking:
 2. Logistic standardization: feature standardization (zero mean, unit variance) before gradient descent
 3. Dynamic CSEP: per-window ML forecast reconstruction from level-0 predictions
 
-**Initiative 1: ConvLSTM Spatiotemporal Neural Network**
-- 2-layer ConvLSTM with channel attention on 11×11×C spatial grid (C=64 active features after stability selection)
-- Captures spatial patterns that cell-independent HistGBT cannot learn
-- Feature matrix exported directly from ml_prediction.py with all Phase 9+ data loaded (not zero-filled)
-- Training via RPi5 → Google Drive → Colab T4 GPU pipeline
+**Initiative 1: ConvLSTM Spatiotemporal Neural Network** (Colab-ready)
+- 2-layer ConvLSTM with channel attention (SE block) on 11×11×C spatial grid
+- AdamW optimizer + CosineAnnealingLR + gradient clipping (max_norm=1.0)
+- Input: 30 timesteps × 3 days = 90 days history (vs HistGBT's 7-day window)
+- Walk-forward CV with same splits as HistGBT for fair comparison
+- Feature matrix (109MB, 1790 steps × 11×11 × 79 features) exported and deployed to Google Drive
+- Script: `colab/geohazard_convlstm.py`
+
+**Initiative 1b: SeismoGNN (Graph Neural Network)** (Colab-ready, new)
+- GATv2Conv × 3 layers with 4-head attention + per-node GRU temporal encoding (2-layer)
+- Graph structure: 121 nodes (11×11 grid) with 8-connectivity + same-tectonic-zone edges
+- Edge features: inverse distance, zone membership, direction encoding (sin/cos)
+- Captures fault-network topology: Coulomb stress cascading follows tectonic structure, not Euclidean distance
+- Same walk-forward CV splits and feature_matrix.json input as ConvLSTM/HistGBT
+- Requires PyTorch Geometric (`pip install torch-geometric`)
+- Script: `colab/geohazard_gnn.py`
+- References: SeismoQuakeGNN (Frontiers in AI, 2025), Stein (1999) Nature — stress transfer
+
+**3-model fair comparison** (same data, same CV splits):
+
+| Model | Spatial Structure | Temporal Structure | Current AUC |
+|---|---|---|---|
+| HistGBT (baseline) | Cell-independent | 7-day statistics | **0.7485** |
+| ConvLSTM | Regular grid CNN | 90-day LSTM | pending |
+| SeismoGNN | Fault network graph | 90-day GRU | pending |
 
 **Initiative 2: CSEP-Compatible Format + Benchmark**
 - ML probability → CSEP XML rate forecast (2°×2° grid, 4 magnitude bins)
@@ -836,7 +858,10 @@ Phase 13 revealed that 15 out of 27 data sources had been silently failing (only
 | **Phase 14** | ✅ Complete | IOC fix + diverse stacking (RF/LR) + ConvLSTM full features. **Test AUC 0.7485** (best). Stacking ≒ base |
 | **Phase 14b** | ✅ Complete | Data acquisition overhaul: 57→71+ features (see table above) |
 | **Phase 15** | 🔄 Run in progress | Full test with all fixed sources + **data preservation checkpoint** (validate_data.py, DB artifact with `if: always()`). Expected: 71-74/78 active features |
-| **ConvLSTM** | 📋 Ready | Spatiotemporal neural network on Colab GPU (feature_matrix.json with full data) |
+| **ConvLSTM** | 🟢 Colab-ready | Spatiotemporal neural network. Script + feature_matrix.json deployed to Drive |
+| **SeismoGNN** | 🟢 Colab-ready | Graph Attention Network with fault-network topology. Script deployed to Drive |
+| **Transformer** | 📋 Next | SafeNet-style multi-window features (7/14/30/90/365d) + attention (SafeNet, Sci. Reports 2025) |
+| **PINN** | 📋 Next | Physics-Informed NN with Rate-State friction loss (Nature Comms 2023) |
 | **S-net** | ⏳ Awaiting NIED approval | 150 stations, sub-Pa pressure at Japan Trench. Registration submitted 2026-03-19 |
 | **INTERMAGNET backfill** | 🔄 In progress | 500 days/station/run (step timeout 60min). Full 15-year coverage accumulates over weekly runs |
 
