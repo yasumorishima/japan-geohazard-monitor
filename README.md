@@ -134,13 +134,14 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 - **Analysis Phase 11** ✅ 4 space/cosmic data sources: GOES X-ray flux (solar flares), GOES proton flux (SEP events), tidal stress (lunar+solar, pure calculation), particle precipitation (Van Allen belt). 70 → 75 features
 - **Analysis Phase 12** ✅ Data acquisition infrastructure overhaul + ML feature stability selection + FeatureExtractor performance optimization. OLR→PSL THREDDS, IERS→OBSPM, tide→UHSLC Fast Delivery, Earthdata→OAuth2 redirect handler. ML: 3-fold stability pre-filter removes noisy features before CV. **Data acquisition all confirmed working** (OLR/IERS/tide/GOES/GRACE/SO2 ✅). Phase 12b: bisect-based window queries, zone stats caching, deque histories — extract() 20h→12min. deque slice bug fixed in Phase 13
 - **Analysis Phase 13** ✅ Seafloor/ocean bottom data sources: NOAA DART bottom pressure (5 stations near Japan, 3 returned data, no auth), IOC sea level monitoring (❌ API crash on None station codes), NIED S-net seafloor pressure (❌ NIED credentials pending). 75 → 79 features (64 active after stability selection). DATA_LICENSES.md added (all 19 source policies documented). **CV AUC 0.7416 (best ever), Test AUC 0.7481**
-- **Analysis Phase 14** 🔄 Four-axis improvement: (1) IOC fetch crash fix (None-safe parsing + dict/list response support), (2) INTERMAGNET backfill 4x acceleration (500→2000 days/station/run), (3) Diverse stacking level-0 models (RandomForest + LogisticRegression alongside HistGBT → 14-feature meta-learner), (4) ConvLSTM full-feature export (feature_matrix.json now includes all Phase 9+ data, not zero-filled). **Run in progress (2026-03-19)**
+- **Analysis Phase 14** ✅ Four-axis improvement: (1) IOC fetch crash fix (None-safe parsing + dict/list response support), (2) INTERMAGNET backfill 4x acceleration (500→2000 days/station/run), (3) Diverse stacking level-0 models (RandomForest + LogisticRegression alongside HistGBT → 14-feature meta-learner), (4) ConvLSTM full-feature export (feature_matrix.json now includes all Phase 9+ data, not zero-filled). **CV AUC 0.7415, Test AUC 0.7485. Stacking logistic=0.7484 (≒base), isotonic=0.7213 (degraded). 65 active features**
 - **Analysis Phase 14b** ✅ Data acquisition overhaul: **57→71+ active features**. 11 broken sources fixed + 2 new (ISS LIS lightning, VNP46A4 nightlight) + animal removed (79→78). 8 sources switched to auth-free alternatives. All endpoints verified with curl before commit. OLR→NCEI CDR, GRACE→GFZ GravIS, Ocean Color→CoastWatch DINEOF, Soil Moisture→CPC ERDDAP, Tide Gauge→UHSLC ERDDAP (19 stations), GOES X-ray→LISIRD 1-min, InSAR→LiCSAR 34 frames, Lightning→ISS LIS (GHRC DAAC), Nightlight→VNP46A4 (LAADS), Earthdata auth→BasicAuth
 - **Backfill** ✅ 2011-2026 M3+ earthquakes (29K), TEC (4M), Kp (44K), GCMT focal mechanisms
-- **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 360min timeout)
+- **Analysis Phase 15** 🔄 Full test with all Phase 14b source fixes + data preservation checkpoint system (validate_data.py + intermediate DB artifact upload with `if: always()` — ensures data survives timeout/cancellation). INTERMAGNET step timeout: 60min, MODIS LST: 90min. **Run in progress (2026-03-20)**
+- **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 360min timeout). **Data preservation**: DB checkpoint after fetch phase + final DB upload, both `if: always()`. Data validation report (30 tables checked) saved to artifacts
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
 
-## Analysis Results (2011-2026, 29K M3+ earthquakes, 4M TEC, 44K Kp, 31K GNSS-TEC, 1.3M ULF, 79 features with dynamic selection)
+## Analysis Results (2011-2026, 29K M3+ earthquakes, 4M TEC, 44K Kp, 31K GNSS-TEC, 1.3M ULF, 78 features with dynamic selection)
 
 ### Summary
 
@@ -439,6 +440,7 @@ gh workflow run "Earthquake Correlation Analysis" \
 | `fetch_dart_pressure.py` | NOAA NDBC | DART ocean bottom pressure: 5 Japan-area stations, historical + realtime (no auth) |
 | `fetch_ioc_sealevel.py` | IOC/VLIZ | Sea level monitoring: Japan coastal stations, REST API (no auth, 1 req/min) |
 | `fetch_snet_pressure.py` | NIED Hi-net | S-net seafloor water pressure via HinetPy (NIED credentials required) |
+| `validate_data.py` | Local DB | **Data completeness validation**: checks all 30 tables for existence, row count, date range coverage. Outputs JSON report + human-readable summary. Runs twice per workflow (post-fetch + final) |
 
 ### Analysis scripts
 
@@ -469,13 +471,13 @@ gh workflow run "Earthquake Correlation Analysis" \
 | Module | Purpose |
 |---|---|
 | `physics.py` | Okada (1992) CFS, Wells & Coppersmith (1994) fault scaling, ETAS MLE (scipy L-BFGS-B), Dieterich (1994) rate-and-state, b-value (Aki-Utsu), tectonic zone classification, GNSS strain rate estimation, slow-slip transient detection |
-| `features.py` | **79 features** with dynamic selection across **22 optional groups**: rate dynamics (acceleration, trend), zone-specific ETAS residuals, magnitude statistics (deficit, b-value trend), clustering (foreshock escalation, inter-event CV), rate-and-state CFS, Pattern Informatics, Benioff strain, GNSS crustal deformation (displacement, strain rate, SSE detection), enhanced spatial (neighbor CFS/ETAS/mag, zone rate anomaly, CFS rank, spatial gradient), **cosmic ray** (27-day baseline deviation, trend), **geomagnetic spectral** (ULF power, polarization, fractal dim), **OLR anomaly**, **Earth rotation** (LOD rate, polar motion speed), **solar wind** (Bz, dynamic pressure, Dst), **GRACE gravity** anomaly rate, **SO2 column** anomaly, **soil moisture** anomaly, **tide gauge** residual, **ocean color** chlorophyll anomaly, **cloud fraction** anomaly, **nightlight** airglow anomaly, **InSAR** deformation rate, **X-ray flux** (solar flare proxy), **proton flux** (SEP events), **tidal shear stress** + rate (lunar+solar), **particle precipitation** (Van Allen belt), **DART bottom pressure** (anomaly + rate), **IOC sea level** anomaly, **S-net seafloor pressure** anomaly. `get_active_feature_names()` auto-excludes groups with no data. **Performance**: bisect-based O(log n) window queries, per-day zone stats cache, deque histories — optimized for 100K+ extract() calls per target |
+| `features.py` | **78 features** with dynamic selection across **22 optional groups**: rate dynamics (acceleration, trend), zone-specific ETAS residuals, magnitude statistics (deficit, b-value trend), clustering (foreshock escalation, inter-event CV), rate-and-state CFS, Pattern Informatics, Benioff strain, GNSS crustal deformation (displacement, strain rate, SSE detection), enhanced spatial (neighbor CFS/ETAS/mag, zone rate anomaly, CFS rank, spatial gradient), **cosmic ray** (27-day baseline deviation, trend), **geomagnetic spectral** (ULF power, polarization, fractal dim), **OLR anomaly**, **Earth rotation** (LOD rate, polar motion speed), **solar wind** (Bz, dynamic pressure, Dst), **GRACE gravity** anomaly rate, **SO2 column** anomaly, **soil moisture** anomaly, **tide gauge** residual, **ocean color** chlorophyll anomaly, **cloud fraction** anomaly, **nightlight** airglow anomaly, **InSAR** deformation rate, **X-ray flux** (solar flare proxy), **proton flux** (SEP events), **tidal shear stress** + rate (lunar+solar), **particle precipitation** (Van Allen belt), **DART bottom pressure** (anomaly + rate), **IOC sea level** anomaly, **S-net seafloor pressure** anomaly. `get_active_feature_names()` auto-excludes groups with no data. **Performance**: bisect-based O(log n) window queries, per-day zone stats cache, deque histories — optimized for 100K+ extract() calls per target |
 | `evaluation.py` | ROC-AUC, threshold evaluation (precision/recall/gain/IGPE/Molchan), walk-forward CV splits, isotonic calibration (PAV), reliability diagram, permutation importance, Molchan area skill score |
 | `target_config.py` | Multi-target configuration: M5+/M5.5+/M6+ with per-target window, class weight, positive thresholds |
 | `csep_format.py` | CSEP XML forecast generation: probability → GR-based rate per cell/magnitude/time bin |
 | `stacking.py` | Ensemble stacking: level-0 registration (HistGBT + RF + LR × 3 targets + 5 physics = up to 14 features), logistic/isotonic meta-learner, walk-forward stacking with temporal leak prevention |
 
-Results saved as JSON artifacts (90-day retention). Runs every Monday 12:00 JST or on demand (360-min timeout).
+Results saved as JSON artifacts (90-day retention). Runs every Monday 12:00 JST or on demand (360-min timeout). **Data preservation**: DB checkpoint artifact uploaded after all fetch steps + final DB upload, both with `if: always()` to survive timeout/cancellation. `validate_data.py` checks all 30 tables twice per run.
 
 ### Phase 5 ML Results (AUC 0.73, AdaBoost baseline)
 
@@ -786,6 +788,22 @@ Recovery from Phase 10/10b regression — stability selection effectively filter
 
 Stacking still underperforms best single model: Logistic 0.7404 vs HistGBT 0.7481 (−0.008). Correlated M5+/M5.5+/M6+ HistGBT predictions limit meta-learner diversity — Phase 14 addresses this.
 
+### Phase 14: Diverse Stacking + ConvLSTM Export — Test AUC 0.7485
+
+| Metric | Phase 13 | Phase 14 | Change |
+|---|---|---|---|
+| CV AUC (pooled) | **0.7416** | 0.7415 | −0.0001 |
+| Test AUC | 0.7481 | **0.7485** | +0.0004 |
+| Active features | 64/79 | 65/79 | +1 |
+
+Stacking meta-learner with 14 diverse level-0 inputs (HistGBT×3 + RF×3 + LR×3 + physics×5):
+- Logistic stacking: pooled AUC = 0.7484 (≒ base model, no improvement)
+- Isotonic stacking: pooled AUC = 0.7213 (degraded)
+
+ConvLSTM 4D feature matrix export (timesteps×11×11×65) completed. Ready for Colab GPU training.
+
+**Key takeaway**: Stacking with correlated level-0 models does not improve on the best single model. Genuine diversity requires structurally different models (e.g., ConvLSTM spatiotemporal vs HistGBT tabular).
+
 ### Phase 14b: Data Acquisition Overhaul — 57→71+ active features
 
 Phase 13 revealed that 15 out of 27 data sources had been silently failing (only 57/79 features had real data). Phase 14b systematically rewrites every broken fetch script, adds new sources, and verifies each with lightweight curl tests before committing:
@@ -815,12 +833,12 @@ Phase 13 revealed that 15 out of 27 data sources had been silently failing (only
 |---|---|---|
 | **Phase 12** | ✅ Complete | Data acquisition fixes + feature stability selection + FeatureExtractor 20h→12min |
 | **Phase 13** | ✅ Complete | DART ✅, IOC ❌ (crash), S-net ❌ (auth). **CV 0.7416** (best). Stability selection validated |
-| **Phase 14** | 🔄 Run in progress | IOC fix + INTERMAGNET 4x backfill + diverse stacking (RF/LR) + ConvLSTM full features |
+| **Phase 14** | ✅ Complete | IOC fix + diverse stacking (RF/LR) + ConvLSTM full features. **Test AUC 0.7485** (best). Stacking ≒ base |
 | **Phase 14b** | ✅ Complete | Data acquisition overhaul: 57→71+ features (see table above) |
-| **Phase 15** | 📋 Next | Full test run with all fixed sources. Expected: 71-74/78 active features → AUC improvement |
+| **Phase 15** | 🔄 Run in progress | Full test with all fixed sources + **data preservation checkpoint** (validate_data.py, DB artifact with `if: always()`). Expected: 71-74/78 active features |
 | **ConvLSTM** | 📋 Ready | Spatiotemporal neural network on Colab GPU (feature_matrix.json with full data) |
 | **S-net** | ⏳ Awaiting NIED approval | 150 stations, sub-Pa pressure at Japan Trench. Registration submitted 2026-03-19 |
-| **INTERMAGNET backfill** | 🔄 In progress | 2000 days/station/run (4x faster). Full 15-year coverage in ~4 weekly runs |
+| **INTERMAGNET backfill** | 🔄 In progress | 500 days/station/run (step timeout 60min). Full 15-year coverage accumulates over weekly runs |
 
 ### Not yet implemented
 
