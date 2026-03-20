@@ -385,21 +385,9 @@ jobs:
         run: |
           python3 scripts/ml_prediction.py || echo "ML prediction failed (non-fatal)"
 
-      - name: Run prospective prediction analysis
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-        run: |
-          python3 scripts/prospective_analysis.py
-
-      - name: Export feature matrix for neural network
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-        run: |
-          python3 scripts/export_feature_matrix.py || echo "Feature matrix export failed (non-fatal)"
-
       # ====== CRITICAL RESULTS CHECKPOINT ======
-      # Save ML results + feature matrix before running slower benchmarks.
-      # This ensures core outputs survive if remaining steps timeout.
+      # Save ML results + feature matrix immediately after ML prediction.
+      # Feature matrix is now exported inside ml_prediction.py (no separate step).
 
       - name: Upload ML results checkpoint
         if: always()
@@ -409,9 +397,14 @@ jobs:
           path: |
             results/feature_matrix.json
             results/ml_prediction_*.json
-            results/prospective_*.json
           retention-days: 90
           if-no-files-found: warn
+
+      - name: Run prospective prediction analysis
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/prospective_analysis.py
 
       - name: Export CSEP forecast and run benchmark
         env:

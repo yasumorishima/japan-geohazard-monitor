@@ -1014,38 +1014,35 @@ def export_level0_predictions(target_name, probs, labels, cells, t_days_list,
     logger.info("  Level-0 predictions exported: %s (%d samples)", out_path.name, len(records))
 
 
-def export_spatial_feature_matrix(events, fm_dict, t0, etas_params=None,
-                                   zone_etas=None, gnss_data=None,
-                                   metadata=None, **data_kwargs):
+def export_spatial_feature_matrix(samples, active_cells, metadata):
     """Export full spatial feature matrix for ConvLSTM training.
 
-    Uses the same FeatureExtractor and data sources as ml_prediction,
-    so all features have real data (not zero-filled).
+    Reuses pre-computed samples from build_dataset() instead of
+    re-extracting features for all grid cells.
+    Non-active cells are zero-filled.
 
     Output: results/feature_matrix.json — 4D tensor (T, H=11, W=11, C)
     """
-    active_feature_names = metadata.get("features", FEATURE_NAMES) if metadata else FEATURE_NAMES
-    feature_mask = metadata.get("feature_mask") if metadata else list(range(N_FEATURES))
+    active_feature_names = metadata.get("features", FEATURE_NAMES)
     n_features = len(active_feature_names)
+    prediction_window = metadata.get("prediction_window_days", 7)
+    step_days = metadata.get("step_days", 3)
+    min_target_mag = metadata.get("min_target_mag", 5.0)
 
     # Grid dimensions
     GRID_H = int((GRID_LAT_MAX - GRID_LAT_MIN) / CELL_SIZE_DEG) + 1
     GRID_W = int((GRID_LON_MAX - GRID_LON_MIN) / CELL_SIZE_DEG) + 1
 
-    # Build extractor with all data sources
-    extractor = FeatureExtractor(
-        events, fm_dict, t0, etas_params,
-        zone_etas_params=zone_etas,
-        gnss_data=gnss_data,
-        **data_kwargs,
-    )
+    # Build lookup: (clat, clon, t_days) -> (features, label)
+    sample_lookup = {}
+    all_t_days = set()
+    for clat, clon, t_days, features, label in samples:
+        sample_lookup[(clat, clon, t_days)] = (features, label)
+        all_t_days.add(t_days)
 
-    # Target events by cell (M5+ for ConvLSTM)
-    target_by_cell = {}
-    for e in events:
-        if e["mag"] >= 5.0:
-            ck = cell_key(e["lat"], e["lon"])
-            target_by_cell.setdefault(ck, []).append(e["t_days"])
+    sorted_t_days = sorted(all_t_days)
+    logger.info("  Reusing %d pre-computed samples across %d timesteps, %d active cells",
+                len(samples), len(sorted_t_days), len(active_cells))
 
     # Grid cell coordinates
     cell_coords_grid = []
@@ -1055,16 +1052,12 @@ def export_spatial_feature_matrix(events, fm_dict, t0, etas_params=None,
             row.append([float(lat), float(lon)])
         cell_coords_grid.append(row)
 
-    # Generate time steps
-    total_t_days = events[-1]["t_days"]
-    start_day = 180
-    end_day = total_t_days - 7  # 7-day prediction window
+    # Zero vector for inactive cells
+    zero_features = [0.0] * n_features
 
+    # Build spatial grid for each timestep
     timestep_features = []
-    day = start_day
-    n_steps = 0
-
-    while day <= end_day:
+    for t_days in sorted_t_days:
         features_grid = []
         labels_grid = []
 
@@ -1073,27 +1066,22 @@ def export_spatial_feature_matrix(events, fm_dict, t0, etas_params=None,
             label_row = []
             for lon in range(GRID_LON_MIN, GRID_LON_MAX + 1, int(CELL_SIZE_DEG)):
                 clat, clon = float(lat), float(lon)
-                full_features = extractor.extract(clat, clon, day)
-                # Apply same feature mask as ML pipeline
-                features = [full_features[i] for i in feature_mask]
-                label = generate_label(clat, clon, day, target_by_cell, 7)
-                feat_row.append(features)
-                label_row.append(label)
+                key = (clat, clon, t_days)
+                if key in sample_lookup:
+                    feat, lbl = sample_lookup[key]
+                    feat_row.append(feat)
+                    label_row.append(lbl)
+                else:
+                    feat_row.append(zero_features)
+                    label_row.append(0)
             features_grid.append(feat_row)
             labels_grid.append(label_row)
 
         timestep_features.append({
-            "t_days": round(day, 1),
+            "t_days": round(t_days, 1),
             "features": features_grid,
             "labels": labels_grid,
         })
-
-        n_steps += 1
-        day += 3  # same step_days as M5+ target
-
-        if n_steps % 500 == 0:
-            logger.info("  Feature matrix: %d time steps (day %.0f/%.0f)...",
-                        n_steps, day, end_day)
 
     total_pos = sum(
         sum(sum(row) for row in ts["labels"])
@@ -1101,12 +1089,12 @@ def export_spatial_feature_matrix(events, fm_dict, t0, etas_params=None,
     )
 
     logger.info("  Feature matrix: %d steps, grid %d×%d, %d features, %d positive cells",
-                n_steps, GRID_H, GRID_W, n_features, total_pos)
+                len(sorted_t_days), GRID_H, GRID_W, n_features, total_pos)
 
     # Save
     output_data = {
         "metadata": {
-            "n_timesteps": n_steps,
+            "n_timesteps": len(sorted_t_days),
             "grid_h": GRID_H,
             "grid_w": GRID_W,
             "n_features": n_features,
@@ -1114,19 +1102,25 @@ def export_spatial_feature_matrix(events, fm_dict, t0, etas_params=None,
             "cell_size_deg": CELL_SIZE_DEG,
             "grid_lat_range": [GRID_LAT_MIN, GRID_LAT_MAX],
             "grid_lon_range": [GRID_LON_MIN, GRID_LON_MAX],
-            "prediction_window_days": 7,
-            "min_target_mag": 5.0,
-            "step_days": 3,
+            "prediction_window_days": prediction_window,
+            "min_target_mag": min_target_mag,
+            "step_days": step_days,
             "total_positives": total_pos,
         },
         "cell_coords": cell_coords_grid,
         "timesteps": timestep_features,
     }
 
+    def _json_default(obj):
+        """Handle numpy int64/float64 types for JSON serialization."""
+        if hasattr(obj, 'item'):
+            return obj.item()
+        raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
     RESULTS_DIR.mkdir(exist_ok=True)
     out_path = RESULTS_DIR / "feature_matrix.json"
     with open(out_path, "w") as f:
-        json.dump(output_data, f, indent=None, ensure_ascii=False)
+        json.dump(output_data, f, indent=None, ensure_ascii=False, default=_json_default)
 
     size_mb = out_path.stat().st_size / (1024 * 1024)
     logger.info("  Feature matrix saved: %s (%.1f MB)", out_path, size_mb)
@@ -2107,6 +2101,8 @@ async def run_ml_prediction():
     # Multi-target loop
     target_results = {}
     primary_metadata = None
+    m5_samples = None
+    m5_active_cells = None
 
     for target_name, cfg in TARGET_CONFIGS.items():
         logger.info("")
@@ -2150,6 +2146,9 @@ async def run_ml_prediction():
 
         if primary_metadata is None:
             primary_metadata = metadata
+        if target_name == "M5+":
+            m5_samples = samples
+            m5_active_cells = active_cells
 
         if len(samples) < 1000:
             logger.error("Dataset too small (%d samples) for %s", len(samples), target_name)
@@ -2211,37 +2210,12 @@ async def run_ml_prediction():
         }
 
     # --- Export spatial feature matrix for ConvLSTM ---
-    # Uses the same data sources loaded above, so all features have real data.
-    if primary_metadata:
+    # Reuses M5+ samples (already computed) to avoid redundant feature extraction.
+    if m5_samples and primary_metadata:
         logger.info("--- Exporting spatial feature matrix for ConvLSTM ---")
         try:
             export_spatial_feature_matrix(
-                events, fm_dict, t0, global_etas,
-                zone_etas=zone_etas,
-                gnss_data=gnss_data,
-                cosmic_ray_data=cosmic_ray_data,
-                lightning_data=lightning_data,
-                geomag_spectral_data=geomag_spectral_data,
-                animal_data=animal_data,
-                olr_data=olr_data,
-                earth_rotation_data=earth_rotation_data,
-                solar_wind_data=solar_wind_data,
-                gravity_data=gravity_data,
-                so2_data=so2_data,
-                soil_moisture_data=soil_moisture_data,
-                tide_gauge_data=tide_gauge_data,
-                ocean_color_data=ocean_color_data,
-                cloud_fraction_data=cloud_fraction_data,
-                nightlight_data=nightlight_data,
-                insar_data=insar_data,
-                goes_xray_data=goes_xray_data,
-                goes_proton_data=goes_proton_data,
-                tidal_stress_data=tidal_stress_data,
-                particle_flux_data=particle_flux_data,
-                dart_pressure_data=dart_pressure_data,
-                ioc_sealevel_data=ioc_sealevel_data,
-                snet_pressure_data=snet_pressure_data,
-                metadata=primary_metadata,
+                m5_samples, m5_active_cells, primary_metadata,
             )
         except Exception as e:
             logger.warning("Feature matrix export failed (non-fatal): %s", e)
