@@ -162,23 +162,27 @@ async def fetch_so2_day(session: aiohttp.ClientSession, date: datetime) -> list[
 
 
 def _parse_opendap_ascii(text: str, date_str: str) -> list[dict]:
-    """Parse OPeNDAP ASCII grid response.
+    """Parse OPeNDAP ASCII grid response for OMSO2G.
 
-    Format is typically:
-        Dataset {
-            Float32 ColumnAmountSO2_PBL[nLat][nLon];
-        }
-        ColumnAmountSO2_PBL[89][113]
-        [0], value, value, value, ...
-        [1], value, value, value, ...
+    OMSO2G is 3D [nCandidate][YDim][XDim], subsetted to [0:0][lat][lon].
+    OPeNDAP ASCII format for 3D with first dim fixed:
+        ColumnAmountSO2_PBL.ColumnAmountSO2_PBL[1][88][113]
+        [0][0], val, val, val, ...
+        [0][1], val, val, val, ...
+    Or for 2D (if server collapses singleton dim):
+        [0], val, val, val, ...
+
+    Values are in Dobson Units (DU). Fill value = -1.2676506e+30.
     """
     rows = []
     in_data = False
-    lat_idx = 0
 
     for line in text.split("\n"):
         line = line.strip()
+        if not line:
+            continue
 
+        # Data section starts after header line with variable name + dimensions
         if "ColumnAmountSO2" in line and "[" in line:
             in_data = True
             continue
@@ -186,33 +190,45 @@ def _parse_opendap_ascii(text: str, date_str: str) -> list[dict]:
         if not in_data:
             continue
 
-        if line.startswith("["):
-            # Parse row: [lat_idx], val, val, val, ...
-            parts = line.split(",")
-            if len(parts) < 2:
+        # Data lines start with [ — either [row] or [0][row] for 3D
+        if not line.startswith("["):
+            break  # End of data section
+
+        # Parse: [candidate][lat_idx], val, val, ... OR [lat_idx], val, val, ...
+        first_comma = line.find(",")
+        if first_comma < 0:
+            continue
+
+        try:
+            idx_part = line[:first_comma].strip()
+            # Extract lat index: last bracketed number
+            # "[0][5]" -> 5, "[5]" -> 5
+            import re
+            bracket_nums = re.findall(r'\[(\d+)\]', idx_part)
+            if not bracket_nums:
                 continue
+            lat_idx = int(bracket_nums[-1])  # Last index = lat row
+            lat = -89.875 + (LAT_START + lat_idx) * 0.25
 
-            try:
-                # Extract lat index from [N]
-                idx_str = parts[0].strip()
-                lat_idx = int(idx_str.strip("[] "))
-                lat = -89.875 + (LAT_START + lat_idx) * 0.25
+            val_parts = line[first_comma + 1:].split(",")
+            for lon_offset, val_str in enumerate(val_parts):
+                val_str = val_str.strip()
+                if not val_str:
+                    continue
+                val = float(val_str)
+                if val < -999 or val > 1000:
+                    continue  # Fill value
+                lon = -179.875 + (LON_START + lon_offset) * 0.25
 
-                for lon_offset, val_str in enumerate(parts[1:]):
-                    val = float(val_str.strip())
-                    if val < -999 or val > 1000:
-                        continue  # Missing/fill value
-                    lon = -179.875 + (LON_START + lon_offset) * 0.25
-
-                    if val > 0:  # Only store positive detections
-                        rows.append({
-                            "date": date_str,
-                            "lat": round(lat, 3),
-                            "lon": round(lon, 3),
-                            "so2": round(val, 4),
-                        })
-            except (ValueError, IndexError):
-                continue
+                if val > 0:  # Only store positive detections
+                    rows.append({
+                        "date": date_str,
+                        "lat": round(lat, 3),
+                        "lon": round(lon, 3),
+                        "so2": round(val, 4),
+                    })
+        except (ValueError, IndexError):
+            continue
 
     return rows
 
