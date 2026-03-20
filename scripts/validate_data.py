@@ -42,7 +42,7 @@ EXPECTED_TABLES = {
     "cosmic_ray":        {"min_rows": 100,   "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
     "gnss_tec":          {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
     "lightning":         {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": None},  # event-based
-    "iss_lis_lightning": {"min_rows": 0,     "time_col": "observed_at", "critical": False, "expected_range": (2017, 2023)},
+    "iss_lis_lightning": {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": (2017, 2023)},
     # Phase 9: INTERMAGNET, CSES, Movebank
     "geomag_hourly":     {"min_rows": 100,   "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
     "satellite_em":      {"min_rows": 0,     "time_col": "observed_at", "critical": False, "expected_range": (2018, 2026)},
@@ -51,14 +51,15 @@ EXPECTED_TABLES = {
     "earth_rotation":    {"min_rows": 100,   "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
     "solar_wind":        {"min_rows": 100,   "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
     "gravity_mascon":    {"min_rows": 0,     "time_col": "observed_at", "critical": False, "expected_range": (2002, 2026)},
-    "so2_column":        {"min_rows": 0,     "time_col": "observed_at", "critical": False, "expected_range": (2004, 2026)},
+    "so2_column":        {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": (2004, 2026)},
     "soil_moisture":     {"min_rows": 0,     "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
-    "cloud_fraction":    {"min_rows": 0,     "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
-    "nightlight":        {"min_rows": 0,     "time_col": "observed_at", "critical": False, "expected_range": (2012, 2026)},
+    "cloud_fraction":    {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
+    "nightlight":        {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": (2012, 2026)},
     # Phase 10b
     "tide_gauge":        {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
     "ocean_color":       {"min_rows": 0,     "time_col": "observed_at", "critical": False, "expected_range": (2018, 2026)},
-    "insar_deformation": {"min_rows": 0,     "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
+    # InSAR disabled (LiCSAR has no processed interferograms for Japan, 2026-03-20)
+    # "insar_deformation": {"min_rows": 0,     "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
     # Phase 11: Space/cosmic
     "goes_xray":         {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
     "goes_proton":       {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
