@@ -284,12 +284,14 @@ jobs:
           pip install h5py 2>/dev/null || true
           python3 scripts/fetch_viirs_nighttime.py || echo "VIIRS fetch failed (non-fatal)"
 
-      - name: Fetch InSAR deformation (COMET LiCSAR)
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-        run: |
-          pip install rasterio 2>/dev/null || true
-          python3 scripts/fetch_insar.py || echo "InSAR fetch failed (non-fatal)"
+      # InSAR disabled: LiCSAR has Japan frame definitions but no processed
+      # interferograms (verified 2026-03-20). Re-enable when data becomes available.
+      # - name: Fetch InSAR deformation (COMET LiCSAR)
+      #   env:
+      #     GEOHAZARD_DB_PATH: ./data/geohazard.db
+      #   run: |
+      #     pip install rasterio 2>/dev/null || true
+      #     python3 scripts/fetch_insar.py || echo "InSAR fetch failed (non-fatal)"
 
       # --- Phase 11: Space/cosmic data sources ---
 
