@@ -152,6 +152,16 @@ jobs:
         run: |
           python3 scripts/fetch_blitzortung.py || echo "Lightning fetch failed (non-fatal)"
 
+      - name: Fetch ISS LIS lightning data (Earthdata auth, 2017-2023)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+        run: |
+          pip install netCDF4 2>/dev/null || true
+          python3 scripts/fetch_iss_lis_lightning.py || echo "ISS LIS fetch failed (non-fatal)"
+
       - name: Fetch INTERMAGNET hourly + CSES satellite EM data
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
