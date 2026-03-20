@@ -138,7 +138,17 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 - **Analysis Phase 14b** ✅ Data acquisition overhaul: **57→71+ active features**. 11 broken sources fixed + 2 new (ISS LIS lightning, VNP46A4 nightlight) + animal removed (79→78). 8 sources switched to auth-free alternatives. All endpoints verified with curl before commit. OLR→NCEI CDR, GRACE→GFZ GravIS, Ocean Color→CoastWatch DINEOF, Soil Moisture→CPC ERDDAP, Tide Gauge→UHSLC ERDDAP (19 stations), GOES X-ray→LISIRD 1-min, InSAR→LiCSAR 34 frames, Lightning→ISS LIS (GHRC DAAC), Nightlight→VNP46A4 (LAADS), Earthdata auth→BasicAuth
 - **Backfill** ✅ 2011-2026 M3+ earthquakes (29K), TEC (4M), Kp (44K), GCMT focal mechanisms
 - **Analysis Phase 15** ✅ Full test with all Phase 14b source fixes + data preservation checkpoint system. **70/78 active features (+5 from Phase 14). Test AUC 0.7499 (best ever), CV AUC 0.7411.** Data validation: 21 OK / 8 EMPTY / 1 MISSING. Earthdata auth (4 sources) failed due to URS API deprecating Basic Auth — fixed in Phase 15b. Feature matrix exported (1790×11×11×78). Job timed out at 6h (CSEP completed, final artifact upload missed). DB checkpoint preserved
-- **Analysis Phase 15b** 🔄 Earthdata auth rewrite (Bearer token priority + Basic Auth fallback), ISS LIS table separation (`iss_lis_lightning`), workflow reliability (timeout 420min, ML results checkpoint artifact, auth pre-validation step). **Run in progress (2026-03-20)**
+- **Analysis Phase 15b** ✅ Earthdata auth rewrite (Bearer token priority + Basic Auth fallback), ISS LIS table separation (`iss_lis_lightning`), workflow reliability (timeout 420min, ML results checkpoint artifact, auth pre-validation step). **Test AUC 0.7499 (same as 15), 72/78 active features. Feature matrix export failed (int64 serialization) → fixed in 15c**
+- **Analysis Phase 15c** 🔄 Data source fixes verified locally with real data:
+  - tide_gauge: datetime naive/aware crash fix → 19 UHSLC Japan stations (verified: 25 rows/day)
+  - cloud_fraction: OPeNDAP path corrected (`RemoteResources/laads/`), full-array fetch + Int16 scale (verified: 667 cells/day)
+  - nightlight: LAADS DAAC relative-path redirect fix via `urljoin` (verified: 303 redirect confirmed)
+  - SO2: switched from removed OMSO2e to OMSO2G on acdisc.gesdisc (verified: filename resolution OK)
+  - ISS LIS: granule limit 200→2000 (72,256 total available)
+  - InSAR: disabled (LiCSAR Japan frames have no processed interferograms)
+  - Feature matrix export: reuses ML samples (14h→seconds), int64 serialization fixed
+  - ML results checkpoint moved before prospective analysis (prevents data loss on timeout)
+  - **Run in progress (2026-03-20)**
 - **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 420min timeout). **Data preservation**: DB checkpoint after fetch phase + ML results checkpoint (feature_matrix + predictions) + final DB upload, all `if: always()`. Earthdata auth pre-validation skips 4 sources on credential failure. Data validation report (31 tables checked) saved to artifacts
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
 
@@ -867,7 +877,7 @@ Phase 13 revealed that 15 out of 27 data sources had been silently failing (only
 | ❌ EMPTY (8) | cloud_fraction, so2_column, nightlight, lightning, insar_deformation, satellite_em, collector_status, nightlight |
 | ❌ MISSING (1) | snet_pressure (NIED approval pending) |
 
-Empty sources: Earthdata auth failure (cloud_fraction, SO2, nightlight — fixed in Phase 15b), Blitzortung archive restricted (lightning), LiCSAR no Japan data (InSAR), CSES auth required (satellite_em).
+Empty sources: Earthdata auth failure (cloud_fraction, SO2, nightlight — root causes identified and fixed in Phase 15c), Blitzortung archive restricted (lightning — ISS LIS as alternative), LiCSAR no Japan interferograms (InSAR — disabled), CSES auth required (satellite_em).
 
 CSEP Benchmark: ML_HistGBT Molchan skill **0.9811** (best), beating Simple_ETAS (0.8713), Relative_Intensity (0.7745), Smoothed_Seismicity (0.2220).
 
@@ -882,7 +892,8 @@ Feature matrix exported: 1,790 timesteps × 11×11 grid × 78 features → ready
 | **Phase 14** | ✅ Complete | IOC fix + diverse stacking (RF/LR) + ConvLSTM full features. **Test AUC 0.7485** (best). Stacking ≒ base |
 | **Phase 14b** | ✅ Complete | Data acquisition overhaul: 57→71+ features (see table above) |
 | **Phase 15** | ✅ Complete | 70/78 active features. **Test AUC 0.7499** (best ever). Data preservation validated |
-| **Phase 15b** | 🔄 Run in progress | Earthdata Bearer auth rewrite + ISS LIS table fix + workflow 420min timeout |
+| **Phase 15b** | ✅ Complete | Earthdata Bearer auth rewrite + ISS LIS table fix + workflow 420min timeout. AUC 0.7499 maintained |
+| **Phase 15c** | 🔄 In progress | 5 EMPTY data sources fixed (tide_gauge, cloud_fraction, nightlight, SO2, ISS LIS). InSAR disabled. Feature matrix export optimized (14h→sec) |
 | **ConvLSTM** | 🟢 Colab-ready | Spatiotemporal neural network. Script + feature_matrix.json deployed to Drive |
 | **SeismoGNN** | 🟢 Colab-ready | Graph Attention Network with fault-network topology. Script deployed to Drive |
 | **Transformer** | 📋 Next | SafeNet-style multi-window features (7/14/30/90/365d) + attention (SafeNet, Sci. Reports 2025) |
@@ -896,6 +907,9 @@ Feature matrix exported: 1,790 timesteps × 11×11 grid × 78 features → ready
 |---|---|
 | Groundwater levels | 国交省水文水質DB prohibits programmatic access |
 | S-net / DONET seafloor pressure | NIED registration submitted (2026-03-19), awaiting approval |
+| InSAR deformation | Code ready, LiCSAR JASMIN has Japan frame definitions but no processed interferograms (disabled 2026-03-20) |
+| Blitzortung lightning | Archive access restricted (403). Using ISS LIS (NASA GHRC, 2017-2023) as alternative |
+| CSES satellite EM | Registration required at CSES data center |
 | Radon / He isotopes | AIST monitoring data has limited public access |
 | Hi-net waveforms | NIED registration + large data volume |
 | VLF radio propagation | Research data only (Tokai/Chiba University) |
