@@ -127,8 +127,6 @@ FEATURE_NAMES = [
     "geomag_ulf_power",     # ULF band (0.01-0.1 Hz) spectral power (nearest station)
     "geomag_polarization",  # Sz/Sh polarization ratio
     "geomag_fractal_dim",   # Higuchi fractal dimension of Z component
-    # Q. Animal behavior (Phase 9) — Wikelski et al. 2020
-    "animal_speed_anomaly", # GPS movement speed anomaly (σ from baseline)
     # R. Outgoing Longwave Radiation (Phase 10) — Ouzounov et al. 2007
     "olr_anomaly",          # OLR deviation from 30-day cell mean (σ)
     # S. Earth rotation (Phase 10) — novel, untested in earthquake ML
@@ -182,7 +180,6 @@ OPTIONAL_FEATURE_GROUPS = {
     "cosmic_ray": ["cosmic_ray_rate", "cosmic_ray_anomaly", "cosmic_ray_trend_15d"],
     "lightning": ["lightning_count_7d", "lightning_anomaly"],
     "geomag_spectral": ["geomag_ulf_power", "geomag_polarization", "geomag_fractal_dim"],
-    "animal": ["animal_speed_anomaly"],
     # Phase 10
     "olr": ["olr_anomaly"],
     "earth_rotation": ["lod_rate", "polar_motion_speed"],
@@ -906,11 +903,6 @@ class FeatureExtractor:
         geomag_polarization = gs.get("polarization", 1.0) or 1.0
         geomag_fractal_dim = gs.get("fractal_dim", 1.5) or 1.5
 
-        # --- Q. Animal behavior (Phase 9) ---
-        ak = (date_str, cell_lat, cell_lon)
-        ad = self.animal_data.get(ak, {})
-        animal_speed_anomaly = ad.get("speed_anomaly", 0.0) or 0.0
-
         # --- R. OLR (Phase 10) ---
         olr_key = (date_str, cell_lat, cell_lon)
         olr_d = self.olr_data.get(olr_key, {})
@@ -1103,8 +1095,6 @@ class FeatureExtractor:
             geomag_ulf_power,
             geomag_polarization,
             geomag_fractal_dim,
-            # Q. Animal behavior (Phase 9)
-            animal_speed_anomaly,
             # R. OLR (Phase 10)
             olr_anomaly,
             # S. Earth rotation (Phase 10)
