@@ -54,10 +54,17 @@ logger = logging.getLogger(__name__)
 # NOAA SWPC GOES X-ray JSON (recent data, 1-min resolution)
 SWPC_XRAY_URL = "https://services.swpc.noaa.gov/json/goes/primary/xrays-{n}-day.json"
 
-# LASP LISIRD daily flare data (2011-present)
-LISIRD_URL = (
+# LASP LISIRD GOES-16 XRS 1-minute data (2017-present)
+# The old goes_xrs_flare_daily endpoint was deprecated/removed.
+# We use the 1-minute endpoint and aggregate to daily max.
+LISIRD_GOES16_URL = (
     "https://lasp.colorado.edu/lisird/latis/dap/"
-    "goes_xrs_flare_daily.json?time>={start}&time<{end}"
+    "noaa_goes16_xrs_1m.json?time>={start}&time<{end}"
+)
+# For 2011-2016 (pre-GOES-16), try GOES-15
+LISIRD_GOES15_URL = (
+    "https://lasp.colorado.edu/lisird/latis/dap/"
+    "noaa_goes15_xrs_1m.json?time>={start}&time<{end}"
 )
 
 # NOAA SWPC flare event list (recent events with classification)
@@ -234,137 +241,149 @@ def aggregate_daily(rows: list[dict]) -> list[dict]:
 
 
 async def fetch_lisird(session: aiohttp.ClientSession, start_year: int) -> list[dict]:
-    """Fetch historical daily X-ray flare data from LASP LISIRD.
+    """Fetch historical X-ray data from LASP LISIRD (1-minute, aggregated to daily).
 
-    LISIRD provides daily-averaged GOES XRS data from ~1986-present.
-    We fetch year by year to avoid timeouts on large requests.
+    Uses GOES-16 XRS 1-minute endpoint (2017-present) and GOES-15 (2011-2016).
+    Fetches month-by-month to keep response size manageable.
     """
+    import json
     current_year = datetime.now(timezone.utc).year
     all_rows = []
 
     for year in range(start_year, current_year + 1):
-        start = f"{year}-01-01"
-        end = f"{year + 1}-01-01"
-        url = LISIRD_URL.format(start=start, end=end)
+        # Choose endpoint based on satellite era
+        if year >= 2017:
+            url_template = LISIRD_GOES16_URL
+            sat_label = "GOES-16"
+        else:
+            url_template = LISIRD_GOES15_URL
+            sat_label = "GOES-15"
 
-        for attempt in range(1, MAX_RETRIES + 1):
-            try:
-                async with session.get(url, timeout=TIMEOUT) as resp:
-                    if resp.status == 200:
-                        text = await resp.text()
-                        try:
-                            data = await resp.json(content_type=None) if False else None
-                            # We already have text, parse it
-                            import json
-                            data = json.loads(text)
-                        except Exception:
-                            logger.warning("LISIRD %d: JSON parse error", year)
-                            data = None
+        year_rows = []
+        for month in range(1, 13):
+            if year == current_year and month > datetime.now(timezone.utc).month:
+                break
+
+            start = f"{year}-{month:02d}-01"
+            if month == 12:
+                end = f"{year + 1}-01-01"
+            else:
+                end = f"{year}-{month + 1:02d}-01"
+
+            url = url_template.format(start=start, end=end)
+
+            data = None
+            for attempt in range(1, MAX_RETRIES + 1):
+                try:
+                    async with session.get(url, timeout=TIMEOUT) as resp:
+                        if resp.status == 200:
+                            text = await resp.text()
+                            try:
+                                data = json.loads(text)
+                            except json.JSONDecodeError:
+                                data = None
                             break
-                        break
-                    elif resp.status == 404:
-                        logger.info("LISIRD %d: not available (404)", year)
-                        data = None
-                        break
-                    else:
-                        logger.warning("LISIRD %d: HTTP %d (attempt %d)",
-                                       year, resp.status, attempt)
-                        data = None
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                data = None
-                if attempt == MAX_RETRIES:
-                    logger.warning("LISIRD %d: %s", year, type(e).__name__)
-                await asyncio.sleep(2 ** attempt)
+                        elif resp.status == 404:
+                            break
+                        else:
+                            if attempt == MAX_RETRIES:
+                                logger.debug("LISIRD %s %d-%02d: HTTP %d",
+                                             sat_label, year, month, resp.status)
+                except (aiohttp.ClientError, asyncio.TimeoutError):
+                    if attempt < MAX_RETRIES:
+                        await asyncio.sleep(2 ** attempt)
+
+            if data is None:
+                continue
+
+            rows = _parse_lisird_1min_response(data)
+            if rows:
+                year_rows.extend(rows)
+
+            await asyncio.sleep(0.5)
+
+        if year_rows:
+            # Aggregate 1-minute to daily max
+            daily = aggregate_daily(year_rows)
+            all_rows.extend(daily)
+            logger.info("LISIRD %s %d: %d daily records (from %d 1-min)",
+                        sat_label, year, len(daily), len(year_rows))
         else:
-            continue
-
-        if data is None:
-            continue
-
-        # LISIRD JSON format varies; try to extract time series
-        # Expected structure: {"goes_xrs_flare_daily": {"samples": {"time": [...], "value": [...]}}}
-        # or: {"parameters": [...], "data": [...]}
-        rows = _parse_lisird_response(data, year)
-        if rows:
-            all_rows.extend(rows)
-            logger.info("LISIRD %d: %d daily records", year, len(rows))
-        else:
-            logger.info("LISIRD %d: no parseable data", year)
-
-        await asyncio.sleep(1.0)
+            logger.info("LISIRD %s %d: no data", sat_label, year)
 
     return all_rows
 
 
-def _parse_lisird_response(data: dict, year: int) -> list[dict]:
-    """Parse LISIRD JSON response into standardized rows.
+def _parse_lisird_1min_response(data: dict) -> list[dict]:
+    """Parse LISIRD GOES XRS 1-minute JSON response.
 
-    LISIRD LaTiS JSON format:
-        {
-            "goes_xrs_flare_daily": {
-                "metadata": {...},
-                "parameters": [
-                    {"name": "time", ...},
-                    {"name": "value", ...}
-                ],
-                "data": [[timestamp_ms, flux_value], ...]
-            }
-        }
+    Expected structure:
+    {"noaa_goes16_xrs_1m": {"samples": [
+        {"time": 7.573392E8, "shortwave": 1.2e-8, "longwave": 5.3e-7, ...}, ...
+    ]}}
     """
     rows = []
 
-    # Try top-level dataset key
-    dataset = None
+    # Find the samples array in the response
+    samples = None
     for key in data:
-        if isinstance(data[key], dict) and "data" in data[key]:
-            dataset = data[key]
+        inner = data[key]
+        if isinstance(inner, dict) and "samples" in inner:
+            samples = inner["samples"]
             break
 
-    if dataset is None:
-        # Try flat structure
-        if "data" in data:
-            dataset = data
-        else:
-            return rows
+    if not samples:
+        return []
 
-    records = dataset.get("data", [])
-    if not records:
-        return rows
+    if isinstance(samples, dict):
+        # Columnar format: {"time": [...], "longwave": [...], ...}
+        times = samples.get("time", [])
+        longwave = samples.get("longwave", samples.get("longwave_masked", []))
+        shortwave = samples.get("shortwave", samples.get("shortwave_masked", []))
+        if not isinstance(times, list):
+            times = [times]
+            longwave = [longwave] if not isinstance(longwave, list) else longwave
+            shortwave = [shortwave] if not isinstance(shortwave, list) else shortwave
 
-    for record in records:
-        if not isinstance(record, (list, tuple)) or len(record) < 2:
-            continue
-
-        try:
-            time_val = record[0]
-            flux_val = record[1]
-
-            # Time might be milliseconds since epoch or ISO string
-            if isinstance(time_val, (int, float)):
-                # Milliseconds since epoch
-                dt = datetime.fromtimestamp(time_val / 1000.0, tz=timezone.utc)
-            elif isinstance(time_val, str):
-                dt = datetime.fromisoformat(time_val.replace("Z", "+00:00"))
-            else:
+        for i, t in enumerate(times):
+            try:
+                ts = datetime.utcfromtimestamp(float(t))
+                lw = float(longwave[i]) if i < len(longwave) else None
+                sw = float(shortwave[i]) if i < len(shortwave) else None
+                if lw is not None and (lw < 0 or lw > 0.01):
+                    lw = None
+                if sw is not None and (sw < 0 or sw > 0.01):
+                    sw = None
+                rows.append({
+                    "observed_at": ts.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "xray_long": lw,
+                    "xray_short": sw,
+                })
+            except (ValueError, TypeError, IndexError):
                 continue
-
-            if dt.year != year:
+    elif isinstance(samples, list):
+        # Row format: [{"time": ..., "longwave": ..., "shortwave": ...}, ...]
+        for s in samples:
+            try:
+                t = float(s.get("time", 0))
+                ts = datetime.utcfromtimestamp(t)
+                lw = s.get("longwave") or s.get("longwave_masked")
+                sw = s.get("shortwave") or s.get("shortwave_masked")
+                if lw is not None:
+                    lw = float(lw)
+                    if lw < 0 or lw > 0.01:
+                        lw = None
+                if sw is not None:
+                    sw = float(sw)
+                    if sw < 0 or sw > 0.01:
+                        sw = None
+                rows.append({
+                    "observed_at": ts.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "xray_long": lw,
+                    "xray_short": sw,
+                })
+            except (ValueError, TypeError):
                 continue
-
-            xray_long = float(flux_val) if flux_val is not None else None
-
-            # Filter out fill values (negative or absurdly large)
-            if xray_long is not None and (xray_long < 0 or xray_long > 1e-2):
-                xray_long = None
-
-            rows.append({
-                "observed_at": dt.strftime("%Y-%m-%dT00:00:00"),
-                "xray_long": xray_long,
-                "xray_short": None,  # LISIRD daily data typically only has long band
-                "flare_class": classify_flare(xray_long),
-            })
-        except (ValueError, TypeError, OverflowError):
-            continue
 
     return rows
 
