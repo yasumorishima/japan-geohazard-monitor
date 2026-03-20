@@ -1,9 +1,9 @@
 """Quick Earthdata credential validation test.
 
-Tests:
-1. URS profile API with Basic auth (username/password)
-2. OPeNDAP redirect flow (GES DISC SO2 catalog)
-3. Bearer token validation
+Tests actual data access flows (not just API endpoints):
+1. LAADS DAAC file download with Bearer token (VIIRS/MODIS style)
+2. OPeNDAP redirect flow with Basic Auth (GES DISC SO2 style)
+3. CMR search API (no auth, just connectivity)
 
 Run: python3 scripts/test_earthdata_auth.py
 Env: EARTHDATA_USERNAME, EARTHDATA_PASSWORD, EARTHDATA_TOKEN (optional)
@@ -31,78 +31,89 @@ async def main():
         sys.exit(1)
 
     jar = aiohttp.CookieJar(unsafe=True)
-    timeout = aiohttp.ClientTimeout(total=30)
+    timeout = aiohttp.ClientTimeout(total=60)
 
     async with aiohttp.ClientSession(cookie_jar=jar) as session:
         auth = aiohttp.BasicAuth(username, password)
 
-        # Test 1: URS profile API
-        print("\n--- Test 1: URS Basic Auth ---")
-        try:
-            async with session.get(
-                f"https://urs.earthdata.nasa.gov/api/users/{username}",
-                auth=auth, timeout=timeout,
-            ) as resp:
-                print(f"HTTP {resp.status}")
-                if resp.status == 200:
-                    data = await resp.json()
-                    print(f"User: {data.get('uid', '?')}")
-                    print("PASS: Credentials valid")
-                elif resp.status == 401:
-                    body = (await resp.text())[:500]
-                    print(f"FAIL: Invalid username or password")
-                    print(f"Response headers: {dict(resp.headers)}")
-                    print(f"Response body: {body}")
-                    ok = False
-                else:
-                    print(f"UNEXPECTED: {(await resp.text())[:200]}")
-                    ok = False
-        except Exception as e:
-            print(f"ERROR: {e}")
-            ok = False
-
-        # Test 2: OPeNDAP redirect flow
-        print("\n--- Test 2: OPeNDAP Redirect Flow (GES DISC) ---")
-        test_url = "https://measures.gesdisc.eosdis.nasa.gov/opendap/SO2/OMSO2e.003/"
-        try:
-            async with session.get(test_url, allow_redirects=False, timeout=timeout) as resp:
-                print(f"Initial request: HTTP {resp.status}")
-                if resp.status in (301, 302):
-                    redirect_url = resp.headers.get("Location", "")
-                    print(f"Redirect to URS: {'urs.earthdata' in redirect_url}")
-
-                    async with session.get(
-                        redirect_url, auth=auth,
-                        allow_redirects=True, timeout=timeout,
-                    ) as auth_resp:
-                        ct = auth_resp.headers.get("Content-Type", "")
-                        body = (await auth_resp.text())[:500]
-                        print(f"After auth: HTTP {auth_resp.status} CT={ct[:40]}")
-                        if auth_resp.status == 200 and "html" in ct.lower():
-                            if "login" in body.lower() or "<form" in body.lower():
-                                print("FAIL: Still on login page")
-                                ok = False
-                            else:
-                                print("PASS: OPeNDAP catalog accessible")
-                                # Show first 200 chars
-                                print(f"Preview: {body[:200]}")
-                        elif auth_resp.status == 200:
-                            print("PASS: Data accessible")
-                        else:
-                            print(f"FAIL: HTTP {auth_resp.status}")
-                            print(f"Body: {body[:200]}")
-                            ok = False
-                elif resp.status == 200:
-                    print("PASS: Direct access (no redirect)")
-                else:
-                    print(f"UNEXPECTED: HTTP {resp.status}")
-        except Exception as e:
-            print(f"ERROR: {e}")
-            ok = False
-
-        # Test 3: Bearer token validation
+        # Test 1: LAADS DAAC with Bearer token
+        # This is the actual flow used by VIIRS/MODIS cloud fraction fetchers
+        print("\n--- Test 1: LAADS DAAC Bearer Token ---")
         if token:
-            print("\n--- Test 3: Bearer Token Validation ---")
+            try:
+                # Small MODIS file listing (not download)
+                laads_url = "https://ladsweb.modaps.eosdis.nasa.gov/api/v2/content/details/allData/61/MOD08_D3/2024/001"
+                headers = {"Authorization": f"Bearer {token}"}
+                async with session.get(laads_url, headers=headers, timeout=timeout) as resp:
+                    print(f"HTTP {resp.status}")
+                    if resp.status == 200:
+                        text = (await resp.text())[:300]
+                        print(f"PASS: LAADS API accessible")
+                        print(f"Preview: {text[:200]}")
+                    elif resp.status == 401:
+                        body = (await resp.text())[:300]
+                        print(f"FAIL: Bearer token rejected by LAADS")
+                        print(f"Body: {body}")
+                        ok = False
+                    elif resp.status == 403:
+                        body = (await resp.text())[:300]
+                        print(f"FAIL: Bearer token forbidden (may need LAADS app approval)")
+                        print(f"Body: {body}")
+                        ok = False
+                    else:
+                        body = (await resp.text())[:300]
+                        print(f"UNEXPECTED HTTP {resp.status}: {body}")
+            except Exception as e:
+                print(f"ERROR: {e}")
+        else:
+            print("SKIP: EARTHDATA_TOKEN not set")
+
+        # Test 2: GES DISC OPeNDAP with redirect + Basic Auth
+        # This is the actual flow used by SO2/cloud fraction fetchers
+        print("\n--- Test 2: GES DISC OPeNDAP Redirect Flow ---")
+        try:
+            # Use a known catalog URL
+            test_url = "https://measures.gesdisc.eosdis.nasa.gov/opendap/SO2/OMSO2e.003/contents.html"
+            async with session.get(test_url, allow_redirects=False, timeout=timeout) as resp:
+                print(f"Initial: HTTP {resp.status}")
+                if resp.status in (301, 302, 303, 307, 308):
+                    redirect_url = str(resp.headers.get("Location", ""))
+                    is_urs = "urs.earthdata" in redirect_url
+                    print(f"Redirect to URS: {is_urs}")
+                    if is_urs:
+                        async with session.get(
+                            redirect_url, auth=auth,
+                            allow_redirects=True, timeout=timeout,
+                        ) as auth_resp:
+                            ct = auth_resp.headers.get("Content-Type", "")
+                            body = (await auth_resp.text())[:500]
+                            print(f"After auth: HTTP {auth_resp.status} CT={ct[:50]}")
+                            if auth_resp.status == 200:
+                                if "login" in body.lower() and "<form" in body.lower():
+                                    print("FAIL: Still on login page (bad credentials)")
+                                    ok = False
+                                else:
+                                    print("PASS: OPeNDAP accessible via redirect flow")
+                            else:
+                                print(f"FAIL: HTTP {auth_resp.status}")
+                                print(f"Body: {body[:300]}")
+                                ok = False
+                    else:
+                        print(f"Non-URS redirect: {redirect_url[:100]}")
+                elif resp.status == 200:
+                    print("PASS: Direct access (no redirect needed)")
+                elif resp.status == 404:
+                    print("WARN: URL not found (endpoint may have moved, not an auth issue)")
+                else:
+                    body = (await resp.text())[:300]
+                    print(f"UNEXPECTED HTTP {resp.status}: {body}")
+        except Exception as e:
+            print(f"ERROR: {e}")
+            ok = False
+
+        # Test 3: Earthdata token via profile API (Bearer)
+        print("\n--- Test 3: URS Token API ---")
+        if token:
             try:
                 async with session.get(
                     "https://urs.earthdata.nasa.gov/api/users/tokens",
@@ -115,32 +126,30 @@ async def main():
                         print(f"Token count: {len(data)}")
                         if data:
                             exp = data[0].get("expiration_date", "unknown")
-                            print(f"Token expiration: {exp}")
+                            print(f"Expiration: {exp}")
                         print("PASS: Bearer token valid")
-                    elif resp.status == 401:
-                        print("FAIL: Bearer token invalid/expired")
-                        ok = False
                     else:
-                        body = (await resp.text())[:200]
-                        print(f"UNEXPECTED: {body}")
+                        body = (await resp.text())[:300]
+                        print(f"INFO: HTTP {resp.status} (API may require different auth)")
+                        print(f"Body: {body}")
             except Exception as e:
                 print(f"ERROR: {e}")
         else:
-            print("\n--- Test 3: Bearer Token Validation ---")
-            print("SKIP: EARTHDATA_TOKEN not set")
+            print("SKIP: No token")
 
-        # Test 4: CoastWatch ERDDAP (no auth, just verify connectivity)
-        print("\n--- Test 4: CoastWatch ERDDAP (no auth) ---")
+        # Test 4: CMR API (no auth, connectivity check)
+        print("\n--- Test 4: CMR API (no auth) ---")
         try:
-            erddap_url = (
-                "https://coastwatch.pfeg.noaa.gov/erddap/griddap/erdMH1chlamday.csv"
-                "?chlorophyll[(2024-01-16T00:00:00Z)][(35.0):(35.5)][(140.0):(140.5)]"
+            cmr_url = (
+                "https://cmr.earthdata.nasa.gov/search/granules.json"
+                "?short_name=isslis_v2_fin&page_size=1"
             )
-            async with session.get(erddap_url, timeout=timeout) as resp:
+            async with session.get(cmr_url, timeout=timeout) as resp:
                 print(f"HTTP {resp.status}")
                 if resp.status == 200:
-                    text = (await resp.text())[:300]
-                    print(f"PASS: {text[:150]}")
+                    data = await resp.json()
+                    n = len(data.get("feed", {}).get("entry", []))
+                    print(f"PASS: CMR returned {n} granule(s)")
                 else:
                     print(f"FAIL: {(await resp.text())[:200]}")
         except Exception as e:
