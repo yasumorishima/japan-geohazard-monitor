@@ -137,8 +137,9 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 - **Analysis Phase 14** ✅ Four-axis improvement: (1) IOC fetch crash fix (None-safe parsing + dict/list response support), (2) INTERMAGNET backfill 4x acceleration (500→2000 days/station/run), (3) Diverse stacking level-0 models (RandomForest + LogisticRegression alongside HistGBT → 14-feature meta-learner), (4) ConvLSTM full-feature export (feature_matrix.json now includes all Phase 9+ data, not zero-filled). **CV AUC 0.7415, Test AUC 0.7485. Stacking logistic=0.7484 (≒base), isotonic=0.7213 (degraded). 65 active features**
 - **Analysis Phase 14b** ✅ Data acquisition overhaul: **57→71+ active features**. 11 broken sources fixed + 2 new (ISS LIS lightning, VNP46A4 nightlight) + animal removed (79→78). 8 sources switched to auth-free alternatives. All endpoints verified with curl before commit. OLR→NCEI CDR, GRACE→GFZ GravIS, Ocean Color→CoastWatch DINEOF, Soil Moisture→CPC ERDDAP, Tide Gauge→UHSLC ERDDAP (19 stations), GOES X-ray→LISIRD 1-min, InSAR→LiCSAR 34 frames, Lightning→ISS LIS (GHRC DAAC), Nightlight→VNP46A4 (LAADS), Earthdata auth→BasicAuth
 - **Backfill** ✅ 2011-2026 M3+ earthquakes (29K), TEC (4M), Kp (44K), GCMT focal mechanisms
-- **Analysis Phase 15** 🔄 Full test with all Phase 14b source fixes + data preservation checkpoint system (validate_data.py + intermediate DB artifact upload with `if: always()` — ensures data survives timeout/cancellation). INTERMAGNET step timeout: 60min, MODIS LST: 90min. **Run in progress (2026-03-20)**
-- **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 360min timeout). **Data preservation**: DB checkpoint after fetch phase + final DB upload, both `if: always()`. Data validation report (30 tables checked) saved to artifacts
+- **Analysis Phase 15** ✅ Full test with all Phase 14b source fixes + data preservation checkpoint system. **70/78 active features (+5 from Phase 14). Test AUC 0.7499 (best ever), CV AUC 0.7411.** Data validation: 21 OK / 8 EMPTY / 1 MISSING. Earthdata auth (4 sources) failed due to URS API deprecating Basic Auth — fixed in Phase 15b. Feature matrix exported (1790×11×11×78). Job timed out at 6h (CSEP completed, final artifact upload missed). DB checkpoint preserved
+- **Analysis Phase 15b** 🔄 Earthdata auth rewrite (Bearer token priority + Basic Auth fallback), ISS LIS table separation (`iss_lis_lightning`), workflow reliability (timeout 420min, ML results checkpoint artifact, auth pre-validation step). **Run in progress (2026-03-20)**
+- **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 420min timeout). **Data preservation**: DB checkpoint after fetch phase + ML results checkpoint (feature_matrix + predictions) + final DB upload, all `if: always()`. Earthdata auth pre-validation skips 4 sources on credential failure. Data validation report (31 tables checked) saved to artifacts
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
 
 ## Analysis Results (2011-2026, 29K M3+ earthquakes, 4M TEC, 44K Kp, 31K GNSS-TEC, 1.3M ULF, 78 features with dynamic selection)
@@ -419,7 +420,8 @@ gh workflow run "Earthquake Correlation Analysis" \
 | `fetch_kakioka_ulf.py` | INTERMAGNET BGS GIN + WDC Kyoto | KAK/MMB/KNY 1-min geomagnetic: M6+ events ±7d (IAGA-2002 format) |
 | `fetch_nmdb_cosmicray.py` | NMDB (Neutron Monitor Database) | Daily cosmic ray count rates: IRKT/OULU/PSNM, 2011-present (no auth) |
 | `fetch_cses_satellite.py` | INTERMAGNET BGS GIN + CSES-Limadou | KAK/MMB/KNY 1-min geomag → hourly downsample (2011-2026, 7-day batch) + CSES satellite EM (2018+, auth required) |
-| `fetch_blitzortung.py` | Blitzortung.org + Univ. Bonn sferics | Lightning stroke counts aggregated to 2° grid cells (Japan region) |
+| `fetch_blitzortung.py` | Blitzortung.org + Univ. Bonn sferics | Lightning stroke counts aggregated to 2° grid cells (Japan region, `lightning` table) |
+| `fetch_iss_lis_lightning.py` | NASA GHRC DAAC (Earthdata auth) | ISS LIS flash counts 2017-2023, 2° cells (`iss_lis_lightning` table, separate from Blitzortung) |
 | `fetch_movebank.py` | Movebank (Max Planck) | Animal GPS tracking in Japan region: movement speed/dispersion anomalies |
 | `fetch_olr.py` | NOAA PSL THREDDS NCSS | Daily outgoing longwave radiation (2.5° grid, Japan region, no auth) |
 | `fetch_iers_eop.py` | OBSPM Paris Observatory / USNO | Earth Orientation Parameters: LOD, polar motion (eopc04 + finals2000A fallback) |
@@ -436,7 +438,7 @@ gh workflow run "Earthquake Correlation Analysis" \
 | `fetch_goes_proton.py` | NOAA SWPC | GOES ≥10 MeV proton flux (SEP events, no auth) |
 | `fetch_tidal_stress.py` | Pure calculation | Lunar + solar tidal shear stress at Japan (no external data) |
 | `fetch_poes_particles.py` | NOAA SWPC | GOES ≥2 MeV electron flux (particle precipitation, no auth) |
-| `earthdata_auth.py` | — | Shared NASA Earthdata OAuth2 redirect handler (Bearer token + cookie flow) |
+| `earthdata_auth.py` | — | Shared NASA Earthdata auth: Bearer token (primary, LAADS DAAC) + Basic Auth redirect fallback (OPeNDAP) |
 | `fetch_dart_pressure.py` | NOAA NDBC | DART ocean bottom pressure: 5 Japan-area stations, historical + realtime (no auth) |
 | `fetch_ioc_sealevel.py` | IOC/VLIZ | Sea level monitoring: Japan coastal stations, REST API (no auth, 1 req/min) |
 | `fetch_snet_pressure.py` | NIED Hi-net | S-net seafloor water pressure via HinetPy (NIED credentials required) |
@@ -849,6 +851,28 @@ Phase 13 revealed that 15 out of 27 data sources had been silently failing (only
 
 **Net result**: 11 broken sources fixed + 2 new sources (ISS LIS, VNP46A4) + 1 removed (animal). 8 sources switched to auth-free alternatives. All verified with curl before commit. Expected active features: **71-74/78** (from 57/79).
 
+### Phase 15 Results — Test AUC 0.7499 (best ever), 70 active features
+
+| Metric | Phase 14 | Phase 15 | Change |
+|---|---|---|---|
+| CV AUC (pooled) | **0.7415** | 0.7411 | −0.0004 |
+| Test AUC | 0.7485 | **0.7499** | **+0.0014** |
+| Active features | 65/79 | **70/78** | +5 |
+
+**Data validation (21 OK / 8 EMPTY / 1 MISSING)**:
+
+| Status | Tables |
+|---|---|
+| ✅ OK (21) | earthquakes, focal_mechanisms, tec, gnss_tec, geomag_kp, geomag_hourly, cosmic_ray, olr, earth_rotation, solar_wind, gravity_mascon, soil_moisture, ocean_color, goes_xray, goes_proton, tidal_stress, particle_flux, dart_pressure, ioc_sea_level, modis_lst, collector_status (→ empty but tracked) |
+| ❌ EMPTY (8) | cloud_fraction, so2_column, nightlight, lightning, insar_deformation, satellite_em, collector_status, nightlight |
+| ❌ MISSING (1) | snet_pressure (NIED approval pending) |
+
+Empty sources: Earthdata auth failure (cloud_fraction, SO2, nightlight — fixed in Phase 15b), Blitzortung archive restricted (lightning), LiCSAR no Japan data (InSAR), CSES auth required (satellite_em).
+
+CSEP Benchmark: ML_HistGBT Molchan skill **0.9811** (best), beating Simple_ETAS (0.8713), Relative_Intensity (0.7745), Smoothed_Seismicity (0.2220).
+
+Feature matrix exported: 1,790 timesteps × 11×11 grid × 78 features → ready for ConvLSTM/GNN GPU training.
+
 ### Roadmap
 
 | Phase | Status | Goal |
@@ -857,7 +881,8 @@ Phase 13 revealed that 15 out of 27 data sources had been silently failing (only
 | **Phase 13** | ✅ Complete | DART ✅, IOC ❌ (crash), S-net ❌ (auth). **CV 0.7416** (best). Stability selection validated |
 | **Phase 14** | ✅ Complete | IOC fix + diverse stacking (RF/LR) + ConvLSTM full features. **Test AUC 0.7485** (best). Stacking ≒ base |
 | **Phase 14b** | ✅ Complete | Data acquisition overhaul: 57→71+ features (see table above) |
-| **Phase 15** | 🔄 Run in progress | Full test with all fixed sources + **data preservation checkpoint** (validate_data.py, DB artifact with `if: always()`). Expected: 71-74/78 active features |
+| **Phase 15** | ✅ Complete | 70/78 active features. **Test AUC 0.7499** (best ever). Data preservation validated |
+| **Phase 15b** | 🔄 Run in progress | Earthdata Bearer auth rewrite + ISS LIS table fix + workflow 420min timeout |
 | **ConvLSTM** | 🟢 Colab-ready | Spatiotemporal neural network. Script + feature_matrix.json deployed to Drive |
 | **SeismoGNN** | 🟢 Colab-ready | Graph Attention Network with fault-network topology. Script deployed to Drive |
 | **Transformer** | 📋 Next | SafeNet-style multi-window features (7/14/30/90/365d) + attention (SafeNet, Sci. Reports 2025) |
