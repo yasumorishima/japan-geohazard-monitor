@@ -46,8 +46,10 @@ from earthdata_auth import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# GES DISC OPeNDAP base for OMSO2e (Level 3 daily gridded)
-GESDISC_OPENDAP = "https://measures.gesdisc.eosdis.nasa.gov/opendap/SO2/OMSO2e.003"
+# GES DISC OPeNDAP for OMSO2G (OMI Level 2G daily gridded, 0.25° grid)
+# OMSO2e was removed from GES DISC; OMSO2G is the replacement (2004-present)
+# Note: GES DISC requires URS redirect + Basic Auth (Bearer returns 401)
+GESDISC_OPENDAP = "https://acdisc.gesdisc.eosdis.nasa.gov/opendap/HDF-EOS5/Aura_OMI_Level2G/OMSO2G.003"
 
 # Japan bbox in grid indices (0.25° resolution)
 # Lat: -89.875 to 89.875 (720 cells), Lon: -179.875 to 179.875 (1440 cells)
@@ -84,50 +86,54 @@ async def init_so2_table():
         await db.commit()
 
 
+async def _resolve_so2_filename(session: aiohttp.ClientSession, year: int, date_str: str) -> str | None:
+    """Resolve OMSO2G filename from OPeNDAP contents listing.
+
+    OMSO2G files are stored directly under year/ (no DOY subdirectory).
+    Filename: OMI-Aura_L2G-OMSO2G_{YYYY}m{MMDD}_v003-{revision}.he5
+    """
+    import re
+    mmdd = date_str[5:7] + date_str[8:10]  # "2024-01-15" -> "0115"
+    pattern_str = f"OMI-Aura_L2G-OMSO2G_{year}m{mmdd}"
+
+    contents_url = f"{GESDISC_OPENDAP}/{year}/contents.html"
+    try:
+        status, text = await earthdata_fetch(session, contents_url, timeout=TIMEOUT)
+        if status == 200 and text:
+            # Find matching filename in HTML
+            match = re.search(rf'({re.escape(pattern_str)}[^"<\s]*\.he5)', text)
+            if match:
+                return match.group(1)
+    except Exception:
+        pass
+    return None
+
+
 async def fetch_so2_day(session: aiohttp.ClientSession, date: datetime) -> list[dict]:
     """Fetch SO2 column data for one day via GES DISC OPeNDAP.
 
-    Uses ASCII output from OPeNDAP to avoid netCDF dependency.
+    Uses OMSO2G (Level 2G gridded, 0.25° grid, nCandidate=15).
+    nCandidate[0] = best pixel per grid cell.
+    GES DISC requires URS Basic Auth redirect (Bearer returns 401).
     """
     has_auth = (EARTHDATA_USERNAME and EARTHDATA_PASSWORD) or EARTHDATA_TOKEN
     if not has_auth:
         return []
 
     date_str = date.strftime("%Y-%m-%d")
-    doy = date.timetuple().tm_yday
     year = date.year
 
-    # OMSO2e filename: OMI-Aura_L3-OMSO2e_YYYY-MM-DDmDDD_v003-REVISION.he5
-    # The revision timestamp varies, so we need to discover the exact filename.
-    # OPeNDAP catalog lists available files for each date.
-    # Try direct pattern first (without revision), fall back to catalog listing.
-    base_pattern = f"OMI-Aura_L3-OMSO2e_{date_str}m{doy:03d}_v003"
-
-    # First try: catalog listing to find exact filename
-    catalog_url = f"{GESDISC_OPENDAP}/{year}/catalog.xml"
-    exact_filename = None
-    try:
-        status, text = await earthdata_fetch(session, catalog_url, timeout=TIMEOUT)
-        if status == 200 and text and base_pattern.replace("_v003", "") in text:
-            # Extract matching filename from catalog XML
-            import re
-            pattern = re.compile(rf'({re.escape(base_pattern)}[^"<\s]*\.he5)')
-            match = pattern.search(text)
-            if match:
-                exact_filename = match.group(1)
-    except Exception:
-        pass
-
+    # Resolve filename (contains variable revision timestamp)
+    exact_filename = await _resolve_so2_filename(session, year, date_str)
     if not exact_filename:
-        # Fallback: use base pattern (may 404 if revision suffix needed)
-        exact_filename = f"{base_pattern}.he5"
+        return []
 
-    # OPeNDAP ASCII subsetting for PBL SO2 column
+    # OPeNDAP ASCII: fetch best pixel (nCandidate=0) for Japan bbox
+    # OMSO2G is 3D: [nCandidate=15][YDim=720][XDim=1440]
     url = (
         f"{GESDISC_OPENDAP}/{year}/{exact_filename}.ascii"
         f"?ColumnAmountSO2_PBL"
-        f"[{LAT_START}:1:{LAT_END}]"
-        f"[{LON_START}:1:{LON_END}]"
+        f"[0:0][{LAT_START}:{LAT_END}][{LON_START}:{LON_END}]"
     )
 
     for attempt in range(1, MAX_RETRIES + 1):
@@ -139,7 +145,8 @@ async def fetch_so2_day(session: aiohttp.ClientSession, date: datetime) -> list[
                     return []
                 return _parse_opendap_ascii(text, date_str)
             elif status in (401, 403):
-                logger.info("SO2 requires Earthdata auth (HTTP %d)", status)
+                if attempt == MAX_RETRIES:
+                    logger.info("SO2 %s: auth failed (HTTP %d)", date_str, status)
                 return []
             elif status == 404:
                 return []  # No data for this date
