@@ -45,7 +45,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 # LAADS DAAC OPeNDAP for MOD08_D3 (MODIS Terra daily L3 atmosphere)
-LAADS_OPENDAP = "https://ladsweb.modaps.eosdis.nasa.gov/opendap/allData/61/MOD08_D3"
+# Path includes RemoteResources/laads/ prefix (verified 2026-03-20)
+LAADS_OPENDAP = "https://ladsweb.modaps.eosdis.nasa.gov/opendap/RemoteResources/laads/allData/61/MOD08_D3"
 
 # Japan bbox in 1° grid
 # Lat: -90 to 90 (180 cells), Lon: -180 to 180 (360 cells)
@@ -118,13 +119,9 @@ async def fetch_cloud_day(session: aiohttp.ClientSession, date: datetime) -> lis
     if not filename:
         return []
 
-    # OPeNDAP ASCII with subsetting for Cloud_Fraction_Mean
-    url = (
-        f"{LAADS_OPENDAP}/{year}/{doy:03d}/{filename}.ascii"
-        f"?Cloud_Fraction_Mean"
-        f"[{LAT_START}:1:{LAT_END}]"
-        f"[{LON_START}:1:{LON_END}]"
-    )
+    # OPeNDAP ASCII — fetch full array (LAADS HDF4 doesn't support subsetting)
+    # Python-side slicing for Japan bbox is fast (~65K values per day)
+    url = f"{LAADS_OPENDAP}/{year}/{doy:03d}/{filename}.ascii?Cloud_Fraction_Mean"
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -147,65 +144,69 @@ async def fetch_cloud_day(session: aiohttp.ClientSession, date: datetime) -> lis
 
 
 def _parse_cloud_ascii(text: str, date_str: str) -> list[dict]:
-    """Parse OPeNDAP ASCII cloud fraction grid.
+    """Parse OPeNDAP ASCII cloud fraction (full 180x360 grid).
 
-    OPeNDAP ASCII format for 2D arrays:
-        Cloud_Fraction_Mean.Cloud_Fraction_Mean[23][29]
-        [0], 0.45, 0.52, 0.48, ...
-        [1], 0.43, 0.51, ...
-    Each line = one lat row, comma-separated lon values.
+    Format from LAADS OPeNDAP:
+        Dataset: MOD08_D3...
+        Cloud_Fraction_Mean[0], 2800, 4564, ...
+        Cloud_Fraction_Mean[1], 3100, 4200, ...
+    Values are Int16 scaled by 10000 (divide to get 0-1 fraction).
+    We extract only the Japan bbox rows/columns.
     """
     rows = []
     in_data = False
-    separator_seen = False
+    SCALE = 10000.0
+    FILL_VALUE = -9999  # typical HDF4 fill
 
     for line in text.split("\n"):
         line = line.strip()
         if not line:
             continue
 
-        # OPeNDAP uses "-----" separator before data
-        if line.startswith("---"):
-            separator_seen = True
-            continue
-
-        # Data section header (after separator)
-        if separator_seen and "Cloud_Fraction" in line:
+        # Data lines start with variable name or [index]
+        if line.startswith("Cloud_Fraction_Mean["):
             in_data = True
-            continue
+            # Extract row index: "Cloud_Fraction_Mean[42], ..."
+            bracket_end = line.index("]")
+            row_idx = int(line[len("Cloud_Fraction_Mean["):bracket_end])
 
-        if not in_data:
-            continue
+            # Only process Japan lat rows (LAT_START to LAT_END inclusive)
+            if row_idx < LAT_START or row_idx > LAT_END:
+                continue
 
-        # End of data section
-        if not line.startswith("["):
-            break
+            lat = -89.5 + row_idx  # 1° grid center
 
-        # Parse: [lat_idx], val0, val1, val2, ...
-        parts = line.split(",")
-        if len(parts) < 2:
-            continue
-        try:
-            lat_idx = int(parts[0].strip("[] "))
-            lat = -89.5 + (LAT_START + lat_idx)  # 1° grid, center
+            # Values after the first comma
+            first_comma = line.index(",")
+            val_parts = line[first_comma + 1:].split(",")
 
-            for lon_offset, val_str in enumerate(parts[1:]):
-                val_str = val_str.strip()
-                if not val_str:
+            # Extract Japan lon columns only
+            for lon_idx in range(LON_START, min(LON_END + 1, len(val_parts) + LON_START)):
+                arr_idx = lon_idx  # val_parts covers all 360 columns
+                if arr_idx >= len(val_parts):
+                    break
+                try:
+                    raw = int(val_parts[arr_idx].strip())
+                    if raw <= FILL_VALUE or raw < 0:
+                        continue
+                    val = raw / SCALE
+                    if val > 1.1:
+                        continue
+                    lon = -179.5 + lon_idx
+                    rows.append({
+                        "date": date_str,
+                        "lat": round(lat, 1),
+                        "lon": round(lon, 1),
+                        "cloud_frac": round(val, 4),
+                    })
+                except (ValueError, IndexError):
                     continue
-                val = float(val_str)
-                if val < 0 or val > 1.1:
-                    continue  # Fill value
-                lon = -179.5 + (LON_START + lon_offset)
 
-                rows.append({
-                    "date": date_str,
-                    "lat": round(lat, 1),
-                    "lon": round(lon, 1),
-                    "cloud_frac": round(val, 4),
-                })
-        except (ValueError, IndexError):
             continue
+
+        # Stop after data section
+        if in_data and not line.startswith("Cloud_Fraction_Mean"):
+            break
 
     return rows
 
