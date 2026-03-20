@@ -240,16 +240,20 @@ async def main():
             station_key = str(station["uhslc_id"])
             name = station["name"]
 
-            # Determine start time
+            # Determine start time (must be timezone-aware to compare with now)
             if station_key in existing_summary:
                 last_date = existing_summary[station_key][1]
                 # Start from last known date
                 try:
-                    start_dt = datetime.fromisoformat(last_date.replace("Z", ""))
+                    start_dt = datetime.fromisoformat(
+                        last_date.replace("Z", "+00:00")
+                    )
+                    if start_dt.tzinfo is None:
+                        start_dt = start_dt.replace(tzinfo=timezone.utc)
                 except ValueError:
-                    start_dt = datetime(START_YEAR, 1, 1)
+                    start_dt = datetime(START_YEAR, 1, 1, tzinfo=timezone.utc)
             else:
-                start_dt = datetime(START_YEAR, 1, 1)
+                start_dt = datetime(START_YEAR, 1, 1, tzinfo=timezone.utc)
 
             logger.info("Fetching %s (ID=%s, %.2f°N %.2f°E) from %s...",
                         name, station_key, station["lat"], station["lon"],

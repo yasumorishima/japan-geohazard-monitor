@@ -82,6 +82,25 @@ async def init_cloud_table():
         await db.commit()
 
 
+async def _resolve_filename(session: aiohttp.ClientSession, year: int, doy: int) -> str | None:
+    """Resolve MOD08_D3 filename from LAADS DAAC directory listing."""
+    dir_url = f"https://ladsweb.modaps.eosdis.nasa.gov/archive/allData/61/MOD08_D3/{year}/{doy:03d}.json"
+    try:
+        headers = {"Authorization": f"Bearer {EARTHDATA_TOKEN}"} if EARTHDATA_TOKEN else {}
+        async with session.get(dir_url, headers=headers, timeout=TIMEOUT) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json(content_type=None)
+            # LAADS returns list of file objects
+            for item in data:
+                name = item.get("name", "")
+                if name.startswith("MOD08_D3") and name.endswith(".hdf"):
+                    return name
+    except Exception:
+        pass
+    return None
+
+
 async def fetch_cloud_day(session: aiohttp.ClientSession, date: datetime) -> list[dict]:
     """Fetch cloud fraction for one day via LAADS OPeNDAP."""
     if not EARTHDATA_TOKEN:
@@ -91,12 +110,14 @@ async def fetch_cloud_day(session: aiohttp.ClientSession, date: datetime) -> lis
     doy = date.timetuple().tm_yday
     date_str = date.strftime("%Y-%m-%d")
 
-    # MOD08_D3 filename pattern
-    filename = f"MOD08_D3.A{year}{doy:03d}.061.*.hdf"
+    # Resolve actual filename (contains processing date)
+    filename = await _resolve_filename(session, year, doy)
+    if not filename:
+        return []
 
-    # OPeNDAP with subsetting for Cloud_Fraction_Mean
+    # OPeNDAP ASCII with subsetting for Cloud_Fraction_Mean
     url = (
-        f"{LAADS_OPENDAP}/{year}/{doy:03d}/"
+        f"{LAADS_OPENDAP}/{year}/{doy:03d}/{filename}.ascii"
         f"?Cloud_Fraction_Mean"
         f"[{LAT_START}:1:{LAT_END}]"
         f"[{LON_START}:1:{LON_END}]"
@@ -123,40 +144,65 @@ async def fetch_cloud_day(session: aiohttp.ClientSession, date: datetime) -> lis
 
 
 def _parse_cloud_ascii(text: str, date_str: str) -> list[dict]:
-    """Parse OPeNDAP ASCII cloud fraction grid."""
+    """Parse OPeNDAP ASCII cloud fraction grid.
+
+    OPeNDAP ASCII format for 2D arrays:
+        Cloud_Fraction_Mean.Cloud_Fraction_Mean[23][29]
+        [0], 0.45, 0.52, 0.48, ...
+        [1], 0.43, 0.51, ...
+    Each line = one lat row, comma-separated lon values.
+    """
     rows = []
     in_data = False
+    separator_seen = False
 
     for line in text.split("\n"):
         line = line.strip()
-        if "Cloud_Fraction" in line and "[" in line:
+        if not line:
+            continue
+
+        # OPeNDAP uses "-----" separator before data
+        if line.startswith("---"):
+            separator_seen = True
+            continue
+
+        # Data section header (after separator)
+        if separator_seen and "Cloud_Fraction" in line:
             in_data = True
             continue
+
         if not in_data:
             continue
 
-        if line.startswith("["):
-            parts = line.split(",")
-            if len(parts) < 2:
-                continue
-            try:
-                lat_idx = int(parts[0].strip("[] "))
-                lat = -89.5 + (LAT_START + lat_idx)  # 1° grid, center
+        # End of data section
+        if not line.startswith("["):
+            break
 
-                for lon_offset, val_str in enumerate(parts[1:]):
-                    val = float(val_str.strip())
-                    if val < 0 or val > 1.1:
-                        continue  # Fill value
-                    lon = -179.5 + (LON_START + lon_offset)
+        # Parse: [lat_idx], val0, val1, val2, ...
+        parts = line.split(",")
+        if len(parts) < 2:
+            continue
+        try:
+            lat_idx = int(parts[0].strip("[] "))
+            lat = -89.5 + (LAT_START + lat_idx)  # 1° grid, center
 
-                    rows.append({
-                        "date": date_str,
-                        "lat": round(lat, 1),
-                        "lon": round(lon, 1),
-                        "cloud_frac": round(val, 4),
-                    })
-            except (ValueError, IndexError):
-                continue
+            for lon_offset, val_str in enumerate(parts[1:]):
+                val_str = val_str.strip()
+                if not val_str:
+                    continue
+                val = float(val_str)
+                if val < 0 or val > 1.1:
+                    continue  # Fill value
+                lon = -179.5 + (LON_START + lon_offset)
+
+                rows.append({
+                    "date": date_str,
+                    "lat": round(lat, 1),
+                    "lon": round(lon, 1),
+                    "cloud_frac": round(val, 4),
+                })
+        except (ValueError, IndexError):
+            continue
 
     return rows
 
