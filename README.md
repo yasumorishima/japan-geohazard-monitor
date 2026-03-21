@@ -148,11 +148,14 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
   - Data validation: 23 OK / 6 EMPTY / 1 MISSING (improved from 8 EMPTY)
   - Feature matrix export fixed (int64 serialization + samples reuse 14h→sec)
   - DB checkpoint (230MB) preserved
-- **Analysis Phase 15d** 🔄 3 remaining EMPTY fixes (Run 23373703010, 2026-03-21):
-  - tide_gauge: UHSLC direct CSV fallback (19 stations hardcoded, timeout 900s)
-  - nightlight: Earthdata Cloud URL (`data.laadsdaac.earthdatacloud.nasa.gov`, bypasses LAADS EULA)
-  - SO2: fresh session in BasicAuth fallback (cookie contamination fix in `earthdata_auth.py`)
-  - All 3 fixes verified locally with real API calls before push
+- **Analysis Phase 15d** ✅ EMPTY source fixes (Run 23373703010): tide_gauge ✅ 2.4M rows (UHSLC CSV fallback), cloud_fraction ✅ 132K, ocean_color ✅ 17K. Electron flux ❌ hung 2h (NCEI data ended 2020), SO2 ❌ 0 rows (Earthdata credentials invalid), VIIRS ❌ 0 rows (h5py scalar bug). Cancelled at electron flux step
+- **Analysis Phase 15f** 🔄 Electron flux complete rewrite + VIIRS fix + DB checkpoint restore (Run 23382779214, 2026-03-21):
+  - **DB checkpoint restore at workflow start**: previous run's DB downloaded before fetch → all skip-logic effective (incremental fetch)
+  - **Electron flux**: NCEI GOES-R SEISS L2 netCDF added (GOES-16 science + GOES-18 science/ops auto-fallback). Tested: 2024=366d, 2025=342d/12mo, 2026=79d/3mo — **zero gap from 2017 to present**. NCEI CSV retained for 2011-2016. Year-parallel fetch (semaphore 2), month-internal day-parallel (semaphore 5)
+  - **VIIRS nightlight**: h5py attribute numpy scalar conversion fix (`np.asarray().flat[0]`)
+  - **Electron flux timeout**: 10→30min
+  - **CI deps**: netCDF4 + numpy added
+  - SO2 still blocked (Earthdata username/password Secret needs manual update)
 - **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 420min timeout). **Data preservation**: DB checkpoint after fetch phase + ML results checkpoint (feature_matrix + predictions) + final DB upload, all `if: always()`. Earthdata auth pre-validation skips 4 sources on credential failure. Data validation report (31 tables checked) saved to artifacts
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
 
