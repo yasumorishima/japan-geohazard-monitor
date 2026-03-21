@@ -126,10 +126,15 @@ def parse_vnp46a4_h5(filepath, h, v):
                 logger.warning("VNP46A4: no radiance dataset found")
                 return []
 
+            import numpy as np
+
             data = dataset[:]
-            fill_value = dataset.attrs.get("_FillValue", 65535)
-            scale_factor = float(dataset.attrs.get("scale_factor", 0.1))
-            add_offset = float(dataset.attrs.get("add_offset", 0.0))
+            fill_raw = dataset.attrs.get("_FillValue", 65535)
+            fill_value = int(np.asarray(fill_raw).flat[0])
+            scale_raw = dataset.attrs.get("scale_factor", 0.1)
+            scale_factor = float(np.asarray(scale_raw).flat[0])
+            offset_raw = dataset.attrs.get("add_offset", 0.0)
+            add_offset = float(np.asarray(offset_raw).flat[0])
             nrows, ncols = data.shape
 
             # Subsample every 24 pixels (~10km)

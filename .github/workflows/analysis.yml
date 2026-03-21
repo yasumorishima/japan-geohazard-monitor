@@ -31,8 +31,44 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install aiohttp aiosqlite scikit-learn scipy
+          pip install aiohttp aiosqlite scikit-learn scipy numpy netCDF4
           sudo apt-get install -y ncompress  # For .Z IONEX decompression
+
+      # ====== RESTORE PREVIOUS DB CHECKPOINT ======
+      # Incremental fetch: restore previous run's DB so skip-logic kicks in
+      # (e.g., fetch_poes_particles.py skips years with >300 records)
+      - name: Restore previous database checkpoint
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p data
+          PREV_RUN=$(gh api repos/${{ github.repository }}/actions/artifacts \
+            --jq '[.artifacts[] | select(.name | startswith("database-checkpoint-")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0].workflow_run.id // empty' 2>/dev/null)
+          if [ -n "$PREV_RUN" ] && [ "$PREV_RUN" != "${{ github.run_id }}" ]; then
+            echo "Downloading DB checkpoint from run $PREV_RUN..."
+            gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+              --name "database-checkpoint-$PREV_RUN" \
+              --dir /tmp/db-restore 2>/dev/null || true
+            if [ -f /tmp/db-restore/data/geohazard.db ]; then
+              cp /tmp/db-restore/data/geohazard.db data/geohazard.db
+              DB_SIZE=$(du -h data/geohazard.db | cut -f1)
+              echo "✅ Restored DB from run $PREV_RUN ($DB_SIZE)"
+              python3 -c "
+          import sqlite3
+          conn = sqlite3.connect('data/geohazard.db')
+          tables = conn.execute(\"SELECT name FROM sqlite_master WHERE type='table'\").fetchall()
+          for t in tables:
+              count = conn.execute(f'SELECT COUNT(*) FROM {t[0]}').fetchone()[0]
+              print(f'  {t[0]}: {count:,} rows')
+          conn.close()
+          " || true
+            else
+              echo "⚠️ No DB file in checkpoint artifact"
+            fi
+          else
+            echo "No previous checkpoint found — starting fresh"
+          fi
 
       - name: Validate Earthdata credentials
         id: earthdata_check
@@ -351,7 +387,7 @@ jobs:
 
       - name: Fetch GOES electron flux (particle precipitation, no auth)
         continue-on-error: true
-        timeout-minutes: 10
+        timeout-minutes: 30
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |

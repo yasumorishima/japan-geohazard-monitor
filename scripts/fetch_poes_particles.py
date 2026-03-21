@@ -18,12 +18,12 @@ Target features:
     - electron_800kev_max: daily max >=800 keV integral electron flux (pfu)
 
 Data sources:
-    - Recent 7 days: NOAA SWPC JSON API
-        https://services.swpc.noaa.gov/json/goes/primary/integral-electrons-7-day.json
     - Recent 1 month: NOAA SWPC JSON API
         https://services.swpc.noaa.gov/json/goes/primary/integral-electrons-1-month.json
-    - Historical (2011+): NOAA NCEI GOES SEM archive
-        https://www.ncei.noaa.gov/data/goes-space-environment-monitor/access/full/
+    - 2017-present: NCEI GOES-R SEISS L2 avg5m netCDF (daily files)
+        https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes/goes16/l2/data/mpsh-l2-avg5m_science/
+    - 2011-2016: NOAA NCEI GOES SEM archive (CSV, legacy)
+        https://www.ncei.noaa.gov/data/goes-space-environment-monitor/access/avg/
 
 References:
     - Pulinets & Ouzounov (2011) Adv. Space Res. 47:413-435 (LAIC model)
@@ -37,6 +37,10 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+import os
+import re
+import tempfile
 
 import aiohttp
 import aiosqlite
@@ -59,23 +63,32 @@ SWPC_ELECTRONS_3DAY = (
     "https://services.swpc.noaa.gov/json/goes/primary/integral-electrons-3-day.json"
 )
 
-# NOAA NCEI GOES-16 SEISS historical daily averages (2017+)
-# For earlier years (2011-2016), GOES-13/15 electron data
-NCEI_GOES16_URL = (
-    "https://www.ncei.noaa.gov/data/goes-space-environment-monitor/access/full/"
-    "{year}/{month:02d}/goes16/csv/"
+# NOAA NCEI GOES historical daily averages (up to 2020)
+# GOES-16 for 2017-2020, GOES-13/15 for 2011-2016
+NCEI_AVG_BASE_URL = (
+    "https://www.ncei.noaa.gov/data/goes-space-environment-monitor/access/avg/"
 )
 
-# NOAA SWPC historical DPD (Daily Particle Data) text files
-# Contains daily GOES electron fluence data
-SWPC_WAREHOUSE_URL = (
-    "https://services.swpc.noaa.gov/json/goes/primary/"
-    "integral-electrons-7-day.json"
-)
+# NCEI GOES-R SEISS L2 avg5m (2017-present, netCDF, >=2 MeV integral electron)
+# GOES-16 science has lag (~6 months); GOES-18 fills the gap
+SEISS_L2_SOURCES = [
+    # (satellite, base_url, priority) — try science first, then operational
+    ("g16_sci", "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/"
+                "goes/goes16/l2/data/mpsh-l2-avg5m_science/"),
+    ("g18_sci", "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/"
+                "goes/goes18/l2/data/mpsh-l2-avg5m_science/"),
+    ("g18_ops", "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/"
+                "goes/goes18/l2/data/mpsh-l2-avg5m/"),
+]
+# SEISS data starts from 2017
+SEISS_START_YEAR = 2017
 
 MAX_RETRIES = 3
 TIMEOUT = aiohttp.ClientTimeout(total=300, connect=30)
+TIMEOUT_SHORT = aiohttp.ClientTimeout(total=60, connect=15)
 START_YEAR = 2011
+# NCEI avg (CSV) archive only goes up to 2020 — no data for 2021+
+NCEI_MAX_YEAR = 2016  # Use SEISS L2 for 2017+, CSV only for 2011-2016
 
 
 async def init_particle_flux_table():
@@ -209,6 +222,124 @@ async def fetch_swpc_recent(session: aiohttp.ClientSession) -> list[dict]:
                 merged[key]["electron_800kev_max"] = row["electron_800kev_max"]
 
     return sorted(merged.values(), key=lambda r: r["observed_at"])
+
+
+async def fetch_seiss_yearly(
+    session: aiohttp.ClientSession, year: int
+) -> list[dict]:
+    """Fetch an entire year of SEISS L2 data, one directory listing per month.
+
+    Tries GOES-16 science first, then GOES-18 science, then GOES-18
+    operational as fallback (covers processing lag in GOES-16).
+    """
+    now = datetime.now(timezone.utc)
+    all_rows = []
+    seen_dates: set[str] = set()
+    sem = asyncio.Semaphore(5)  # Max 5 concurrent downloads per month
+
+    for month in range(1, 13):
+        if year == now.year and month > now.month:
+            break
+
+        # Try each SEISS source until we find files for this month
+        dir_url = None
+        files = []
+        for _label, base_url in SEISS_L2_SOURCES:
+            candidate_url = f"{base_url}{year}/{month:02d}/"
+            try:
+                async with session.get(
+                    candidate_url, timeout=TIMEOUT_SHORT
+                ) as resp:
+                    if resp.status != 200:
+                        continue
+                    text = await resp.text()
+            except (aiohttp.ClientError, asyncio.TimeoutError):
+                continue
+
+            # Match any GOES satellite (g16, g18, etc.)
+            pattern = re.compile(
+                r'href="(sci_mpsh-l2-avg5m_g\d+_d(\d{8})_v[\d\-]+\.nc)"'
+            )
+            found = [
+                (fname, ds) for fname, ds in pattern.findall(text)
+                if ds not in seen_dates
+            ]
+            if found:
+                dir_url = candidate_url
+                files = found
+                break  # Use first source that has data
+
+        if not dir_url or not files:
+            continue
+
+        async def _download_day(
+            dl_url: str, fname: str, date_str: str
+        ) -> dict | None:
+            async with sem:
+                nc_url = dl_url + fname
+                for attempt in range(1, MAX_RETRIES + 1):
+                    try:
+                        async with session.get(
+                            nc_url, timeout=TIMEOUT
+                        ) as resp:
+                            if resp.status != 200:
+                                if attempt == MAX_RETRIES:
+                                    return None
+                                await asyncio.sleep(2 ** attempt)
+                                continue
+                            nc_bytes = await resp.read()
+
+                        try:
+                            import netCDF4
+                            import numpy as np
+                        except ImportError:
+                            return None
+
+                        tmp_path = os.path.join(
+                            tempfile.gettempdir(), f"seiss_{date_str}.nc"
+                        )
+                        with open(tmp_path, "wb") as f:
+                            f.write(nc_bytes)
+                        try:
+                            ds = netCDF4.Dataset(tmp_path)
+                            flux = ds.variables["AvgIntElectronFlux"][:]
+                            if hasattr(flux, "mask"):
+                                flux = np.where(flux.mask, np.nan, flux.data)
+                            daily_max = float(np.nanmax(flux))
+                            ds.close()
+                        finally:
+                            os.unlink(tmp_path)
+
+                        if np.isnan(daily_max) or daily_max < 0:
+                            return None
+
+                        d = date_str
+                        return {
+                            "observed_at": f"{d[:4]}-{d[4:6]}-{d[6:8]}T00:00:00",
+                            "electron_2mev_max": daily_max,
+                            "electron_800kev_max": None,
+                        }
+                    except (aiohttp.ClientError, asyncio.TimeoutError):
+                        if attempt == MAX_RETRIES:
+                            return None
+                        await asyncio.sleep(2 ** attempt)
+                return None
+
+        if files:
+            results = await asyncio.gather(
+                *[_download_day(dir_url, fname, ds) for fname, ds in files],
+                return_exceptions=True,
+            )
+            for res in results:
+                if isinstance(res, dict):
+                    all_rows.append(res)
+                    # Track dates to avoid duplicates from fallback sources
+                    obs = res["observed_at"]  # "YYYY-MM-DDT00:00:00"
+                    seen_dates.add(obs[0:4] + obs[5:7] + obs[8:10])
+
+        await asyncio.sleep(0.5)  # Polite delay between months
+
+    return sorted(all_rows, key=lambda r: r["observed_at"])
 
 
 async def fetch_ncei_yearly(
@@ -411,8 +542,8 @@ async def main():
             total_records += len(recent_rows)
             logger.info("SWPC recent: stored %d daily records", len(recent_rows))
 
-        # --- Phase 2: Fetch historical data from NCEI for missing years ---
-        # Determine which years still need data
+        # --- Phase 2: Fetch historical data ---
+        # Refresh coverage after SWPC insert
         async with aiosqlite.connect(DB_PATH) as db:
             yearly_counts = await db.execute_fetchall(
                 """SELECT substr(observed_at, 1, 4) as year, COUNT(*)
@@ -421,45 +552,109 @@ async def main():
             )
         year_coverage = {row[0]: row[1] for row in yearly_counts}
 
-        for year in range(start_year, current_year + 1):
+        async def _store_rows(rows: list[dict]) -> int:
+            if not rows:
+                return 0
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.executemany(
+                    """INSERT OR IGNORE INTO particle_flux
+                       (observed_at, electron_2mev_max, electron_800kev_max,
+                        received_at)
+                       VALUES (?, ?, ?, ?)""",
+                    [
+                        (
+                            r["observed_at"],
+                            r["electron_2mev_max"],
+                            r["electron_800kev_max"],
+                            now_iso,
+                        )
+                        for r in rows
+                    ],
+                )
+                await db.commit()
+            return len(rows)
+
+        # --- Phase 2a: NCEI CSV for legacy years (2011-2016) ---
+        ncei_csv_years = []
+        for year in range(start_year, min(NCEI_MAX_YEAR, current_year) + 1):
             year_str = str(year)
             existing_days = year_coverage.get(year_str, 0)
-
-            # If we already have >300 daily records for a non-current year, skip
             if year < current_year and existing_days > 300:
                 logger.info(
-                    "NCEI %d: already have %d daily records, skipping",
+                    "NCEI CSV %d: already have %d daily records, skipping",
                     year, existing_days,
                 )
                 continue
+            ncei_csv_years.append(year)
 
-            logger.info("Fetching NCEI historical data for %d...", year)
-            hist_rows = await fetch_ncei_yearly(session, year)
+        ncei_semaphore = asyncio.Semaphore(3)
 
-            if hist_rows:
-                async with aiosqlite.connect(DB_PATH) as db:
-                    await db.executemany(
-                        """INSERT OR IGNORE INTO particle_flux
-                           (observed_at, electron_2mev_max, electron_800kev_max,
-                            received_at)
-                           VALUES (?, ?, ?, ?)""",
-                        [
-                            (
-                                r["observed_at"],
-                                r["electron_2mev_max"],
-                                r["electron_800kev_max"],
-                                now_iso,
-                            )
-                            for r in hist_rows
-                        ],
-                    )
-                    await db.commit()
-                total_records += len(hist_rows)
-                logger.info("NCEI %d: stored %d daily records", year, len(hist_rows))
+        async def _fetch_ncei_csv_year(yr: int) -> int:
+            async with ncei_semaphore:
+                logger.info("Fetching NCEI CSV for %d...", yr)
+                hist_rows = await fetch_ncei_yearly(session, yr)
+            n = await _store_rows(hist_rows)
+            if n:
+                logger.info("NCEI CSV %d: stored %d daily records", yr, n)
             else:
-                logger.info("NCEI %d: no data available", year)
+                logger.info("NCEI CSV %d: no data available", yr)
+            return n
 
-            await asyncio.sleep(1.0)
+        if ncei_csv_years:
+            logger.info(
+                "Fetching %d years from NCEI CSV (2011-2016): %s",
+                len(ncei_csv_years), ncei_csv_years,
+            )
+            results = await asyncio.gather(
+                *[_fetch_ncei_csv_year(yr) for yr in ncei_csv_years],
+                return_exceptions=True,
+            )
+            for yr, res in zip(ncei_csv_years, results):
+                if isinstance(res, Exception):
+                    logger.warning("NCEI CSV %d: failed with %s", yr, res)
+                elif isinstance(res, int):
+                    total_records += res
+
+        # --- Phase 2b: SEISS L2 netCDF for 2017-present ---
+        seiss_years = []
+        for year in range(max(start_year, SEISS_START_YEAR), current_year + 1):
+            year_str = str(year)
+            existing_days = year_coverage.get(year_str, 0)
+            if year < current_year and existing_days > 300:
+                logger.info(
+                    "SEISS %d: already have %d daily records, skipping",
+                    year, existing_days,
+                )
+                continue
+            seiss_years.append(year)
+
+        seiss_semaphore = asyncio.Semaphore(2)  # netCDF files are larger
+
+        async def _fetch_seiss_year(yr: int) -> int:
+            async with seiss_semaphore:
+                logger.info("Fetching SEISS L2 for %d...", yr)
+                rows = await fetch_seiss_yearly(session, yr)
+            n = await _store_rows(rows)
+            if n:
+                logger.info("SEISS %d: stored %d daily records", yr, n)
+            else:
+                logger.info("SEISS %d: no data available", yr)
+            return n
+
+        if seiss_years:
+            logger.info(
+                "Fetching %d years from SEISS L2 (2017-present): %s",
+                len(seiss_years), seiss_years,
+            )
+            results = await asyncio.gather(
+                *[_fetch_seiss_year(yr) for yr in seiss_years],
+                return_exceptions=True,
+            )
+            for yr, res in zip(seiss_years, results):
+                if isinstance(res, Exception):
+                    logger.warning("SEISS %d: failed with %s", yr, res)
+                elif isinstance(res, int):
+                    total_records += res
 
     # Final summary
     async with aiosqlite.connect(DB_PATH) as db:
