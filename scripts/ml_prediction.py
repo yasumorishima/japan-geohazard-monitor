@@ -1690,7 +1690,7 @@ async def load_phase10b_nightlight(db_path):
     try:
         async with aiosqlite.connect(db_path) as db:
             rows = await db.execute_fetchall(
-                "SELECT observed_at, cell_lat, cell_lon, radiance_nw_cm2_sr "
+                "SELECT observed_at, cell_lat, cell_lon, radiance_nwcm2sr "
                 "FROM nightlight ORDER BY observed_at"
             )
         if not rows:

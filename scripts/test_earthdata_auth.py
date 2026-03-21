@@ -48,8 +48,13 @@ async def main():
                     print(f"HTTP {resp.status}")
                     if resp.status == 200:
                         text = (await resp.text())[:300]
-                        print(f"PASS: LAADS API accessible")
-                        print(f"Preview: {text[:200]}")
+                        if "invalid_credentials" in text or "error" in text[:50].lower():
+                            print(f"FAIL: LAADS returned 200 but body contains error")
+                            print(f"Body: {text}")
+                            ok = False
+                        else:
+                            print(f"PASS: LAADS API accessible")
+                            print(f"Preview: {text[:200]}")
                     elif resp.status == 401:
                         body = (await resp.text())[:300]
                         print(f"FAIL: Bearer token rejected by LAADS")
@@ -72,8 +77,8 @@ async def main():
         # This is the actual flow used by SO2/cloud fraction fetchers
         print("\n--- Test 2: GES DISC OPeNDAP Redirect Flow ---")
         try:
-            # Use a known catalog URL
-            test_url = "https://measures.gesdisc.eosdis.nasa.gov/opendap/SO2/OMSO2e.003/contents.html"
+            # Use the actual OMSO2G catalog URL (OMSO2e was retired)
+            test_url = "https://acdisc.gesdisc.eosdis.nasa.gov/opendap/HDF-EOS5/Aura_OMI_Level2G/OMSO2G.003/2024/contents.html"
             async with session.get(test_url, allow_redirects=False, timeout=timeout) as resp:
                 print(f"Initial: HTTP {resp.status}")
                 if resp.status in (301, 302, 303, 307, 308):

@@ -87,6 +87,36 @@ async def init_so2_table():
         await db.commit()
 
 
+# Year-level cache for contents.html (same year = same listing)
+_contents_cache: dict[int, str] = {}
+
+
+async def _get_contents_html(year: int) -> str | None:
+    """Fetch and cache contents.html for a given year (public, no auth)."""
+    if year in _contents_cache:
+        return _contents_cache[year]
+
+    contents_url = f"{GESDISC_OPENDAP}/{year}/contents.html"
+    try:
+        async with aiohttp.ClientSession() as plain_session:
+            async with plain_session.get(contents_url, timeout=TIMEOUT) as resp:
+                if resp.status != 200:
+                    logger.info("SO2 contents %d: HTTP %d (expected 200)", year, resp.status)
+                    _contents_cache[year] = ""
+                    return None
+                text = await resp.text()
+        if not text:
+            logger.info("SO2 contents %d: empty response", year)
+            _contents_cache[year] = ""
+            return None
+        _contents_cache[year] = text
+        logger.info("SO2 contents %d: cached (%d bytes)", year, len(text))
+        return text
+    except Exception as e:
+        logger.info("SO2 contents %d: %s: %s", year, type(e).__name__, e)
+        return None
+
+
 async def _resolve_so2_filename(session: aiohttp.ClientSession, year: int, date_str: str) -> str | None:
     """Resolve OMSO2G filename from OPeNDAP contents listing.
 
@@ -97,16 +127,13 @@ async def _resolve_so2_filename(session: aiohttp.ClientSession, year: int, date_
     mmdd = date_str[5:7] + date_str[8:10]  # "2024-01-15" -> "0115"
     pattern_str = f"OMI-Aura_L2G-OMSO2G_{year}m{mmdd}"
 
-    contents_url = f"{GESDISC_OPENDAP}/{year}/contents.html"
-    try:
-        status, text = await earthdata_fetch(session, contents_url, timeout=TIMEOUT)
-        if status == 200 and text:
-            # Find matching filename in HTML
-            match = re.search(rf'({re.escape(pattern_str)}[^"<\s]*\.he5)', text)
-            if match:
-                return match.group(1)
-    except Exception:
-        pass
+    text = await _get_contents_html(year)
+    if not text:
+        return None
+    match = re.search(rf'({re.escape(pattern_str)}[^"<\s]*\.he5)', text)
+    if match:
+        return match.group(1)
+    logger.info("SO2 %s: no filename match for pattern %s", date_str, pattern_str)
     return None
 
 
@@ -119,6 +146,7 @@ async def fetch_so2_day(session: aiohttp.ClientSession, date: datetime) -> list[
     """
     has_auth = (EARTHDATA_USERNAME and EARTHDATA_PASSWORD) or EARTHDATA_TOKEN
     if not has_auth:
+        logger.debug("SO2 %s: no Earthdata credentials available", date.strftime("%Y-%m-%d"))
         return []
 
     date_str = date.strftime("%Y-%m-%d")
@@ -142,12 +170,23 @@ async def fetch_so2_day(session: aiohttp.ClientSession, date: datetime) -> list[
             status, text = await earthdata_fetch(session, url, timeout=TIMEOUT)
             if status == 200:
                 if not text or "<html" in text[:200].lower():
-                    logger.debug("SO2 %s: returned HTML (auth redirect)", date_str)
+                    # Log first occurrence at INFO for diagnosis
+                    if not hasattr(fetch_so2_day, '_html_warned'):
+                        fetch_so2_day._html_warned = True
+                        logger.info("SO2 %s: got HTML instead of ASCII (len=%d, preview=%s)",
+                                    date_str, len(text) if text else 0, repr((text or "")[:100]))
                     return []
-                return _parse_opendap_ascii(text, date_str)
+                rows = _parse_opendap_ascii(text, date_str)
+                if not rows and not hasattr(fetch_so2_day, '_empty_warned'):
+                    fetch_so2_day._empty_warned = True
+                    logger.info("SO2 %s: ASCII parsed but 0 positive values (text len=%d, first 200 chars=%s)",
+                                date_str, len(text), repr(text[:200]))
+                return rows
             elif status in (401, 403):
-                if attempt == MAX_RETRIES:
-                    logger.info("SO2 %s: auth failed (HTTP %d)", date_str, status)
+                if not hasattr(fetch_so2_day, '_auth_warned'):
+                    fetch_so2_day._auth_warned = True
+                    logger.info("SO2 %s: auth failed (HTTP %d) — credentials may be invalid for GES DISC",
+                                date_str, status)
                 return []
             elif status == 404:
                 return []  # No data for this date
@@ -156,7 +195,7 @@ async def fetch_so2_day(session: aiohttp.ClientSession, date: datetime) -> list[
                     logger.warning("SO2 %s: HTTP %d", date_str, status)
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             if attempt == MAX_RETRIES:
-                logger.debug("SO2 %s: %s", date_str, type(e).__name__)
+                logger.info("SO2 %s: %s", date_str, type(e).__name__)
             await asyncio.sleep(2 ** attempt)
 
     return []
@@ -221,13 +260,16 @@ def _parse_opendap_ascii(text: str, date_str: str) -> list[dict]:
                     continue  # Fill value
                 lon = -179.875 + (LON_START + lon_offset) * 0.25
 
-                if val > 0:  # Only store positive detections
-                    rows.append({
-                        "date": date_str,
-                        "lat": round(lat, 3),
-                        "lon": round(lon, 3),
-                        "so2": round(val, 4),
-                    })
+                # Store all valid values (not just positive).
+                # Background SO2 in Japan is typically -2 to +2 DU (noise).
+                # ML pipeline computes per-cell baseline and anomaly detection,
+                # so it needs the full distribution including negatives.
+                rows.append({
+                    "date": date_str,
+                    "lat": round(lat, 3),
+                    "lon": round(lon, 3),
+                    "so2": round(val, 4),
+                })
         except (ValueError, IndexError):
             continue
 
@@ -240,11 +282,11 @@ async def main():
 
     now = datetime.now(timezone.utc).isoformat()
 
-    if not EARTHDATA_TOKEN:
+    if not EARTHDATA_TOKEN and not (EARTHDATA_USERNAME and EARTHDATA_PASSWORD):
         logger.info(
-            "SO2 fetch: EARTHDATA_TOKEN not set. "
-            "Set EARTHDATA_TOKEN env var for OMI SO2 data access. "
-            "Generate token at https://urs.earthdata.nasa.gov/ "
+            "SO2 fetch: no Earthdata credentials. "
+            "Set EARTHDATA_TOKEN or EARTHDATA_USERNAME+EARTHDATA_PASSWORD. "
+            "Generate at https://urs.earthdata.nasa.gov/ "
             "SO2 features will be excluded via dynamic selection."
         )
         return

@@ -504,9 +504,12 @@ async def main():
     n_existing = existing[0][1] if existing else 0
 
     if last_date:
-        start_year = int(last_date[:4])
+        # Always start from START_YEAR to ensure all historical years are checked.
+        # The per-year skip logic (>300 days) handles deduplication.
+        start_year = START_YEAR
         logger.info(
-            "Particle flux existing: %d records (latest: %s)", n_existing, last_date
+            "Particle flux existing: %d records (latest: %s), checking from %d",
+            n_existing, last_date, start_year,
         )
     else:
         start_year = START_YEAR
