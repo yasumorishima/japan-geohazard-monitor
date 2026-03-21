@@ -322,8 +322,78 @@ def _gap_reason(table: str) -> str:
     return reasons.get(table, "Unknown")
 
 
+def compare_with_previous(current: dict, prev_path: str) -> list[str]:
+    """Compare current validation with previous run. Return list of regressions."""
+    try:
+        with open(prev_path) as f:
+            prev = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+    prev_tables = prev.get("tables", {})
+    curr_tables = current.get("tables", {})
+    regressions = []
+
+    for table, curr_entry in curr_tables.items():
+        prev_entry = prev_tables.get(table)
+        if not prev_entry:
+            continue
+
+        prev_status = prev_entry.get("status", "MISSING")
+        curr_status = curr_entry.get("status", "MISSING")
+        prev_rows = prev_entry.get("rows", 0)
+        curr_rows = curr_entry.get("rows", 0)
+
+        # Status regression (OK→EMPTY, OK→LOW, etc.)
+        status_rank = {"OK": 3, "LOW": 2, "EMPTY": 1, "MISSING": 0}
+        if status_rank.get(curr_status, 0) < status_rank.get(prev_status, 0):
+            regressions.append(
+                f"⚠️ `{table}`: {prev_status} ({prev_rows:,} rows) → "
+                f"**{curr_status}** ({curr_rows:,} rows)"
+            )
+        # Row count drop >20% (within same status)
+        elif (prev_rows > 0 and curr_rows > 0
+              and curr_rows < prev_rows * 0.8
+              and curr_status == prev_status):
+            drop_pct = round((1 - curr_rows / prev_rows) * 100, 1)
+            regressions.append(
+                f"📉 `{table}`: {prev_rows:,} → {curr_rows:,} rows "
+                f"(-{drop_pct}%, status still {curr_status})"
+            )
+
+    return regressions
+
+
 if __name__ == "__main__":
     result = validate()
+
+    # Compare with previous run if --previous flag provided
+    prev_path = None
+    for i, arg in enumerate(sys.argv[1:], 1):
+        if arg == "--previous" and i < len(sys.argv) - 1:
+            prev_path = sys.argv[i + 1]
+
+    if prev_path and Path(prev_path).exists():
+        regressions = compare_with_previous(result, prev_path)
+        if regressions:
+            print("\n" + "=" * 70)
+            print(f"⚠️  DATA REGRESSIONS DETECTED ({len(regressions)} tables)")
+            print("=" * 70)
+            for r in regressions:
+                print(f"  {r}")
+
+            # Append to Job Summary
+            github_summary = os.environ.get("GITHUB_STEP_SUMMARY")
+            if github_summary:
+                with open(github_summary, "a") as f:
+                    f.write(f"\n### ⚠️ Data Regressions vs Previous Run ({len(regressions)})\n\n")
+                    f.write("| Change |\n|---|\n")
+                    for r in regressions:
+                        f.write(f"| {r} |\n")
+                    f.write("\n")
+        else:
+            print("\n✅ No data regressions vs previous run")
+
     # Always exit 0 — validation is informational, not blocking.
     # The report is saved to results/ for artifact upload.
     sys.exit(0)

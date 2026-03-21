@@ -133,6 +133,7 @@ jobs:
           python3 scripts/nowcast_analysis.py
 
       - name: Fetch MODIS LST (thermal anomaly discovery)
+        continue-on-error: true
         timeout-minutes: 90
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
@@ -140,6 +141,8 @@ jobs:
           python3 scripts/fetch_modis_lst.py || echo "MODIS LST discovery completed (may need Earthdata auth for full download)"
 
       - name: Fetch Kakioka ULF magnetic data
+        continue-on-error: true
+        timeout-minutes: 20
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
@@ -154,6 +157,8 @@ jobs:
       # --- Phase 9: Non-traditional precursor data sources ---
 
       - name: Fetch NMDB cosmic ray data (Homola et al. 2023)
+        continue-on-error: true
+        timeout-minutes: 20
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
@@ -166,12 +171,16 @@ jobs:
           python3 scripts/cosmic_ray_analysis.py || echo "Cosmic ray analysis skipped (insufficient data)"
 
       - name: Fetch Blitzortung lightning data
+        continue-on-error: true
+        timeout-minutes: 10
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
           python3 scripts/fetch_blitzortung.py || echo "Lightning fetch failed (non-fatal)"
 
       - name: Fetch ISS LIS lightning data (Earthdata auth, 2017-2023)
+        continue-on-error: true
+        timeout-minutes: 20
         if: steps.earthdata_check.outputs.earthdata_ok == 'true'
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
@@ -183,6 +192,7 @@ jobs:
           python3 scripts/fetch_iss_lis_lightning.py || echo "ISS LIS fetch failed (non-fatal)"
 
       - name: Fetch INTERMAGNET hourly + CSES satellite EM data
+        continue-on-error: true
         timeout-minutes: 60
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
@@ -190,6 +200,8 @@ jobs:
           python3 scripts/fetch_cses_satellite.py || echo "Satellite EM fetch failed (non-fatal)"
 
       - name: Fetch Movebank animal tracking data
+        continue-on-error: true
+        timeout-minutes: 10
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           MOVEBANK_USER: ${{ secrets.MOVEBANK_USER }}
@@ -200,6 +212,8 @@ jobs:
       # --- Phase 10: Unconventional data sources ---
 
       - name: Fetch NOAA OLR daily (thermal anomaly, no auth)
+        continue-on-error: true
+        timeout-minutes: 15
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
@@ -207,18 +221,24 @@ jobs:
           python3 scripts/fetch_olr.py || echo "OLR fetch failed (non-fatal)"
 
       - name: Fetch IERS Earth Orientation Parameters (no auth)
+        continue-on-error: true
+        timeout-minutes: 10
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
           python3 scripts/fetch_iers_eop.py || echo "IERS EOP fetch failed (non-fatal)"
 
       - name: Fetch NASA OMNIWeb solar wind hourly (no auth)
+        continue-on-error: true
+        timeout-minutes: 15
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
           python3 scripts/fetch_solar_wind.py || echo "Solar wind fetch failed (non-fatal)"
 
       - name: Fetch GRACE/GRACE-FO gravity anomaly (Earthdata auth optional)
+        continue-on-error: true
+        timeout-minutes: 20
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
@@ -228,6 +248,8 @@ jobs:
           python3 scripts/fetch_grace_gravity.py || echo "GRACE fetch failed (non-fatal)"
 
       - name: Fetch OMI SO2 column data (Earthdata auth)
+        continue-on-error: true
+        timeout-minutes: 20
         if: steps.earthdata_check.outputs.earthdata_ok == 'true'
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
@@ -238,6 +260,8 @@ jobs:
           python3 scripts/fetch_omi_so2.py || echo "SO2 fetch failed (non-fatal)"
 
       - name: Fetch SMAP soil moisture (Earthdata auth optional)
+        continue-on-error: true
+        timeout-minutes: 20
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
@@ -249,12 +273,16 @@ jobs:
       # --- Phase 10b: Additional unconventional sources ---
 
       - name: Fetch UHSLC tide gauge data (no auth)
+        continue-on-error: true
+        timeout-minutes: 15
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
           python3 scripts/fetch_tide_gauge.py || echo "Tide gauge fetch failed (non-fatal)"
 
       - name: Fetch NASA ocean color chlorophyll-a (Earthdata auth optional)
+        continue-on-error: true
+        timeout-minutes: 20
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
@@ -264,6 +292,8 @@ jobs:
           python3 scripts/fetch_ocean_color.py || echo "Ocean color fetch failed (non-fatal)"
 
       - name: Fetch MODIS cloud fraction (Earthdata auth)
+        continue-on-error: true
+        timeout-minutes: 20
         if: steps.earthdata_check.outputs.earthdata_ok == 'true'
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
@@ -274,6 +304,8 @@ jobs:
           python3 scripts/fetch_cloud_fraction.py || echo "Cloud fraction fetch failed (non-fatal)"
 
       - name: Fetch VIIRS nighttime light/airglow (Earthdata auth)
+        continue-on-error: true
+        timeout-minutes: 20
         if: steps.earthdata_check.outputs.earthdata_ok == 'true'
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
@@ -296,12 +328,16 @@ jobs:
       # --- Phase 11: Space/cosmic data sources ---
 
       - name: Fetch GOES X-ray flux (solar flares, no auth)
+        continue-on-error: true
+        timeout-minutes: 10
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
           python3 scripts/fetch_goes_xray.py || echo "GOES X-ray fetch failed (non-fatal)"
 
       - name: Fetch GOES proton flux (SEP events, no auth)
+        continue-on-error: true
+        timeout-minutes: 10
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
@@ -314,24 +350,32 @@ jobs:
           python3 scripts/fetch_tidal_stress.py || echo "Tidal stress computation failed (non-fatal)"
 
       - name: Fetch GOES electron flux (particle precipitation, no auth)
+        continue-on-error: true
+        timeout-minutes: 10
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
           python3 scripts/fetch_poes_particles.py || echo "Particle flux fetch failed (non-fatal)"
 
       - name: Fetch NOAA DART ocean bottom pressure (no auth)
+        continue-on-error: true
+        timeout-minutes: 15
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
           python3 scripts/fetch_dart_pressure.py || echo "DART pressure fetch failed (non-fatal)"
 
       - name: Fetch IOC sea level monitoring (no auth)
+        continue-on-error: true
+        timeout-minutes: 15
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
           python3 scripts/fetch_ioc_sealevel.py || echo "IOC sea level fetch failed (non-fatal)"
 
       - name: Fetch S-net seafloor pressure (NIED credentials required)
+        continue-on-error: true
+        timeout-minutes: 15
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           HINET_USER: ${{ secrets.HINET_USER }}
@@ -344,12 +388,35 @@ jobs:
       # All fetch steps complete. Validate + save DB before analysis.
       # This ensures data survives even if analysis steps fail/timeout.
 
+      - name: Download previous validation report
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Find most recent successful artifact with validation data
+          PREV_RUN=$(gh api repos/${{ github.repository }}/actions/artifacts \
+            --jq '[.artifacts[] | select(.name | startswith("database-checkpoint-")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0].workflow_run.id // empty' 2>/dev/null)
+          if [ -n "$PREV_RUN" ] && [ "$PREV_RUN" != "${{ github.run_id }}" ]; then
+            gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+              --name "database-checkpoint-$PREV_RUN" \
+              --dir /tmp/prev-checkpoint 2>/dev/null || true
+            if [ -f /tmp/prev-checkpoint/results/data_validation.json ]; then
+              cp /tmp/prev-checkpoint/results/data_validation.json /tmp/prev_validation.json
+              echo "Previous validation report found (run $PREV_RUN)"
+            fi
+          fi
+
       - name: Validate data completeness
         if: always()
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/validate_data.py
+          PREV_FLAG=""
+          if [ -f /tmp/prev_validation.json ]; then
+            PREV_FLAG="--previous /tmp/prev_validation.json"
+          fi
+          python3 scripts/validate_data.py $PREV_FLAG
 
       - name: Upload database checkpoint (post-fetch)
         if: always()
