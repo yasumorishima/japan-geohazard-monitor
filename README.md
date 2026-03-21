@@ -906,6 +906,10 @@ Feature matrix exported: 1,790 timesteps × 11×11 grid × 78 features → ready
 | **S-net** | ⏳ Awaiting NIED approval | 150 stations, sub-Pa pressure at Japan Trench. Registration submitted 2026-03-19 |
 | **INTERMAGNET backfill** | 🔄 In progress | 500 days/station/run (step timeout 60min). Full 15-year coverage accumulates over weekly runs |
 
+### GCP BigQuery integration (Planned)
+
+全データを BigQuery に集約し、SQL だけで分析・可視化が完結する基盤を構築予定。GCP プロジェクト `data-platform-490901` の `geohazard` データセットに 31+ テーブルをロード。CI 毎回ゼロフェッチ → 差分追加に切り替え、データ永続化の恩恵が最も大きいプロジェクト。
+
 ### Not yet implemented
 
 | Data | Blocker |
