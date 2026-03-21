@@ -139,16 +139,20 @@ ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo do
 - **Backfill** ✅ 2011-2026 M3+ earthquakes (29K), TEC (4M), Kp (44K), GCMT focal mechanisms
 - **Analysis Phase 15** ✅ Full test with all Phase 14b source fixes + data preservation checkpoint system. **70/78 active features (+5 from Phase 14). Test AUC 0.7499 (best ever), CV AUC 0.7411.** Data validation: 21 OK / 8 EMPTY / 1 MISSING. Earthdata auth (4 sources) failed due to URS API deprecating Basic Auth — fixed in Phase 15b. Feature matrix exported (1790×11×11×78). Job timed out at 6h (CSEP completed, final artifact upload missed). DB checkpoint preserved
 - **Analysis Phase 15b** ✅ Earthdata auth rewrite (Bearer token priority + Basic Auth fallback), ISS LIS table separation (`iss_lis_lightning`), workflow reliability (timeout 420min, ML results checkpoint artifact, auth pre-validation step). **Test AUC 0.7499 (same as 15), 72/78 active features. Feature matrix export failed (int64 serialization) → fixed in 15c**
-- **Analysis Phase 15c** 🔄 Data source fixes verified locally with real data:
-  - tide_gauge: datetime naive/aware crash fix → 19 UHSLC Japan stations (verified: 25 rows/day)
-  - cloud_fraction: OPeNDAP path corrected (`RemoteResources/laads/`), full-array fetch + Int16 scale (verified: 667 cells/day)
-  - nightlight: LAADS DAAC relative-path redirect fix via `urljoin` (verified: 303 redirect confirmed)
-  - SO2: switched from removed OMSO2e to OMSO2G on acdisc.gesdisc (verified: filename resolution OK)
-  - ISS LIS: granule limit 200→2000 (72,256 total available)
-  - InSAR: disabled (LiCSAR Japan frames have no processed interferograms)
-  - Feature matrix export: reuses ML samples (14h→seconds), int64 serialization fixed
-  - ML results checkpoint moved before prospective analysis (prevents data loss on timeout)
-  - **Run in progress (2026-03-20)**
+- **Analysis Phase 15c** ⚠️ Partial success (Run 23366201702, cancelled at ML step after 6h):
+  - cloud_fraction ✅ 120,727 rows (2011-01 → 2011-10, coverage 4.9%)
+  - ISS LIS ✅ 537 rows (2017-03 → 2017-07, coverage 5.5%)
+  - tide_gauge ❌ UHSLC ERDDAP ConnectionTimeout (CI→Hawaii latency)
+  - nightlight ❌ LAADS EULA redirect → HTML downloaded instead of HDF5
+  - SO2 ❌ GES DISC Bearer 401, BasicAuth fallback failed (session cookie contamination)
+  - Data validation: 23 OK / 6 EMPTY / 1 MISSING (improved from 8 EMPTY)
+  - Feature matrix export fixed (int64 serialization + samples reuse 14h→sec)
+  - DB checkpoint (230MB) preserved
+- **Analysis Phase 15d** 🔄 3 remaining EMPTY fixes (Run 23373703010, 2026-03-21):
+  - tide_gauge: UHSLC direct CSV fallback (19 stations hardcoded, timeout 900s)
+  - nightlight: Earthdata Cloud URL (`data.laadsdaac.earthdatacloud.nasa.gov`, bypasses LAADS EULA)
+  - SO2: fresh session in BasicAuth fallback (cookie contamination fix in `earthdata_auth.py`)
+  - All 3 fixes verified locally with real API calls before push
 - **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 420min timeout). **Data preservation**: DB checkpoint after fetch phase + ML results checkpoint (feature_matrix + predictions) + final DB upload, all `if: always()`. Earthdata auth pre-validation skips 4 sources on credential failure. Data validation report (31 tables checked) saved to artifacts
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
 
@@ -869,15 +873,15 @@ Phase 13 revealed that 15 out of 27 data sources had been silently failing (only
 | Test AUC | 0.7485 | **0.7499** | **+0.0014** |
 | Active features | 65/79 | **70/78** | +5 |
 
-**Data validation (21 OK / 8 EMPTY / 1 MISSING)**:
+**Data validation (Phase 15c: 23 OK / 6 EMPTY / 1 MISSING)**:
 
 | Status | Tables |
 |---|---|
-| ✅ OK (21) | earthquakes, focal_mechanisms, tec, gnss_tec, geomag_kp, geomag_hourly, cosmic_ray, olr, earth_rotation, solar_wind, gravity_mascon, soil_moisture, ocean_color, goes_xray, goes_proton, tidal_stress, particle_flux, dart_pressure, ioc_sea_level, modis_lst, collector_status (→ empty but tracked) |
-| ❌ EMPTY (8) | cloud_fraction, so2_column, nightlight, lightning, insar_deformation, satellite_em, collector_status, nightlight |
+| ✅ OK (23) | earthquakes, focal_mechanisms, tec, gnss_tec, geomag_kp, geomag_hourly, cosmic_ray, olr, earth_rotation, solar_wind, gravity_mascon, soil_moisture, ocean_color, goes_xray, goes_proton, tidal_stress, particle_flux, dart_pressure, ioc_sea_level, modis_lst, ulf_magnetic, **cloud_fraction** (120K rows), **iss_lis_lightning** (537 rows) |
+| ❌ EMPTY (6) | tide_gauge, so2_column, nightlight, lightning, satellite_em, collector_status |
 | ❌ MISSING (1) | snet_pressure (NIED approval pending) |
 
-Empty sources: Earthdata auth failure (cloud_fraction, SO2, nightlight — root causes identified and fixed in Phase 15c), Blitzortung archive restricted (lightning — ISS LIS as alternative), LiCSAR no Japan interferograms (InSAR — disabled), CSES auth required (satellite_em).
+Phase 15c fixed: cloud_fraction (OPeNDAP path), ISS LIS (granule limit 200→2000). Phase 15d targets: tide_gauge (CSV fallback), nightlight (Earthdata Cloud URL), SO2 (cookie fix). Remaining unfixable: lightning (Blitzortung restricted), satellite_em (CSES auth), collector_status (internal).
 
 CSEP Benchmark: ML_HistGBT Molchan skill **0.9811** (best), beating Simple_ETAS (0.8713), Relative_Intensity (0.7745), Smoothed_Seismicity (0.2220).
 
@@ -893,7 +897,8 @@ Feature matrix exported: 1,790 timesteps × 11×11 grid × 78 features → ready
 | **Phase 14b** | ✅ Complete | Data acquisition overhaul: 57→71+ features (see table above) |
 | **Phase 15** | ✅ Complete | 70/78 active features. **Test AUC 0.7499** (best ever). Data preservation validated |
 | **Phase 15b** | ✅ Complete | Earthdata Bearer auth rewrite + ISS LIS table fix + workflow 420min timeout. AUC 0.7499 maintained |
-| **Phase 15c** | 🔄 In progress | 5 EMPTY data sources fixed (tide_gauge, cloud_fraction, nightlight, SO2, ISS LIS). InSAR disabled. Feature matrix export optimized (14h→sec) |
+| **Phase 15c** | ⚠️ Partial | cloud_fraction ✅ (120K rows), ISS LIS ✅ (537 rows). tide_gauge/nightlight/SO2 still EMPTY. Feature matrix export fixed (14h→sec). ML step cancelled (6h timeout) |
+| **Phase 15d** | 🔄 Running | 3 remaining EMPTY fixes: tide_gauge (UHSLC CSV fallback), nightlight (Earthdata Cloud URL, EULA bypass), SO2 (fresh session cookie fix). All verified locally |
 | **ConvLSTM** | 🟢 Colab-ready | Spatiotemporal neural network. Script + feature_matrix.json deployed to Drive |
 | **SeismoGNN** | 🟢 Colab-ready | Graph Attention Network with fault-network topology. Script deployed to Drive |
 | **Transformer** | 📋 Next | SafeNet-style multi-window features (7/14/30/90/365d) + attention (SafeNet, Sci. Reports 2025) |
