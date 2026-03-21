@@ -49,6 +49,9 @@ logger = logging.getLogger(__name__)
 # UHSLC ERDDAP endpoint for Fast Delivery hourly data
 ERDDAP_BASE = "https://uhslc.soest.hawaii.edu/erddap/tabledap/global_hourly_fast"
 
+# UHSLC direct CSV (fallback when ERDDAP times out)
+UHSLC_CSV_BASE = "https://uhslc.soest.hawaii.edu/data/csv/fast/hourly"
+
 # Japan bounding box
 JAPAN_LAT_MIN = 24.0
 JAPAN_LAT_MAX = 46.0
@@ -58,10 +61,33 @@ JAPAN_LON_MAX = 156.0
 # Fetch 90 days per request to keep response size manageable
 CHUNK_DAYS = 90
 
-MAX_RETRIES = 3
-TIMEOUT = aiohttp.ClientTimeout(total=600, connect=60)
+MAX_RETRIES = 5
+TIMEOUT = aiohttp.ClientTimeout(total=900, connect=120)
 
 START_YEAR = 2011
+
+# Known Japan UHSLC stations (fallback when ERDDAP discovery fails)
+JAPAN_STATIONS_FALLBACK = [
+    {"name": "Abashiri", "uhslc_id": 347, "lat": 44.017, "lon": 144.283},
+    {"name": "Aburatsu", "uhslc_id": 354, "lat": 31.567, "lon": 131.417},
+    {"name": "Chichijima", "uhslc_id": 47, "lat": 27.1, "lon": 142.183},
+    {"name": "Hakodate", "uhslc_id": 364, "lat": 41.783, "lon": 140.733},
+    {"name": "Hamada", "uhslc_id": 348, "lat": 34.9, "lon": 132.067},
+    {"name": "Ishigaki", "uhslc_id": 365, "lat": 24.333, "lon": 124.15},
+    {"name": "Kushimoto", "uhslc_id": 353, "lat": 33.467, "lon": 135.783},
+    {"name": "Kushiro", "uhslc_id": 350, "lat": 42.967, "lon": 144.383},
+    {"name": "Maisaka", "uhslc_id": 356, "lat": 34.683, "lon": 137.617},
+    {"name": "Mera", "uhslc_id": 352, "lat": 34.917, "lon": 139.833},
+    {"name": "Minamitorishima", "uhslc_id": 49, "lat": 24.3, "lon": 153.967},
+    {"name": "Nagasaki", "uhslc_id": 362, "lat": 32.733, "lon": 129.867},
+    {"name": "Naha", "uhslc_id": 355, "lat": 26.217, "lon": 127.667},
+    {"name": "Nakano Shima", "uhslc_id": 345, "lat": 29.833, "lon": 129.85},
+    {"name": "Naze", "uhslc_id": 359, "lat": 28.378, "lon": 129.498},
+    {"name": "Nishinoomote", "uhslc_id": 363, "lat": 30.732, "lon": 130.995},
+    {"name": "Ofunato", "uhslc_id": 351, "lat": 39.067, "lon": 141.717},
+    {"name": "Toyama", "uhslc_id": 349, "lat": 36.767, "lon": 137.217},
+    {"name": "Wakkanai", "uhslc_id": 360, "lat": 45.4, "lon": 141.683},
+]
 
 
 async def init_tide_table():
@@ -209,6 +235,62 @@ def _parse_data_csv(text: str) -> list[dict]:
     return rows
 
 
+async def fetch_station_csv(session: aiohttp.ClientSession,
+                             uhslc_id: int,
+                             start_year: int) -> list[dict]:
+    """Fetch hourly sea level data via direct UHSLC CSV (fallback).
+
+    CSV format: year,month,day,hour,sea_level_mm (no header).
+    Missing values are encoded as -32767.
+    """
+    url = f"{UHSLC_CSV_BASE}/h{uhslc_id:03d}.csv"
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            async with session.get(url, timeout=TIMEOUT) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    return _parse_direct_csv(text, start_year)
+                elif resp.status == 404:
+                    return []
+                else:
+                    if attempt == MAX_RETRIES:
+                        logger.debug("UHSLC CSV %d: HTTP %d", uhslc_id, resp.status)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            if attempt == MAX_RETRIES:
+                logger.debug("UHSLC CSV %d: %s", uhslc_id, type(e).__name__)
+            await asyncio.sleep(2 ** attempt)
+    return []
+
+
+def _parse_direct_csv(text: str, start_year: int) -> list[dict]:
+    """Parse UHSLC direct CSV: year,month,day,hour,sea_level_mm."""
+    rows = []
+    for line in text.strip().split("\n"):
+        parts = line.strip().split(",")
+        if len(parts) < 5:
+            continue
+        try:
+            year = int(parts[0])
+            if year < start_year:
+                continue
+            month = int(parts[1])
+            day = int(parts[2])
+            hour = int(parts[3])
+            sea_level = float(parts[4])
+
+            if sea_level <= -9000 or sea_level > 90000:
+                continue  # Missing or invalid
+
+            observed_at = f"{year:04d}-{month:02d}-{day:02d}T{hour:02d}:00:00"
+            rows.append({
+                "observed_at": observed_at,
+                "sea_level_mm": sea_level,
+            })
+        except (ValueError, IndexError):
+            continue
+    return rows
+
+
 async def main():
     await init_db()
     await init_tide_table()
@@ -228,11 +310,13 @@ async def main():
     async with aiohttp.ClientSession() as session:
         stations = await discover_japan_stations(session)
 
+    use_csv_fallback = False
     if not stations:
-        logger.warning("No UHSLC stations found in Japan region")
-        return
-
-    logger.info("Found %d UHSLC stations in Japan region", len(stations))
+        logger.warning("ERDDAP discovery failed, using fallback station list + direct CSV")
+        stations = JAPAN_STATIONS_FALLBACK
+        use_csv_fallback = True
+    else:
+        logger.info("Found %d UHSLC stations via ERDDAP", len(stations))
 
     total_records = 0
     async with aiohttp.ClientSession() as session:
@@ -243,7 +327,6 @@ async def main():
             # Determine start time (must be timezone-aware to compare with now)
             if station_key in existing_summary:
                 last_date = existing_summary[station_key][1]
-                # Start from last known date
                 try:
                     start_dt = datetime.fromisoformat(
                         last_date.replace("Z", "+00:00")
@@ -255,21 +338,22 @@ async def main():
             else:
                 start_dt = datetime(START_YEAR, 1, 1, tzinfo=timezone.utc)
 
-            logger.info("Fetching %s (ID=%s, %.2f°N %.2f°E) from %s...",
+            logger.info("Fetching %s (ID=%s, %.2f°N %.2f°E) from %s%s",
                         name, station_key, station["lat"], station["lon"],
-                        start_dt.strftime("%Y-%m-%d"))
+                        start_dt.strftime("%Y-%m-%d"),
+                        " [CSV fallback]" if use_csv_fallback else "")
 
             station_total = 0
-            current = start_dt
 
-            while current < now:
-                chunk_end = min(current + timedelta(days=CHUNK_DAYS), now)
-                time_start = current.strftime("%Y-%m-%dT00:00:00Z")
-                time_end = chunk_end.strftime("%Y-%m-%dT23:59:59Z")
-
-                rows = await fetch_station_data(
-                    session, station["uhslc_id"], time_start, time_end
+            if use_csv_fallback:
+                # Direct CSV: download entire file, filter by start year
+                rows = await fetch_station_csv(
+                    session, station["uhslc_id"], start_dt.year
                 )
+                # Filter out already-existing records
+                if station_key in existing_summary:
+                    last_obs = existing_summary[station_key][1]
+                    rows = [r for r in rows if r["observed_at"] > last_obs]
 
                 if rows:
                     async with aiosqlite.connect(DB_PATH) as db:
@@ -279,17 +363,44 @@ async def main():
                                 latitude, longitude, received_at)
                                VALUES (?, ?, ?, ?, ?, ?)""",
                             [(station_key, r["observed_at"], r["sea_level_mm"],
-                              r["lat"], r["lon"], now_iso) for r in rows],
+                              station["lat"], station["lon"], now_iso) for r in rows],
                         )
                         await db.commit()
-                    station_total += len(rows)
+                    station_total = len(rows)
+            else:
+                # ERDDAP: chunked time range queries
+                current = start_dt
+                while current < now:
+                    chunk_end = min(current + timedelta(days=CHUNK_DAYS), now)
+                    time_start = current.strftime("%Y-%m-%dT00:00:00Z")
+                    time_end = chunk_end.strftime("%Y-%m-%dT23:59:59Z")
 
-                current = chunk_end + timedelta(days=1)
-                await asyncio.sleep(0.5)  # Rate limit compliance
+                    rows = await fetch_station_data(
+                        session, station["uhslc_id"], time_start, time_end
+                    )
+
+                    if rows:
+                        async with aiosqlite.connect(DB_PATH) as db:
+                            await db.executemany(
+                                """INSERT OR IGNORE INTO tide_gauge
+                                   (station_id, observed_at, sea_level_mm,
+                                    latitude, longitude, received_at)
+                                   VALUES (?, ?, ?, ?, ?, ?)""",
+                                [(station_key, r["observed_at"], r["sea_level_mm"],
+                                  r["lat"], r["lon"], now_iso) for r in rows],
+                            )
+                            await db.commit()
+                        station_total += len(rows)
+
+                    current = chunk_end + timedelta(days=1)
+                    await asyncio.sleep(0.5)
 
             if station_total > 0:
                 total_records += station_total
                 logger.info("  %s: %d records", name, station_total)
+
+            if use_csv_fallback:
+                await asyncio.sleep(0.5)  # Rate limit for direct CSV
 
     logger.info("Tide gauge fetch complete: %d total records from %d stations",
                 total_records, len(stations))

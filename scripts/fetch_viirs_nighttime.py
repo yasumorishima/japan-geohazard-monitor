@@ -44,7 +44,8 @@ logger = logging.getLogger(__name__)
 
 # LAADS DAAC API for file discovery (no auth for catalog)
 LAADS_API = "https://ladsweb.modaps.eosdis.nasa.gov/api/v2/content"
-LAADS_ARCHIVE = "https://ladsweb.modaps.eosdis.nasa.gov/archive/allData/5200/VNP46A4"
+# Use Earthdata Cloud URL (avoids LAADS EULA redirect issue)
+EARTHDATA_CLOUD = "https://data.laadsdaac.earthdatacloud.nasa.gov/prod-lads/VNP46A4"
 
 # Japan MODIS/VIIRS sinusoidal tiles
 JAPAN_TILES = ["h29v05", "h29v06"]
@@ -233,9 +234,9 @@ async def main():
                     logger.info("  %s %d: no file found", tile, year)
                     continue
 
-                # Download via Earthdata auth
-                dl_url = f"{LAADS_ARCHIVE}/{year}/001/{target_file}"
-                logger.info("  Downloading %s (%.0f MB)...", tile, file_size / 1024 / 1024)
+                # Download via Earthdata Cloud (avoids LAADS EULA redirect)
+                dl_url = f"{EARTHDATA_CLOUD}/{target_file}"
+                logger.info("  Downloading %s (%.0f MB) from Earthdata Cloud...", tile, file_size / 1024 / 1024)
 
                 status, file_bytes = await earthdata_fetch_bytes(
                     session, dl_url,
@@ -243,6 +244,16 @@ async def main():
 
                 if status != 200 or not file_bytes or len(file_bytes) < 1000:
                     logger.warning("  %s %d: download failed (HTTP %d)", tile, year, status)
+                    continue
+
+                # Validate HDF5 magic bytes before parsing
+                HDF5_MAGIC = b'\x89HDF\r\n\x1a\n'
+                if file_bytes[:8] != HDF5_MAGIC:
+                    if file_bytes[:1] == b'<':
+                        logger.warning("  %s %d: got HTML instead of HDF5 (auth/EULA issue)", tile, year)
+                    else:
+                        logger.warning("  %s %d: invalid file (not HDF5, first 20 bytes: %r)",
+                                       tile, year, file_bytes[:20])
                     continue
 
                 # Parse

@@ -125,32 +125,37 @@ async def earthdata_fetch(
                 return 0, ""
 
     # --- Fallback: Basic Auth redirect flow ---
+    # Use a fresh session to avoid cookie contamination from Bearer attempt
     if has_credentials:
-        try:
-            async with session.get(url, timeout=timeout, allow_redirects=False) as resp:
-                if resp.status == 200:
-                    text = await resp.text()
-                    return 200, text
+        jar = aiohttp.CookieJar(unsafe=True)
+        async with aiohttp.ClientSession(cookie_jar=jar) as fallback_session:
+            try:
+                async with fallback_session.get(url, timeout=timeout, allow_redirects=False) as resp:
+                    logger.debug("BasicAuth fallback: HTTP %d for %s", resp.status, url[:80])
+                    if resp.status == 200:
+                        text = await resp.text()
+                        return 200, text
 
-                if resp.status in (301, 302, 303, 307, 308):
-                    redirect_url = _resolve_redirect(
-                        url, str(resp.headers.get("Location", "")))
-                    if not redirect_url:
-                        return resp.status, ""
-                    if URS_HOST in redirect_url:
-                        return await _fetch_with_basic_auth(session, redirect_url, timeout)
-                    # Non-URS redirect
-                    async with session.get(
-                        redirect_url, allow_redirects=True, timeout=timeout,
-                    ) as redir_resp:
-                        text = await redir_resp.text()
-                        return redir_resp.status, text
+                    if resp.status in (301, 302, 303, 307, 308):
+                        redirect_url = _resolve_redirect(
+                            url, str(resp.headers.get("Location", "")))
+                        if not redirect_url:
+                            return resp.status, ""
+                        if URS_HOST in redirect_url:
+                            return await _fetch_with_basic_auth(fallback_session, redirect_url, timeout)
+                        # Non-URS redirect
+                        async with fallback_session.get(
+                            redirect_url, allow_redirects=True, timeout=timeout,
+                        ) as redir_resp:
+                            text = await redir_resp.text()
+                            return redir_resp.status, text
 
-                return resp.status, ""
+                    logger.debug("BasicAuth fallback: unexpected status %d", resp.status)
+                    return resp.status, ""
 
-        except (aiohttp.ClientError, TimeoutError) as e:
-            logger.warning("Earthdata fetch error (Basic Auth): %s", e)
-            return 0, ""
+            except (aiohttp.ClientError, TimeoutError) as e:
+                logger.warning("Earthdata fetch error (Basic Auth): %s", e)
+                return 0, ""
 
     return 0, ""
 
@@ -228,32 +233,36 @@ async def earthdata_fetch_bytes(
                 return 0, b""
 
     # --- Fallback: Basic Auth redirect flow ---
+    # Use a fresh session to avoid cookie contamination from Bearer attempt
     if has_credentials:
-        urs_auth = aiohttp.BasicAuth(EARTHDATA_USERNAME, EARTHDATA_PASSWORD)
-        try:
-            async with session.get(url, timeout=timeout, allow_redirects=False) as resp:
-                if resp.status == 200:
-                    data = await resp.read()
-                    return 200, data
+        jar = aiohttp.CookieJar(unsafe=True)
+        async with aiohttp.ClientSession(cookie_jar=jar) as fallback_session:
+            try:
+                async with fallback_session.get(url, timeout=timeout, allow_redirects=False) as resp:
+                    logger.debug("BasicAuth fallback (bytes): HTTP %d for %s", resp.status, url[:80])
+                    if resp.status == 200:
+                        data = await resp.read()
+                        return 200, data
 
-                if resp.status in (301, 302, 303, 307, 308):
-                    redirect_url = _resolve_redirect(
-                        url, str(resp.headers.get("Location", "")))
-                    if not redirect_url:
-                        return resp.status, b""
-                    if URS_HOST in redirect_url:
-                        return await _fetch_bytes_with_basic_auth(session, redirect_url, timeout)
-                    async with session.get(
-                        redirect_url, allow_redirects=True, timeout=timeout,
-                    ) as redir_resp:
-                        data = await redir_resp.read()
-                        return redir_resp.status, data
+                    if resp.status in (301, 302, 303, 307, 308):
+                        redirect_url = _resolve_redirect(
+                            url, str(resp.headers.get("Location", "")))
+                        if not redirect_url:
+                            return resp.status, b""
+                        if URS_HOST in redirect_url:
+                            return await _fetch_bytes_with_basic_auth(fallback_session, redirect_url, timeout)
+                        async with fallback_session.get(
+                            redirect_url, allow_redirects=True, timeout=timeout,
+                        ) as redir_resp:
+                            data = await redir_resp.read()
+                            return redir_resp.status, data
 
-                return resp.status, b""
+                    logger.debug("BasicAuth fallback (bytes): unexpected status %d", resp.status)
+                    return resp.status, b""
 
-        except (aiohttp.ClientError, TimeoutError) as e:
-            logger.warning("Earthdata fetch_bytes error (Basic Auth): %s", e)
-            return 0, b""
+            except (aiohttp.ClientError, TimeoutError) as e:
+                logger.warning("Earthdata fetch_bytes error (Basic Auth): %s", e)
+                return 0, b""
 
     # No auth
     try:
