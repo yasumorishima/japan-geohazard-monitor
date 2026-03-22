@@ -91,7 +91,7 @@ jobs:
           asyncio.run(test())
           "
 
-      - name: Small test — SMAP fetch (1 date only)
+      - name: Small test — Soil moisture CPC fetch (1 month)
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
@@ -100,14 +100,14 @@ jobs:
           sys.path.insert(0, 'scripts')
           sys.path.insert(0, 'src')
           from db import init_db
-          from fetch_smap_moisture import fetch_smops_day
+          from fetch_smap_moisture import fetch_cpc_month
           import aiohttp
 
           async def test():
               await init_db()
               async with aiohttp.ClientSession() as session:
-                  rows = await fetch_smops_day(session, '2024-01-01')
-                  print(f'SMAP 2024-01-01: {len(rows)} records')
+                  rows = await fetch_cpc_month(session, 2024, 1)
+                  print(f'CPC 2024-01: {len(rows)} records')
                   if rows:
                       print(f'  sample: {rows[0]}')
                       print('PASS')
@@ -117,7 +117,6 @@ jobs:
 
           asyncio.run(test())
           "
-        continue-on-error: true
 
       - name: Small test — earthdata_fetch cookie contamination
         env:

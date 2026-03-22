@@ -53,8 +53,11 @@ CPC_ERDDAP_BASE = "https://upwell.pfeg.noaa.gov/erddap/griddap"
 CPC_DATASET_ID = "noaa_psl_bec3_56fa_c395"
 
 # Fallback: NOAA SMOPS CDR — daily blended satellite (2017-2022 only)
+# Dataset ended 2022-12; coastwatch.noaa.gov server is also down as of 2026-03.
+# CPC monthly covers 2023+ instead.
 SMOPS_ERDDAP_BASE = "https://coastwatch.noaa.gov/erddap/griddap"
 SMOPS_DATASET_ID = "noaacwSMcdrDaily"
+SMOPS_END_YEAR = 2022  # Do not fetch beyond this year
 
 # Japan bbox
 LAT_MIN = 24.0
@@ -220,17 +223,17 @@ async def fetch_smops_day(
 
 def _generate_date_list(start_year: int, start_month: int = 3,
                          start_day: int = 1) -> list[str]:
-    """Generate YYYY-MM-DD strings at weekly intervals from start to now.
+    """Generate YYYY-MM-DD strings at weekly intervals from start to SMOPS end.
 
+    SMOPS CDR ended 2022-12. Do not generate dates beyond that.
     We fetch one sample per week (Mondays) to keep requests manageable.
-    Daily data can fill gaps if needed later.
     """
     from datetime import date, timedelta
 
-    now = date.today()
+    end = date(SMOPS_END_YEAR, 12, 31)
     d = date(start_year, start_month, start_day)
     dates = []
-    while d <= now:
+    while d <= end:
         dates.append(d.isoformat())
         d += timedelta(days=7)  # Weekly sampling
     return dates
@@ -340,18 +343,22 @@ async def main():
 
     total_records = 0
 
+    current_year = datetime.now(timezone.utc).year
+
     async with aiohttp.ClientSession() as session:
-        # ── Phase 1: CPC monthly backfill (2011–2016) ────────────
-        cpc_months = _generate_month_list(BACKFILL_START_YEAR,
-                                           SMOPS_START_YEAR - 1)
+        # ── Phase 1: CPC monthly (2011–2016 backfill + 2023–present) ──
+        # SMOPS CDR covers 2017-2022 daily; CPC fills the rest monthly
+        cpc_months = (
+            _generate_month_list(BACKFILL_START_YEAR, SMOPS_START_YEAR - 1)
+            + _generate_month_list(SMOPS_END_YEAR + 1, current_year)
+        )
         cpc_to_fetch = [
             (y, m) for y, m in cpc_months
             if f"{y:04d}-{m:02d}" not in existing_months
         ]
 
         if cpc_to_fetch:
-            logger.info("CPC backfill: %d months to fetch (2011-2016)",
-                         len(cpc_to_fetch))
+            logger.info("CPC monthly: %d months to fetch", len(cpc_to_fetch))
             for i, (year, month) in enumerate(cpc_to_fetch):
                 rows = await fetch_cpc_month(session, year, month)
                 if rows:
@@ -359,20 +366,35 @@ async def main():
                     total_records += stored
 
                 if (i + 1) % 12 == 0:
-                    logger.info("CPC backfill: %d/%d months, %d records",
+                    logger.info("CPC monthly: %d/%d months, %d records",
                                  i + 1, len(cpc_to_fetch), total_records)
-                # Be polite to ERDDAP server
                 await asyncio.sleep(1.0)
         else:
-            logger.info("CPC backfill: all months already present")
+            logger.info("CPC monthly: all months already present")
 
-        # ── Phase 2: SMOPS daily (2017–present, weekly sampling) ──
+        # ── Phase 2: SMOPS daily (2017–2022 only, weekly sampling) ──
         smops_dates = _generate_date_list(SMOPS_START_YEAR)
         smops_to_fetch = [d for d in smops_dates if d not in existing_dates]
 
         if smops_to_fetch:
-            logger.info("SMOPS daily: %d dates to fetch (2017-present, weekly)",
-                         len(smops_to_fetch))
+            # Check server reachability first (avoid 168 timeouts)
+            try:
+                async with session.get(
+                    f"{SMOPS_ERDDAP_BASE}/index.html",
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as probe:
+                    if probe.status != 200:
+                        logger.info("SMOPS server unreachable (HTTP %d), skipping %d dates",
+                                     probe.status, len(smops_to_fetch))
+                        smops_to_fetch = []
+            except (aiohttp.ClientError, asyncio.TimeoutError):
+                logger.info("SMOPS server unreachable (timeout), skipping %d dates",
+                             len(smops_to_fetch))
+                smops_to_fetch = []
+
+        if smops_to_fetch:
+            logger.info("SMOPS daily: %d dates to fetch (2017-%d, weekly)",
+                         len(smops_to_fetch), SMOPS_END_YEAR)
             for i, date_str in enumerate(smops_to_fetch):
                 rows = await fetch_smops_day(session, date_str)
                 if rows:
@@ -382,10 +404,9 @@ async def main():
                 if (i + 1) % 20 == 0:
                     logger.info("SMOPS daily: %d/%d dates, %d records",
                                  i + 1, len(smops_to_fetch), total_records)
-                # Be polite to ERDDAP server
                 await asyncio.sleep(1.0)
         else:
-            logger.info("SMOPS daily: all dates already present")
+            logger.info("SMOPS daily: all dates already present (or server unreachable)")
 
     logger.info("Soil moisture fetch complete: %d total records stored",
                  total_records)
