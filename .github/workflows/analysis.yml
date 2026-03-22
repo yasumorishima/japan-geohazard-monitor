@@ -454,6 +454,49 @@ jobs:
           fi
           python3 scripts/validate_data.py $PREV_FLAG
 
+      - name: Notify Discord — fetch phase complete
+        if: always()
+        run: |
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then exit 0; fi
+          # Extract key stats from validation
+          SUMMARY=$(python3 -c "
+          import json, pathlib
+          p = pathlib.Path('results/data_validation.json')
+          if not p.exists():
+              print('Validation not available')
+          else:
+              d = json.loads(p.read_text())
+              ok = d.get('ok_count', '?')
+              empty = d.get('empty_count', '?')
+              missing = d.get('missing_count', '?')
+              print(f'{ok} OK / {empty} EMPTY / {missing} MISSING')
+          " 2>/dev/null || echo "Stats unavailable")
+          # Check SO2 specifically
+          SO2=$(python3 -c "
+          import sqlite3, os
+          db = sqlite3.connect(os.environ.get('GEOHAZARD_DB_PATH', './data/geohazard.db'))
+          r = db.execute('SELECT COUNT(*) FROM so2_column').fetchone()[0]
+          print(f'SO2: {r} rows')
+          " 2>/dev/null || echo "SO2: unknown")
+          curl -s -X POST "$DISCORD_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"embeds\": [{
+                \"title\": \"📡 Fetch Phase Complete\",
+                \"color\": 3447003,
+                \"fields\": [
+                  {\"name\": \"Data\", \"value\": \"$SUMMARY\", \"inline\": true},
+                  {\"name\": \"SO2\", \"value\": \"$SO2\", \"inline\": true},
+                  {\"name\": \"Log\", \"value\": \"[Actions](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\", \"inline\": true}
+                ],
+                \"footer\": {\"text\": \"ML phase starting next\"}
+              }]
+            }"
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        continue-on-error: true
+
       - name: Upload database checkpoint (post-fetch)
         if: always()
         uses: actions/upload-artifact@v4
@@ -493,6 +536,40 @@ jobs:
       # ====== CRITICAL RESULTS CHECKPOINT ======
       # Save ML results + feature matrix immediately after ML prediction.
       # Feature matrix is now exported inside ml_prediction.py (no separate step).
+
+      - name: Notify Discord — ML complete
+        if: always()
+        run: |
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then exit 0; fi
+          # Extract AUC from latest ML result
+          AUC=$(python3 -c "
+          import json, glob
+          files = sorted(glob.glob('results/ml_prediction_*.json'))
+          if not files:
+              print('No ML results')
+          else:
+              d = json.loads(open(files[-1]).read())
+              cv = d.get('cv_auc_pooled', '?')
+              test = d.get('test_auc', {}).get('rf', '?')
+              features = d.get('n_features_active', '?')
+              print(f'CV={cv} Test={test} feat={features}')
+          " 2>/dev/null || echo "AUC: unavailable")
+          curl -s -X POST "$DISCORD_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"embeds\": [{
+                \"title\": \"🧠 ML Phase Complete\",
+                \"color\": 10181046,
+                \"fields\": [
+                  {\"name\": \"Results\", \"value\": \"$AUC\", \"inline\": true},
+                  {\"name\": \"Log\", \"value\": \"[Actions](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\", \"inline\": true}
+                ],
+                \"footer\": {\"text\": \"Stacking + prospective analysis next\"}
+              }]
+            }"
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        continue-on-error: true
 
       - name: Upload ML results checkpoint
         if: always()
