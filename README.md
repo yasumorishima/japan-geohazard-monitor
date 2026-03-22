@@ -870,14 +870,14 @@ Phase 13 revealed that 15 out of 27 data sources had been silently failing (only
 
 ### Phase 15g Results — Test AUC 0.7540, 75 active features
 
-| Metric | Phase 14 | Phase 15 | Phase 15g | Phase 15h | Change |
+| Metric | Phase 14 | Phase 15 | Phase 15g | Phase 15i | Change |
 |---|---|---|---|---|---|
 | CV AUC (pooled) | **0.7415** | 0.7411 | 0.7415 | 0.7417 | ±0 |
-| Test AUC | 0.7485 | 0.7499 | **0.7540** | 0.7540 | +0.0055 |
+| Test AUC | 0.7485 | 0.7499 | **0.7540** | 0.7485 | −0.0055 |
 | Active features | 65/79 | 70/78 | **75/78** | 76/78 | +11 |
-| Stacking (logistic) | 0.7484 | — | — | 0.7463 | — |
+| Stacking (logistic) | 0.7484 | — | — | 0.7458 | — |
 
-**Note**: Phase 15h added SO2 (408K rows) but AUC was unchanged because a coordinate mismatch bug prevented spatial data from reaching the ML model. Phase 15i fixes this — results pending.
+**Note**: Phase 15h added SO2 (408K rows) and 15i fixed coordinate snapping, but AUC was unchanged — root cause identified: spatial features had <2% non-zero rate due to (1) event-driven fetch strategy (only M6+ ±7 day windows) and (2) monthly/annual data not expanded to daily lookup keys. **Phase 16 fixes both issues** — continuous daily fetch + temporal expansion in load functions.
 
 **Data validation (Phase 15g: 25 OK / 4 EMPTY / 1 MISSING)**:
 
@@ -889,7 +889,13 @@ Phase 13 revealed that 15 out of 27 data sources had been silently failing (only
 
 Phase 15h: **SO2 408,351行取得成功** (0→408K, OPeNDAP parser fix + Hyrax approval) but AUC unchanged — **coordinate mismatch bug discovered**: 7 spatial data loaders (OLR, GRACE, SO2, soil moisture, ocean color, cloud fraction, nightlight) were using raw data source coordinates as lookup keys instead of snapping to the 2° prediction grid via `cell_key()`. All spatial features from these sources were silently zero despite having data in the DB. Fixed in Phase 15i.
 
-Phase 15i (running): Coordinate snap fix for all 7 spatial loaders + ZERO-HIT detection logging (warns when spatial source has data but 100% zero features). **AUC improvement expected** — multiple data sources contributing for the first time.
+Phase 15i (complete): Coordinate snap fix verified — SO2 non-zero rate improved from 0% to 2.0% (3,447/175,518), but AUC unchanged (0.7485). All spatial features confirmed active but with very low non-zero rates: OLR 96.4%, cloud 8.2%, SO2 2.0%, soil 1.1%, gravity 0.8%, ocean 0.5%, nightlight 0.1%.
+
+**Root cause analysis**: Two independent bugs kept spatial features ineffective:
+1. **Event-driven fetch**: SO2 and cloud_fraction only fetched ±7 days around M6+ earthquakes — no continuous baseline for anomaly detection
+2. **Temporal resolution mismatch**: GRACE (monthly), soil moisture (monthly), nightlight (annual) data stored as single date entries, but feature extractor looks up daily date strings → 99%+ miss rate
+
+Phase 16 (running): Continuous daily fetch for SO2 (2004+) and cloud_fraction (2000+), weekly fetch for ocean_color, CPC gap fill for soil moisture. Load functions expanded monthly/annual data to all days in the period. **Expected: gravity/soil/nightlight jump to 80%+ non-zero immediately; SO2/cloud accumulate over successive runs.**
 
 CSEP Benchmark: ML_HistGBT Molchan skill **0.9811** (best), beating Simple_ETAS (0.8713), Relative_Intensity (0.7745), Smoothed_Seismicity (0.2220).
 
@@ -909,7 +915,8 @@ Feature matrix exported to BigQuery (`geohazard.feature_matrix`: 216,711 rows, 1
 | **Phase 15d-f** | ✅ Complete | tide_gauge ✅ (2.4M rows), nightlight ✅ (950 rows), electron flux ✅ (80→3,316 rows). SO2 still EMPTY |
 | **Phase 15g** | ✅ Complete | **Test AUC 0.7540** (best ever), 75 active features. electron flux SEISS L2 大幅増が効いた |
 | **Phase 15h** | ✅ Complete | SO2パーサー修正 → **408,351行取得成功**（0→408K）。AUC変化なし（座標不一致で特徴量未反映と判明）。BQへfeature_matrix保管 |
-| **Phase 15i** | 🔄 Running | **座標ミスマッチ修正**: 7つのload関数でcell_keyスナップ追加（OLR/GRACE/SO2/soil_moisture/ocean_color/cloud_fraction/nightlight）。ZERO-HIT検知ログ追加。AUC改善期待。**BQ自動ロード追加** |
+| **Phase 15i** | ✅ Complete | 座標スナップ修正OK、SO2 0%→2%。但しAUC変化なし（非ゼロ率低すぎ）。根本原因: イベントベースfetch + 月次/年次データの日次lookup不整合 |
+| **Phase 16** | 🔄 Running | **空間データ全面修正**: SO2/cloud連続日次fetch、ocean_color週次化、CPC全期間カバー。GRACE/soil/nightlight月次→日次展開。gravity/soil/nightlight即座に80%+非ゼロ期待 |
 | **BQ Integration** | ✅ Active | CI完了後にfeature_matrix + AUC + 非ゼロ率を自動ロード。座標不一致バグはBQ集計クエリで発見 |
 | **ConvLSTM** | 🟢 Colab-ready | Spatiotemporal neural network. Script + feature_matrix.json deployed to Drive + BigQuery |
 | **SeismoGNN** | 🟢 Colab-ready | Graph Attention Network with fault-network topology. Script deployed to Drive |
@@ -935,7 +942,7 @@ GCP プロジェクト `data-platform-490901` の `geohazard` データセット
 **BQ活用の成果**: Phase 15h で SO2 408K行取得成功にもかかわらず AUC が変わらなかった原因を、BQ 集計クエリ（`AVG(so2_column_anomaly) = 0.0`）で即座に発見。7つの空間データソースの座標ミスマッチバグ（Phase 15i で修正済み）を特定できた。
 
 **今後の予定:**
-- Phase 15i 完了後、非ゼロ率が 0% → 有意な値に変わることを `v_feature_summary` で確認
+- Phase 16 完了後、非ゼロ率が gravity/soil/nightlight で 80%+ に改善することを `v_feature_summary` で確認
 - Grafana ダッシュボード（`geohazard` データセット分）を作成予定
 - 将来: 31テーブルの生データも BQ に蓄積し、CI の毎回ゼロフェッチ → 差分追加に切り替え
 
