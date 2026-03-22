@@ -46,6 +46,11 @@ from config import DB_PATH
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+# ERDDAP servers block default aiohttp User-Agent from cloud IPs (GitHub Actions)
+ERDDAP_HEADERS = {
+    "User-Agent": "geohazard-monitor/1.0 (https://github.com/yasumorishima/japan-geohazard-monitor)"
+}
+
 # ── ERDDAP endpoints (public, no auth) ──────────────────────────────
 # Primary: NOAA CPC Soil Moisture v2 — monthly model reanalysis (1948-present)
 # SMOPS CDR ended at 2022-12, so CPC is now the primary source.
@@ -197,7 +202,7 @@ async def fetch_smops_day(
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            async with session.get(url, timeout=TIMEOUT) as resp:
+            async with session.get(url, headers=ERDDAP_HEADERS, timeout=TIMEOUT) as resp:
                 if resp.status == 200:
                     text = await resp.text()
                     if not text or "<html" in text[:200].lower():
@@ -266,7 +271,7 @@ async def fetch_cpc_month(
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            async with session.get(url, timeout=TIMEOUT) as resp:
+            async with session.get(url, headers=ERDDAP_HEADERS, timeout=TIMEOUT) as resp:
                 if resp.status == 200:
                     text = await resp.text()
                     if not text or "<html" in text[:200].lower():
@@ -283,12 +288,12 @@ async def fetch_cpc_month(
                     return []
                 else:
                     body = await resp.text()
-                    logger.debug("CPC ERDDAP HTTP %d for %04d-%02d: %s",
-                                  resp.status, year, month, body[:200])
+                    logger.info("CPC ERDDAP HTTP %d for %04d-%02d: %s",
+                                 resp.status, year, month, body[:200])
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             if attempt == MAX_RETRIES:
-                logger.debug("CPC %04d-%02d failed after %d retries: %s",
-                              year, month, MAX_RETRIES, type(e).__name__)
+                logger.info("CPC %04d-%02d failed after %d retries: %s",
+                             year, month, MAX_RETRIES, type(e).__name__)
             await asyncio.sleep(2 ** attempt)
 
     return []
@@ -381,6 +386,7 @@ async def main():
             try:
                 async with session.get(
                     f"{SMOPS_ERDDAP_BASE}/index.html",
+                    headers=ERDDAP_HEADERS,
                     timeout=aiohttp.ClientTimeout(total=15),
                 ) as probe:
                     if probe.status != 200:
