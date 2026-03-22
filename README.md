@@ -868,13 +868,16 @@ Phase 13 revealed that 15 out of 27 data sources had been silently failing (only
 
 **Net result**: 11 broken sources fixed + 2 new sources (ISS LIS, VNP46A4) + 1 removed (animal). 8 sources switched to auth-free alternatives. All verified with curl before commit. Expected active features: **71-74/78** (from 57/79).
 
-### Phase 15g Results — Test AUC 0.7540 (best ever), 75 active features
+### Phase 15g Results — Test AUC 0.7540, 75 active features
 
-| Metric | Phase 14 | Phase 15 | Phase 15g | Change (14→15g) |
-|---|---|---|---|---|
-| CV AUC (pooled) | **0.7415** | 0.7411 | 0.7415 | ±0 |
-| Test AUC | 0.7485 | 0.7499 | **0.7540** | **+0.0055** |
-| Active features | 65/79 | 70/78 | **75/78** | +10 |
+| Metric | Phase 14 | Phase 15 | Phase 15g | Phase 15h | Change |
+|---|---|---|---|---|---|
+| CV AUC (pooled) | **0.7415** | 0.7411 | 0.7415 | 0.7417 | ±0 |
+| Test AUC | 0.7485 | 0.7499 | **0.7540** | 0.7540 | +0.0055 |
+| Active features | 65/79 | 70/78 | **75/78** | 76/78 | +11 |
+| Stacking (logistic) | 0.7484 | — | — | 0.7463 | — |
+
+**Note**: Phase 15h added SO2 (408K rows) but AUC was unchanged because a coordinate mismatch bug prevented spatial data from reaching the ML model. Phase 15i fixes this — results pending.
 
 **Data validation (Phase 15g: 25 OK / 4 EMPTY / 1 MISSING)**:
 
@@ -884,11 +887,13 @@ Phase 13 revealed that 15 out of 27 data sources had been silently failing (only
 | ❌ EMPTY (4) | so2_column, lightning, satellite_em, collector_status |
 | ❌ MISSING (1) | snet_pressure (NIED approval pending) |
 
-Phase 15h (running): **SO2 408,351行取得成功** (0→408K, OPeNDAP parser fix + Hyrax approval). ML結果待ち。Remaining unfixable: lightning (Blitzortung restricted), satellite_em (CSES auth), collector_status (internal).
+Phase 15h: **SO2 408,351行取得成功** (0→408K, OPeNDAP parser fix + Hyrax approval) but AUC unchanged — **coordinate mismatch bug discovered**: 7 spatial data loaders (OLR, GRACE, SO2, soil moisture, ocean color, cloud fraction, nightlight) were using raw data source coordinates as lookup keys instead of snapping to the 2° prediction grid via `cell_key()`. All spatial features from these sources were silently zero despite having data in the DB. Fixed in Phase 15i.
+
+Phase 15i (running): Coordinate snap fix for all 7 spatial loaders + ZERO-HIT detection logging (warns when spatial source has data but 100% zero features). **AUC improvement expected** — multiple data sources contributing for the first time.
 
 CSEP Benchmark: ML_HistGBT Molchan skill **0.9811** (best), beating Simple_ETAS (0.8713), Relative_Intensity (0.7745), Smoothed_Seismicity (0.2220).
 
-Feature matrix exported: 1,790 timesteps × 11×11 grid × 78 features → ready for ConvLSTM/GNN GPU training.
+Feature matrix exported to BigQuery (`geohazard.feature_matrix`: 216,711 rows, 132 MB) + Google Drive for Colab GPU experiments.
 
 ### Roadmap
 
@@ -903,8 +908,9 @@ Feature matrix exported: 1,790 timesteps × 11×11 grid × 78 features → ready
 | **Phase 15c** | ✅ Complete | cloud_fraction ✅ (120K rows), ISS LIS ✅ (537 rows). Feature matrix export fixed (14h→sec) |
 | **Phase 15d-f** | ✅ Complete | tide_gauge ✅ (2.4M rows), nightlight ✅ (950 rows), electron flux ✅ (80→3,316 rows). SO2 still EMPTY |
 | **Phase 15g** | ✅ Complete | **Test AUC 0.7540** (best ever), 75 active features. electron flux SEISS L2 大幅増が効いた |
-| **Phase 15h** | 🔄 Running | SO2パーサー修正 → **408,351行取得成功**（0→408K）。Hyrax承認+Cookie Jar汚染修正+SMAP 2022キャップ+ISS LIS timeout修正。小テストCI構築。Discord中間通知を全テーブル対応（EMPTY/LOW/coverage表示）+midrun artifact追加。ML結果待ち |
-| **ConvLSTM** | 🟢 Colab-ready | Spatiotemporal neural network. Script + feature_matrix.json deployed to Drive |
+| **Phase 15h** | ✅ Complete | SO2パーサー修正 → **408,351行取得成功**（0→408K）。AUC変化なし（座標不一致で特徴量未反映と判明）。BQへfeature_matrix保管 |
+| **Phase 15i** | 🔄 Running | **座標ミスマッチ修正**: 7つのload関数でcell_keyスナップ追加（OLR/GRACE/SO2/soil_moisture/ocean_color/cloud_fraction/nightlight）。ZERO-HIT検知ログ追加。AUC改善期待 |
+| **ConvLSTM** | 🟢 Colab-ready | Spatiotemporal neural network. Script + feature_matrix.json deployed to Drive + BigQuery |
 | **SeismoGNN** | 🟢 Colab-ready | Graph Attention Network with fault-network topology. Script deployed to Drive |
 | **Transformer** | 📋 Next | SafeNet-style multi-window features (7/14/30/90/365d) + attention (SafeNet, Sci. Reports 2025) |
 | **PINN** | 📋 Next | Physics-Informed NN with Rate-State friction loss (Nature Comms 2023) |
