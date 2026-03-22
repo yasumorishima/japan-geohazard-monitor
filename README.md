@@ -909,7 +909,8 @@ Feature matrix exported to BigQuery (`geohazard.feature_matrix`: 216,711 rows, 1
 | **Phase 15d-f** | ✅ Complete | tide_gauge ✅ (2.4M rows), nightlight ✅ (950 rows), electron flux ✅ (80→3,316 rows). SO2 still EMPTY |
 | **Phase 15g** | ✅ Complete | **Test AUC 0.7540** (best ever), 75 active features. electron flux SEISS L2 大幅増が効いた |
 | **Phase 15h** | ✅ Complete | SO2パーサー修正 → **408,351行取得成功**（0→408K）。AUC変化なし（座標不一致で特徴量未反映と判明）。BQへfeature_matrix保管 |
-| **Phase 15i** | 🔄 Running | **座標ミスマッチ修正**: 7つのload関数でcell_keyスナップ追加（OLR/GRACE/SO2/soil_moisture/ocean_color/cloud_fraction/nightlight）。ZERO-HIT検知ログ追加。AUC改善期待 |
+| **Phase 15i** | 🔄 Running | **座標ミスマッチ修正**: 7つのload関数でcell_keyスナップ追加（OLR/GRACE/SO2/soil_moisture/ocean_color/cloud_fraction/nightlight）。ZERO-HIT検知ログ追加。AUC改善期待。**BQ自動ロード追加** |
+| **BQ Integration** | ✅ Active | CI完了後にfeature_matrix + AUC + 非ゼロ率を自動ロード。座標不一致バグはBQ集計クエリで発見 |
 | **ConvLSTM** | 🟢 Colab-ready | Spatiotemporal neural network. Script + feature_matrix.json deployed to Drive + BigQuery |
 | **SeismoGNN** | 🟢 Colab-ready | Graph Attention Network with fault-network topology. Script deployed to Drive |
 | **Transformer** | 📋 Next | SafeNet-style multi-window features (7/14/30/90/365d) + attention (SafeNet, Sci. Reports 2025) |
@@ -917,9 +918,26 @@ Feature matrix exported to BigQuery (`geohazard.feature_matrix`: 216,711 rows, 1
 | **S-net** | ⏳ Awaiting NIED approval | 150 stations, sub-Pa pressure at Japan Trench. Registration submitted 2026-03-19 |
 | **INTERMAGNET backfill** | 🔄 In progress | 500 days/station/run (step timeout 60min). Full 15-year coverage accumulates over weekly runs |
 
-### GCP BigQuery integration (Planned)
+### GCP BigQuery Data Platform
 
-全データを BigQuery に集約し、SQL だけで分析・可視化が完結する基盤を構築予定。GCP プロジェクト `data-platform-490901` の `geohazard` データセットに 31+ テーブルをロード。CI 毎回ゼロフェッチ → 差分追加に切り替え、データ永続化の恩恵が最も大きいプロジェクト。
+GCP プロジェクト `data-platform-490901` の `geohazard` データセットに feature matrix + メタデータを集約。CI の ML フェーズ完了後に自動ロード。
+
+**現在のテーブル・ビュー:**
+
+| テーブル | 行数 | 内容 |
+|---|---|---|
+| `feature_matrix` | 216,711 | 全特徴量データ（Phase毎に上書き） |
+| `feature_matrix_metadata` | 1+ | Phase別AUC・特徴量数の推移（追記） |
+| `feature_nonzero_rates` | — | 特徴量別非ゼロ率（CI初回実行後に自動作成） |
+| `v_auc_history` | view | AUC推移の可視化用 |
+| `v_feature_summary` | view | 空間特徴量の非ゼロ率一覧（バグ検出） |
+
+**BQ活用の成果**: Phase 15h で SO2 408K行取得成功にもかかわらず AUC が変わらなかった原因を、BQ 集計クエリ（`AVG(so2_column_anomaly) = 0.0`）で即座に発見。7つの空間データソースの座標ミスマッチバグ（Phase 15i で修正済み）を特定できた。
+
+**今後の予定:**
+- Phase 15i 完了後、非ゼロ率が 0% → 有意な値に変わることを `v_feature_summary` で確認
+- Grafana ダッシュボード（`geohazard` データセット分）を作成予定
+- 将来: 31テーブルの生データも BQ に蓄積し、CI の毎回ゼロフェッチ → 差分追加に切り替え
 
 ### Not yet implemented
 
