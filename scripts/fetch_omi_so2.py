@@ -222,19 +222,30 @@ def _parse_opendap_ascii(text: str, date_str: str) -> list[dict]:
         if not line:
             continue
 
-        # Data section starts after header line with variable name + dimensions
-        if "ColumnAmountSO2" in line and "[" in line:
+        # Skip the "Dataset:" header line
+        if line.startswith("Dataset:"):
+            continue
+
+        # Data lines contain variable name + indices + values, e.g.:
+        # ColumnAmountSO2_PBL[0][5], -0.26, -0.05, ...
+        # OR just indices (older format):
+        # [0][5], -0.26, -0.05, ...
+        if "ColumnAmountSO2" in line and "[" in line and "," in line:
+            # This IS a data line (variable name prefix + indices + values)
+            in_data = True
+            # Fall through to parse it (don't skip!)
+        elif "ColumnAmountSO2" in line and "," not in line:
+            # Pure header line like "ColumnAmountSO2_PBL.ColumnAmountSO2_PBL[1][88][113]"
             in_data = True
             continue
 
         if not in_data:
             continue
 
-        # Data lines start with [ — either [row] or [0][row] for 3D
-        if not line.startswith("["):
+        # Data lines: "ColumnAmountSO2_PBL[0][5], val, val, ..." or "[0][5], val, val, ..."
+        if not ("[" in line and "," in line):
             break  # End of data section
 
-        # Parse: [candidate][lat_idx], val, val, ... OR [lat_idx], val, val, ...
         first_comma = line.find(",")
         if first_comma < 0:
             continue
@@ -242,8 +253,8 @@ def _parse_opendap_ascii(text: str, date_str: str) -> list[dict]:
         try:
             idx_part = line[:first_comma].strip()
             # Extract lat index: last bracketed number
-            # "[0][5]" -> 5, "[5]" -> 5
-        
+            # "ColumnAmountSO2_PBL[0][5]" -> 5, "[0][5]" -> 5, "[5]" -> 5
+
             bracket_nums = re.findall(r'\[(\d+)\]', idx_part)
             if not bracket_nums:
                 continue
