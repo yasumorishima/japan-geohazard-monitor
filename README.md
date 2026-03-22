@@ -8,7 +8,7 @@ Real-time monitoring dashboard for Japan's geophysical activity — earthquakes,
 
 ## Live
 
-`http://100.77.198.48:8003` (Tailscale)
+Raspberry Pi 5 + Docker（Tailscaleネットワーク内）
 
 ## Architecture
 
@@ -109,7 +109,7 @@ Runs on Raspberry Pi 5 via Docker. GEONET SFTP credentials stored in `.env`:
 GSI_SFTP_PASSWORD=xxxxx
 
 # Deploy
-ssh yasu@100.77.198.48 "cd ~/japan-geohazard-monitor && sudo git pull && sudo docker-compose up -d --build"
+ssh yasu@<RPi5-tailscale-ip> "cd ~/japan-geohazard-monitor && sudo git pull && sudo docker-compose up -d --build"
 ```
 
 ## Phased Development
