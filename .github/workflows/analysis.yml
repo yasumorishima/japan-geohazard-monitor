@@ -458,36 +458,81 @@ jobs:
         if: always()
         run: |
           mkdir -p results/midrun
-          # Extract key stats from validation
-          SUMMARY=$(python3 -c "
+          # Extract full validation report
+          python3 -c "
           import json, pathlib
           p = pathlib.Path('results/data_validation.json')
           if not p.exists():
-              print('Validation not available')
+              open('results/midrun/fetch_report.txt', 'w').write('Validation not available\n')
+              exit()
+          d = json.loads(p.read_text())
+          ok = d.get('ok', 0)
+          low = d.get('low', 0)
+          empty = d.get('empty', 0)
+          missing = d.get('missing', 0)
+          total = d.get('total_tables', '?')
+          status = d.get('status', '?')
+          summary = f'{ok} OK / {low} LOW / {empty} EMPTY / {missing} MISSING (of {total})'
+          # Categorize problem tables with coverage info
+          tables = d.get('tables', {})
+          problems = []
+          low_coverage = []
+          for name, info in sorted(tables.items()):
+              s = info.get('status', 'UNKNOWN')
+              rows = info.get('rows', 0)
+              cov = info.get('coverage_pct')
+              if s in ('EMPTY', 'MISSING'):
+                  problems.append(f'{name}: {s}')
+              elif s == 'LOW':
+                  cov_str = f', coverage {cov}%' if cov is not None else ''
+                  problems.append(f'{name}: LOW ({rows} rows{cov_str})')
+              # Flag OK tables with low coverage (data gaps)
+              if s == 'OK' and cov is not None and cov < 70:
+                  low_coverage.append(f'{name}: {rows:,} rows, coverage {cov}%')
+          # Build report file
+          lines = [
+              f'=== Fetch Phase Complete ===',
+              f'Status: {status}',
+              f'Summary: {summary}',
+              '',
+          ]
+          if problems:
+              lines.append('Problem tables (EMPTY/MISSING/LOW):')
+              lines.extend(f'  - {p}' for p in problems)
           else:
-              d = json.loads(p.read_text())
-              ok = d.get('ok', d.get('ok_count', '?'))
-              empty = d.get('empty', d.get('empty_count', '?'))
-              missing = d.get('missing', d.get('missing_count', '?'))
-              print(f'{ok} OK / {empty} EMPTY / {missing} MISSING')
-          " 2>/dev/null || echo "Stats unavailable")
-          # Check SO2 specifically
-          SO2=$(python3 -c "
-          import sqlite3, os
-          db = sqlite3.connect(os.environ.get('GEOHAZARD_DB_PATH', './data/geohazard.db'))
-          r = db.execute('SELECT COUNT(*) FROM so2_column').fetchone()[0]
-          print(f'SO2: {r} rows')
-          " 2>/dev/null || echo "SO2: unknown")
-          # Save to log file for artifact retrieval
-          echo "=== Fetch Phase Complete ===" > results/midrun/fetch_report.txt
-          echo "Time: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> results/midrun/fetch_report.txt
-          echo "Data: $SUMMARY" >> results/midrun/fetch_report.txt
-          echo "SO2: $SO2" >> results/midrun/fetch_report.txt
-          # Copy validation details if available
+              lines.append('No EMPTY/MISSING/LOW tables')
+          if low_coverage:
+              lines.append('')
+              lines.append('Low coverage (<70%) — data gaps:')
+              lines.extend(f'  - {lc}' for lc in low_coverage)
+          lines.append('')
+          # All tables summary
+          lines.append('All tables:')
+          for name, info in sorted(tables.items()):
+              rows = info.get('rows', 0)
+              s = info.get('status', '?')
+              cov = info.get('coverage_pct')
+              cov_str = f' cov={cov}%' if cov is not None else ''
+              lines.append(f'  {s:7s} {name}: {rows:,} rows{cov_str}')
+          report = '\n'.join(lines)
+          pathlib.Path('results/midrun/fetch_report.txt').write_text(report + '\n')
+          # Discord-friendly strings
+          pathlib.Path('/tmp/notify_summary.txt').write_text(summary)
+          # Combine problems + low coverage for Discord
+          all_issues = problems[:]
+          if low_coverage:
+              all_issues.append('--- Low coverage ---')
+              all_issues.extend(low_coverage)
+          issue_str = '\n'.join(all_issues[:15]) if all_issues else 'All healthy'
+          pathlib.Path('/tmp/notify_problems.txt').write_text(issue_str)
+          "
+          # Copy validation JSON for artifact
           if [ -f results/data_validation.json ]; then
             cp results/data_validation.json results/midrun/
           fi
-          echo "::notice::Fetch phase: $SUMMARY | $SO2"
+          SUMMARY=$(cat /tmp/notify_summary.txt 2>/dev/null || echo "Stats unavailable")
+          PROBLEMS=$(cat /tmp/notify_problems.txt 2>/dev/null || echo "Unknown")
+          echo "::notice::Fetch phase: $SUMMARY"
           # Discord notification
           if [ -n "$DISCORD_WEBHOOK_URL" ]; then
             curl -s -X POST "$DISCORD_WEBHOOK_URL" \
@@ -497,8 +542,8 @@ jobs:
                   \"title\": \"📡 Fetch Phase Complete\",
                   \"color\": 3447003,
                   \"fields\": [
-                    {\"name\": \"Data\", \"value\": \"$SUMMARY\", \"inline\": true},
-                    {\"name\": \"SO2\", \"value\": \"$SO2\", \"inline\": true},
+                    {\"name\": \"Summary\", \"value\": \"$SUMMARY\", \"inline\": false},
+                    {\"name\": \"Problems\", \"value\": \"$PROBLEMS\", \"inline\": false},
                     {\"name\": \"Log\", \"value\": \"[Actions](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\", \"inline\": true}
                   ],
                   \"footer\": {\"text\": \"ML phase starting next\"}
