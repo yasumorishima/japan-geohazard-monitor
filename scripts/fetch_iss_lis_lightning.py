@@ -70,7 +70,7 @@ TIMEOUT = aiohttp.ClientTimeout(total=120, connect=30)
 
 # Max granules per run to stay within Actions time budget
 # ISS LIS is accumulative (skips existing data), so process more per run
-MAX_GRANULES_PER_RUN = 2000
+MAX_GRANULES_PER_RUN = 700  # ~1.4s/granule × 700 ≈ 16min (fits in 20min timeout)
 
 
 async def init_iss_lis_table():
