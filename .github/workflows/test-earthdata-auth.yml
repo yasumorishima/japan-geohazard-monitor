@@ -96,15 +96,17 @@ jobs:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
           python3 -c "
-          import asyncio, sys
+          import asyncio, sys, logging
+          logging.basicConfig(level=logging.DEBUG)
           sys.path.insert(0, 'scripts')
           sys.path.insert(0, 'src')
           from db import init_db
-          from fetch_smap_moisture import fetch_cpc_month
+          from fetch_smap_moisture import fetch_cpc_month, init_soil_moisture_table
           import aiohttp
 
           async def test():
               await init_db()
+              await init_soil_moisture_table()
               async with aiohttp.ClientSession() as session:
                   rows = await fetch_cpc_month(session, 2024, 1)
                   print(f'CPC 2024-01: {len(rows)} records')
