@@ -664,6 +664,22 @@ jobs:
           retention-days: 90
           if-no-files-found: warn
 
+      - name: Load feature matrix to BigQuery
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          PHASE: "${{ github.sha }}"
+          RESULTS_DIR: ./results
+        run: |
+          pip install google-cloud-bigquery pandas db-dtypes pyarrow 2>/dev/null
+          if [ -f results/feature_matrix.json ]; then
+            python3 scripts/load_to_bq.py
+          else
+            echo "No feature_matrix.json — skipping BQ load"
+          fi
+
       - name: Run prospective prediction analysis
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
