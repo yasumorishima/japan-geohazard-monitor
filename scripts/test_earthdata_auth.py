@@ -81,7 +81,7 @@ async def main():
             test_url = (
                 "https://acdisc.gesdisc.eosdis.nasa.gov/opendap/HDF-EOS5/"
                 "Aura_OMI_Level2G/OMSO2G.003/2024/"
-                "OMI-Aura_L2G-OMSO2G_2024m0101_v003-2024m0103t031837.he5.ascii"
+                "OMI-Aura_L2G-OMSO2G_2024m0101_v003-2024m0103t164059.he5.ascii"
                 "?ColumnAmountSO2_PBL[0:0][500:500][1250:1250]"
             )
             # Try with Bearer first (expect redirect to URS)
