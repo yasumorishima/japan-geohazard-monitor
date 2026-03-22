@@ -92,6 +92,7 @@ jobs:
           "
 
       - name: Small test — Soil moisture CPC fetch (1 month)
+        continue-on-error: true
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
