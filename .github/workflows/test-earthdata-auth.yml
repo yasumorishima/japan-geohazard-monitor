@@ -19,7 +19,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install aiohttp
+        run: pip install aiohttp aiosqlite
 
       - name: Test Earthdata credentials
         env:
@@ -27,3 +27,116 @@ jobs:
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         run: python3 scripts/test_earthdata_auth.py
+
+      - name: Small test — SO2 fetch (2 dates only)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+        run: |
+          mkdir -p data
+          python3 -c "
+          import asyncio, sys, os
+          sys.path.insert(0, 'scripts')
+          sys.path.insert(0, 'src')
+          from db import init_db
+          from fetch_omi_so2 import init_so2_table, fetch_so2_day
+          from earthdata_auth import get_earthdata_session
+          from datetime import datetime, timezone
+
+          async def test():
+              await init_db()
+              await init_so2_table()
+              session = await get_earthdata_session()
+              try:
+                  dates = [datetime(2024, 1, 1, tzinfo=timezone.utc), datetime(2024, 1, 2, tzinfo=timezone.utc)]
+                  for d in dates:
+                      rows = await fetch_so2_day(session, d)
+                      print(f'SO2 {d.strftime(\"%Y-%m-%d\")}: {len(rows)} records')
+                      if rows:
+                          print(f'  sample: lat={rows[0][\"lat\"]}, lon={rows[0][\"lon\"]}, so2={rows[0][\"so2\"]}')
+                  total = sum(len(await fetch_so2_day(session, d)) == 0 for d in dates)
+                  if total == len(dates):
+                      print('FAIL: 0 records for all dates')
+                      sys.exit(1)
+                  else:
+                      print('PASS: SO2 data retrieved')
+              finally:
+                  await session.close()
+
+          asyncio.run(test())
+          "
+
+      - name: Small test — SMAP fetch (1 date only)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 -c "
+          import asyncio, sys
+          sys.path.insert(0, 'scripts')
+          sys.path.insert(0, 'src')
+          from db import init_db
+          from fetch_smap_moisture import fetch_smops_day
+          import aiohttp
+
+          async def test():
+              await init_db()
+              async with aiohttp.ClientSession() as session:
+                  rows = await fetch_smops_day(session, '2024-01-01')
+                  print(f'SMAP 2024-01-01: {len(rows)} records')
+                  if rows:
+                      print(f'  sample: {rows[0]}')
+                      print('PASS')
+                  else:
+                      print('FAIL: 0 records')
+                      sys.exit(1)
+
+          asyncio.run(test())
+          "
+        continue-on-error: true
+
+      - name: Small test — earthdata_fetch cookie contamination
+        env:
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+        run: |
+          python3 -c "
+          import asyncio, sys
+          sys.path.insert(0, 'scripts')
+          from earthdata_auth import earthdata_fetch, get_earthdata_session
+
+          async def test():
+              session = await get_earthdata_session()
+              url = (
+                  'https://acdisc.gesdisc.eosdis.nasa.gov/opendap/HDF-EOS5/'
+                  'Aura_OMI_Level2G/OMSO2G.003/2024/'
+                  'OMI-Aura_L2G-OMSO2G_2024m0101_v003-2024m0103t164059.he5.ascii'
+                  '?ColumnAmountSO2_PBL[0:0][500:500][1250:1250]'
+              )
+              try:
+                  results = []
+                  for i in range(3):
+                      status, text = await earthdata_fetch(session, url)
+                      is_data = status == 200 and '<html' not in text[:200].lower()
+                      results.append((status, is_data, len(text)))
+                      print(f'Request {i+1}: HTTP {status}, is_data={is_data}, len={len(text)}')
+                      if text and not is_data:
+                          print(f'  preview: {repr(text[:150])}')
+
+                  # Check consistency
+                  statuses = [r[0] for r in results]
+                  if len(set(statuses)) > 1:
+                      print('FAIL: inconsistent responses — cookie contamination')
+                      sys.exit(1)
+                  elif all(r[1] for r in results):
+                      print('PASS: all 3 requests returned data')
+                  else:
+                      print(f'FAIL: requests returned status {statuses[0]} (not data)')
+                      sys.exit(1)
+              finally:
+                  await session.close()
+
+          asyncio.run(test())
+          "

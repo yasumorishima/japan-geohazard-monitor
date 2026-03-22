@@ -198,7 +198,16 @@ async def main():
             "SELECT DISTINCT substr(observed_at, 1, 4) FROM nightlight"
         )
     existing_years = {r[0] for r in existing} if existing else set()
-    logger.info("VIIRS nightlight existing: %d years", len(existing_years))
+    years_to_fetch = [y for y in range(START_YEAR, current_year) if str(y) not in existing_years]
+    if not years_to_fetch:
+        logger.info(
+            "VIIRS nightlight: SKIP — all %d years already in DB (%d-%d). "
+            "Next new year (%d) data not yet available.",
+            len(existing_years), START_YEAR, current_year - 1, current_year,
+        )
+    else:
+        logger.info("VIIRS nightlight existing: %d years, fetching %d new: %s",
+                     len(existing_years), len(years_to_fetch), years_to_fetch)
 
     session = await get_earthdata_session()
     total_records = 0

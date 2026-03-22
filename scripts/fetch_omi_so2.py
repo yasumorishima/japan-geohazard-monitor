@@ -334,6 +334,9 @@ async def main():
     logger.info("SO2: %d dates to fetch", len(dates_to_fetch))
 
     total_records = 0
+    auth_fail_count = 0
+    html_fail_count = 0
+    no_file_count = 0
     session = await get_earthdata_session()
     try:
         for i, date in enumerate(dates_to_fetch):
@@ -356,7 +359,18 @@ async def main():
     finally:
         await session.close()
 
-    logger.info("SO2 fetch complete: %d total records", total_records)
+    # Diagnostic summary: why 0 records?
+    if total_records == 0 and dates_to_fetch:
+        logger.info(
+            "SO2 fetch complete: 0 records from %d dates. "
+            "Check logs above for root cause: "
+            "Bearer→401 + BasicAuth→HTML = credentials invalid for GES DISC data access "
+            "(EULA not accepted or app not approved at urs.earthdata.nasa.gov)",
+            len(dates_to_fetch),
+        )
+    else:
+        logger.info("SO2 fetch complete: %d total records from %d dates",
+                     total_records, len(dates_to_fetch))
 
 
 if __name__ == "__main__":

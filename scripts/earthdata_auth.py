@@ -103,7 +103,10 @@ async def earthdata_fetch(
 
                     if URS_HOST in redirect_url and has_credentials:
                         # OPeNDAP redirect: Bearer won't work, use Basic Auth
-                        return await _fetch_with_basic_auth(session, redirect_url, timeout)
+                        # Use fresh session to avoid cookie jar contamination
+                        fresh_jar = aiohttp.CookieJar(unsafe=True)
+                        async with aiohttp.ClientSession(cookie_jar=fresh_jar) as fresh_session:
+                            return await _fetch_with_basic_auth(fresh_session, redirect_url, timeout)
 
                     # Non-URS redirect: follow with Bearer
                     async with session.get(
@@ -131,7 +134,7 @@ async def earthdata_fetch(
         async with aiohttp.ClientSession(cookie_jar=jar) as fallback_session:
             try:
                 async with fallback_session.get(url, timeout=timeout, allow_redirects=False) as resp:
-                    logger.debug("BasicAuth fallback: HTTP %d for %s", resp.status, url[:80])
+                    logger.info("BasicAuth fallback: HTTP %d for %s", resp.status, url[:80])
                     if resp.status == 200:
                         text = await resp.text()
                         return 200, text
@@ -150,7 +153,7 @@ async def earthdata_fetch(
                             text = await redir_resp.text()
                             return redir_resp.status, text
 
-                    logger.debug("BasicAuth fallback: unexpected status %d", resp.status)
+                    logger.info("BasicAuth fallback: unexpected status %d", resp.status)
                     return resp.status, ""
 
             except (aiohttp.ClientError, TimeoutError) as e:
@@ -175,9 +178,16 @@ async def _fetch_with_basic_auth(
         if "html" in content_type.lower():
             body = await auth_resp.text()
             if "<form" in body.lower() or "login" in body.lower():
-                logger.warning("Earthdata auth: still on login page (bad credentials?)")
+                logger.info("Earthdata BasicAuth: login page returned (bad credentials)")
                 return 401, ""
-            return auth_resp.status, body
+            # Any HTML response from a data endpoint is an auth/access failure
+            # (e.g. GES DISC error page, EULA acceptance page)
+            logger.info(
+                "Earthdata BasicAuth: HTML returned instead of data "
+                "(HTTP %d, len=%d, preview=%s)",
+                auth_resp.status, len(body), repr(body[:120]),
+            )
+            return 401, ""
         text = await auth_resp.text()
         return auth_resp.status, text
 
@@ -212,7 +222,9 @@ async def earthdata_fetch_bytes(
                         return resp.status, b""
 
                     if URS_HOST in redirect_url and has_credentials:
-                        return await _fetch_bytes_with_basic_auth(session, redirect_url, timeout)
+                        fresh_jar = aiohttp.CookieJar(unsafe=True)
+                        async with aiohttp.ClientSession(cookie_jar=fresh_jar) as fresh_session:
+                            return await _fetch_bytes_with_basic_auth(fresh_session, redirect_url, timeout)
 
                     # Non-URS redirect: follow with Bearer
                     async with session.get(
@@ -239,7 +251,7 @@ async def earthdata_fetch_bytes(
         async with aiohttp.ClientSession(cookie_jar=jar) as fallback_session:
             try:
                 async with fallback_session.get(url, timeout=timeout, allow_redirects=False) as resp:
-                    logger.debug("BasicAuth fallback (bytes): HTTP %d for %s", resp.status, url[:80])
+                    logger.info("BasicAuth fallback (bytes): HTTP %d for %s", resp.status, url[:80])
                     if resp.status == 200:
                         data = await resp.read()
                         return 200, data
@@ -257,7 +269,7 @@ async def earthdata_fetch_bytes(
                             data = await redir_resp.read()
                             return redir_resp.status, data
 
-                    logger.debug("BasicAuth fallback (bytes): unexpected status %d", resp.status)
+                    logger.info("BasicAuth fallback (bytes): unexpected status %d", resp.status)
                     return resp.status, b""
 
             except (aiohttp.ClientError, TimeoutError) as e:

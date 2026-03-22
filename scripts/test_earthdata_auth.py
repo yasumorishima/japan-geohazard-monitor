@@ -73,42 +73,85 @@ async def main():
         else:
             print("SKIP: EARTHDATA_TOKEN not set")
 
-        # Test 2: GES DISC OPeNDAP with redirect + Basic Auth
-        # This is the actual flow used by SO2/cloud fraction fetchers
-        print("\n--- Test 2: GES DISC OPeNDAP Redirect Flow ---")
+        # Test 2: GES DISC OPeNDAP actual data download (not catalog)
+        # Must test a real .ascii data URL, not contents.html (which is public)
+        print("\n--- Test 2: GES DISC OPeNDAP Data Download ---")
         try:
-            # Use the actual OMSO2G catalog URL (OMSO2e was retired)
-            test_url = "https://acdisc.gesdisc.eosdis.nasa.gov/opendap/HDF-EOS5/Aura_OMI_Level2G/OMSO2G.003/2024/contents.html"
-            async with session.get(test_url, allow_redirects=False, timeout=timeout) as resp:
+            # Actual SO2 data subset (single cell, tiny response)
+            test_url = (
+                "https://acdisc.gesdisc.eosdis.nasa.gov/opendap/HDF-EOS5/"
+                "Aura_OMI_Level2G/OMSO2G.003/2024/"
+                "OMI-Aura_L2G-OMSO2G_2024m0101_v003-2024m0103t031837.he5.ascii"
+                "?ColumnAmountSO2_PBL[0:0][500:500][1250:1250]"
+            )
+            # Try with Bearer first (expect redirect to URS)
+            headers_t2 = {"Authorization": f"Bearer {token}"} if token else {}
+            async with session.get(test_url, headers=headers_t2, allow_redirects=False, timeout=timeout) as resp:
                 print(f"Initial: HTTP {resp.status}")
                 if resp.status in (301, 302, 303, 307, 308):
                     redirect_url = str(resp.headers.get("Location", ""))
                     is_urs = "urs.earthdata" in redirect_url
                     print(f"Redirect to URS: {is_urs}")
                     if is_urs:
-                        async with session.get(
-                            redirect_url, auth=auth,
-                            allow_redirects=True, timeout=timeout,
-                        ) as auth_resp:
-                            ct = auth_resp.headers.get("Content-Type", "")
-                            body = (await auth_resp.text())[:500]
-                            print(f"After auth: HTTP {auth_resp.status} CT={ct[:50]}")
-                            if auth_resp.status == 200:
-                                if "login" in body.lower() and "<form" in body.lower():
-                                    print("FAIL: Still on login page (bad credentials)")
-                                    ok = False
+                        # Use fresh session for Basic Auth (matches production flow)
+                        jar2 = aiohttp.CookieJar(unsafe=True)
+                        async with aiohttp.ClientSession(cookie_jar=jar2) as auth_session:
+                            async with auth_session.get(
+                                redirect_url, auth=auth,
+                                allow_redirects=True, timeout=timeout,
+                            ) as auth_resp:
+                                ct = auth_resp.headers.get("Content-Type", "")
+                                body = (await auth_resp.text())[:500]
+                                print(f"After auth: HTTP {auth_resp.status} CT={ct[:50]}")
+                                if auth_resp.status == 200:
+                                    if "<html" in body[:200].lower():
+                                        print("FAIL: Got HTML instead of data (EULA/access issue?)")
+                                        print(f"Preview: {body[:200]}")
+                                        ok = False
+                                    else:
+                                        print("PASS: Got ASCII data via OPeNDAP")
+                                        print(f"Preview: {body[:150]}")
                                 else:
-                                    print("PASS: OPeNDAP accessible via redirect flow")
-                            else:
-                                print(f"FAIL: HTTP {auth_resp.status}")
-                                print(f"Body: {body[:300]}")
-                                ok = False
+                                    print(f"FAIL: HTTP {auth_resp.status}")
+                                    print(f"Body: {body[:300]}")
+                                    ok = False
                     else:
                         print(f"Non-URS redirect: {redirect_url[:100]}")
                 elif resp.status == 200:
-                    print("PASS: Direct access (no redirect needed)")
+                    body = (await resp.text())[:500]
+                    if "<html" in body[:200].lower():
+                        print("FAIL: Got HTML instead of data (auth not applied?)")
+                        ok = False
+                    else:
+                        print("PASS: Direct access returned data")
+                        print(f"Preview: {body[:150]}")
+                elif resp.status in (401, 403):
+                    print(f"FAIL: Auth rejected (HTTP {resp.status})")
+                    # Fall through to Basic Auth test below
+                    if username and password:
+                        print("Trying direct Basic Auth fallback...")
+                        jar3 = aiohttp.CookieJar(unsafe=True)
+                        async with aiohttp.ClientSession(cookie_jar=jar3) as fb_session:
+                            async with fb_session.get(test_url, timeout=timeout, allow_redirects=False) as fb_resp:
+                                if fb_resp.status in (301, 302, 303, 307, 308):
+                                    redir = str(fb_resp.headers.get("Location", ""))
+                                    async with fb_session.get(redir, auth=auth, allow_redirects=True, timeout=timeout) as fb_auth:
+                                        fb_body = (await fb_auth.text())[:500]
+                                        if fb_auth.status == 200 and "<html" not in fb_body[:200].lower():
+                                            print(f"PASS: BasicAuth fallback succeeded")
+                                            print(f"Preview: {fb_body[:150]}")
+                                        else:
+                                            print(f"FAIL: BasicAuth fallback HTTP {fb_auth.status}")
+                                            if "<html" in fb_body[:200].lower():
+                                                print(f"HTML preview: {fb_body[:200]}")
+                                            ok = False
+                                else:
+                                    print(f"FAIL: No redirect in fallback (HTTP {fb_resp.status})")
+                                    ok = False
+                    else:
+                        ok = False
                 elif resp.status == 404:
-                    print("WARN: URL not found (endpoint may have moved, not an auth issue)")
+                    print("WARN: Test file not found (not an auth issue, may need filename update)")
                 else:
                     body = (await resp.text())[:300]
                     print(f"UNEXPECTED HTTP {resp.status}: {body}")
