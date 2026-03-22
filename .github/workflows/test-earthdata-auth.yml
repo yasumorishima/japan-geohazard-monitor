@@ -41,27 +41,50 @@ jobs:
           sys.path.insert(0, 'scripts')
           sys.path.insert(0, 'src')
           from db import init_db
-          from fetch_omi_so2 import init_so2_table, fetch_so2_day
-          from earthdata_auth import get_earthdata_session
+          from fetch_omi_so2 import init_so2_table, fetch_so2_day, _parse_opendap_ascii
+          from earthdata_auth import get_earthdata_session, earthdata_fetch
           from datetime import datetime, timezone
+          import aiohttp
 
           async def test():
               await init_db()
               await init_so2_table()
               session = await get_earthdata_session()
               try:
-                  dates = [datetime(2024, 1, 1, tzinfo=timezone.utc), datetime(2024, 1, 2, tzinfo=timezone.utc)]
-                  for d in dates:
-                      rows = await fetch_so2_day(session, d)
-                      print(f'SO2 {d.strftime(\"%Y-%m-%d\")}: {len(rows)} records')
-                      if rows:
-                          print(f'  sample: lat={rows[0][\"lat\"]}, lon={rows[0][\"lon\"]}, so2={rows[0][\"so2\"]}')
-                  total = sum(len(await fetch_so2_day(session, d)) == 0 for d in dates)
-                  if total == len(dates):
-                      print('FAIL: 0 records for all dates')
-                      sys.exit(1)
+                  # Step 1: Raw fetch to see actual data format
+                  url = (
+                      'https://acdisc.gesdisc.eosdis.nasa.gov/opendap/HDF-EOS5/'
+                      'Aura_OMI_Level2G/OMSO2G.003/2024/'
+                      'OMI-Aura_L2G-OMSO2G_2024m0101_v003-2024m0103t164059.he5.ascii'
+                      '?ColumnAmountSO2_PBL[0:0][455:543][1207:1319]'
+                  )
+                  status, text = await earthdata_fetch(session, url, timeout=aiohttp.ClientTimeout(total=60))
+                  print(f'Raw fetch: HTTP {status}, len={len(text)}')
+                  # Show first 20 lines of actual data
+                  lines = text.split(chr(10))
+                  print(f'Total lines: {len(lines)}')
+                  print('--- First 20 lines ---')
+                  for i, line in enumerate(lines[:20]):
+                      print(f'  L{i}: {line[:150]}')
+                  print('--- Lines with data (non-fill) ---')
+                  count = 0
+                  for i, line in enumerate(lines):
+                      if '-1.267' not in line and line.strip() and '[' in line:
+                          print(f'  L{i}: {line[:150]}')
+                          count += 1
+                          if count >= 5:
+                              break
+
+                  # Step 2: Test parser
+                  rows = _parse_opendap_ascii(text, '2024-01-01')
+                  print(f'Parser result: {len(rows)} rows')
+                  if rows:
+                      print(f'  first: {rows[0]}')
+                      print(f'  last: {rows[-1]}')
+                      print('PASS')
                   else:
-                      print('PASS: SO2 data retrieved')
+                      print('FAIL: parser returned 0 rows from valid data')
+                      sys.exit(1)
               finally:
                   await session.close()
 
