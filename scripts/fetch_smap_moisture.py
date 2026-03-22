@@ -351,12 +351,10 @@ async def main():
     current_year = datetime.now(timezone.utc).year
 
     async with aiohttp.ClientSession() as session:
-        # ── Phase 1: CPC monthly (2011–2016 backfill + 2023–present) ──
-        # SMOPS CDR covers 2017-2022 daily; CPC fills the rest monthly
-        cpc_months = (
-            _generate_month_list(BACKFILL_START_YEAR, SMOPS_START_YEAR - 1)
-            + _generate_month_list(SMOPS_END_YEAR + 1, current_year)
-        )
+        # ── Phase 1: CPC monthly (full 2011–present) ──
+        # SMOPS CDR server is down since 2026-03; CPC covers the entire range
+        # monthly. This ensures no gaps in the 2017-2022 SMOPS hole.
+        cpc_months = _generate_month_list(BACKFILL_START_YEAR, current_year)
         cpc_to_fetch = [
             (y, m) for y, m in cpc_months
             if f"{y:04d}-{m:02d}" not in existing_months

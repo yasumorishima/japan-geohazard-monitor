@@ -63,7 +63,7 @@ LON_END = 1319
 
 MAX_RETRIES = 3
 TIMEOUT = aiohttp.ClientTimeout(total=300, connect=60)
-START_YEAR = 2011
+START_YEAR = 2004
 
 
 async def init_so2_table():
@@ -311,32 +311,30 @@ async def main():
     n_dates = existing[0][1] if existing else 0
     logger.info("SO2 existing: %d dates (latest: %s)", n_dates, last_date)
 
-    # Determine dates to fetch (only dates around M6+ earthquakes ±7 days)
-    async with aiosqlite.connect(DB_PATH) as db:
-        eq_rows = await db.execute_fetchall(
-            "SELECT DISTINCT DATE(occurred_at) FROM earthquakes "
-            "WHERE magnitude >= 6.0 AND DATE(occurred_at) >= '2011-01-01' "
-            "ORDER BY occurred_at"
-        )
+    # Determine dates to fetch — continuous daily coverage for proper baselines
+    # ML anomaly detection requires continuous time series, not just event windows
     existing_dates = set()
-    if last_date:
-        async with aiosqlite.connect(DB_PATH) as db:
-            ed_rows = await db.execute_fetchall(
-                "SELECT DISTINCT observed_at FROM so2_column"
-            )
-        existing_dates = set(r[0] for r in ed_rows)
+    async with aiosqlite.connect(DB_PATH) as db:
+        ed_rows = await db.execute_fetchall(
+            "SELECT DISTINCT observed_at FROM so2_column"
+        )
+    existing_dates = set(r[0] for r in ed_rows)
 
-    target_dates = set()
-    for r in eq_rows:
-        d = datetime.strptime(r[0], "%Y-%m-%d")
-        for offset in range(-7, 8):
-            target_dates.add(d + timedelta(days=offset))
+    # Generate all dates from START_YEAR to yesterday
+    today = datetime.now(timezone.utc).date()
+    d = datetime(START_YEAR, 1, 1).date()
+    target_dates = []
+    while d < today:
+        ds = d.strftime("%Y-%m-%d")
+        if ds not in existing_dates:
+            target_dates.append(datetime(d.year, d.month, d.day))
+        d += timedelta(days=1)
 
-    dates_to_fetch = sorted(
-        d for d in target_dates
-        if d.strftime("%Y-%m-%d") not in existing_dates
-        and d.year >= START_YEAR
-    )[:200]  # Cap per run
+    # Prioritize recent gaps first (most impactful for test period), then backfill
+    # Split: 2011+ dates first (analysis period), then pre-2011 (baseline building)
+    analysis_dates = [dt for dt in target_dates if dt.year >= 2011]
+    backfill_dates = [dt for dt in target_dates if dt.year < 2011]
+    dates_to_fetch = (analysis_dates + backfill_dates)[:600]  # 600/run fits 60-min timeout
 
     if not dates_to_fetch:
         logger.info("All SO2 target dates already fetched")

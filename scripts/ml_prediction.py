@@ -26,7 +26,7 @@ import json
 import logging
 import math
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
@@ -1548,18 +1548,30 @@ async def load_phase10_gravity(db_path):
             mean_val = sum(valid) / len(valid) if valid else 0.0
             cell_ts[(clat, clon)].append((date_str, mean_val))
 
+        # Expand monthly data to daily: each month's value applies to all days
+        # in that month. This ensures daily feature lookups hit GRACE data.
+        from calendar import monthrange
         data = {}
+        n_expanded = 0
         for (lat, lon), ts in cell_ts.items():
             prev_lwe = 0.0
             for date_str, lwe in ts:
-                data[(date_str, lat, lon)] = {
-                    "lwe_cm": lwe,
-                    "lwe_prev_cm": prev_lwe,
-                }
+                rec = {"lwe_cm": lwe, "lwe_prev_cm": prev_lwe}
+                # Parse the month and expand to all days
+                try:
+                    dt = datetime.strptime(date_str, "%Y-%m-%d")
+                    _, ndays = monthrange(dt.year, dt.month)
+                    for day in range(1, ndays + 1):
+                        day_str = f"{dt.year:04d}-{dt.month:02d}-{day:02d}"
+                        data[(day_str, lat, lon)] = rec
+                        n_expanded += 1
+                except ValueError:
+                    data[(date_str, lat, lon)] = rec
+                    n_expanded += 1
                 prev_lwe = lwe
         n_raw = len(rows)
-        logger.info("  GRACE gravity data loaded: %d raw → %d grid-cell records (cell_key snap)",
-                     n_raw, len(data))
+        logger.info("  GRACE gravity data loaded: %d raw → %d daily-expanded records (cell_key snap)",
+                     n_raw, n_expanded)
         return data
     except Exception as e:
         logger.warning("  GRACE gravity load failed (non-fatal): %s", e)
@@ -1663,23 +1675,37 @@ async def load_phase10_soil_moisture(db_path):
             mean_val = sum(valid) / len(valid) if valid else None
             cell_ts[(clat, clon)].append((date_str, mean_val))
 
+        # Expand monthly data to daily: fill forward each observation to all days
+        # until the next observation. This ensures daily feature lookups hit soil data.
+        from calendar import monthrange
         data = {}
+        n_expanded = 0
         for (clat, clon), ts in cell_ts.items():
             for i, (date_str, sm) in enumerate(ts):
                 start_idx = max(0, i - 30)
                 window = [v for _, v in ts[start_idx:i] if v is not None]
                 mean_30d = sum(window) / len(window) if window else sm
                 std_30d = (sum((v - mean_30d) ** 2 for v in window) / max(len(window), 1)) ** 0.5 if len(window) > 1 else 1.0
-                data[(date_str, clat, clon)] = {
+                rec = {
                     "sm": sm,
                     "sm_mean_30d": mean_30d,
                     "sm_std_30d": max(std_30d, 0.001),
                 }
+                # Expand to all days in month
+                try:
+                    dt = datetime.strptime(date_str, "%Y-%m-%d")
+                    _, ndays = monthrange(dt.year, dt.month)
+                    for day in range(1, ndays + 1):
+                        day_str = f"{dt.year:04d}-{dt.month:02d}-{day:02d}"
+                        data[(day_str, clat, clon)] = rec
+                        n_expanded += 1
+                except ValueError:
+                    data[(date_str, clat, clon)] = rec
+                    n_expanded += 1
 
         n_raw = len(rows)
-        n_grid = len(data)
-        logger.info("  Soil moisture data loaded: %d raw → %d grid-cell records (cell_key snap)",
-                     n_raw, n_grid)
+        logger.info("  Soil moisture data loaded: %d raw → %d daily-expanded records (cell_key snap)",
+                     n_raw, n_expanded)
         return data
     except Exception as e:
         logger.warning("  Soil moisture load failed (non-fatal): %s", e)
@@ -1749,21 +1775,40 @@ async def load_phase10b_ocean_color(db_path):
             mean_val = sum(valid) / len(valid) if valid else None
             cell_ts[(clat, clon)].append((date_str, mean_val))
 
+        # Forward-fill weekly/monthly data to daily: each observation's value
+        # persists until the next observation (up to 14 days max gap fill).
         data = {}
+        n_expanded = 0
         for (lat, lon), ts in cell_ts.items():
             for i, (date_str, val) in enumerate(ts):
                 start_idx = max(0, i - 30)
                 window = [v for _, v in ts[start_idx:i] if v is not None]
                 mean_30d = sum(window) / len(window) if window else val
                 std_30d = (sum((v - mean_30d) ** 2 for v in window) / max(len(window), 1)) ** 0.5 if len(window) > 1 else 1.0
-                data[(date_str, lat, lon)] = {
+                rec = {
                     "chlor_a": val,
                     "chlor_mean_30d": mean_30d,
                     "chlor_std_30d": max(std_30d, 0.01),
                 }
+                # Forward-fill: populate observation date + next 6 days (weekly cadence)
+                try:
+                    dt = datetime.strptime(date_str, "%Y-%m-%d")
+                    # Fill until next observation or 13 days, whichever is shorter
+                    next_date_str = ts[i + 1][0] if i + 1 < len(ts) else None
+                    fill_days = 13  # max forward fill for bi-weekly gaps
+                    if next_date_str:
+                        next_dt = datetime.strptime(next_date_str, "%Y-%m-%d")
+                        fill_days = min(fill_days, (next_dt - dt).days - 1)
+                    for d_off in range(max(fill_days + 1, 1)):
+                        day_str = (dt + timedelta(days=d_off)).strftime("%Y-%m-%d")
+                        data[(day_str, lat, lon)] = rec
+                        n_expanded += 1
+                except (ValueError, IndexError):
+                    data[(date_str, lat, lon)] = rec
+                    n_expanded += 1
         n_raw = len(rows)
-        logger.info("  Ocean color data loaded: %d raw → %d grid-cell records (cell_key snap)",
-                     n_raw, len(data))
+        logger.info("  Ocean color data loaded: %d raw → %d daily-expanded records (cell_key snap)",
+                     n_raw, n_expanded)
         return data
     except Exception as e:
         logger.warning("  Ocean color load failed (non-fatal): %s", e)
@@ -1867,22 +1912,37 @@ async def load_phase10b_nightlight(db_path):
             mean_val = sum(valid) / len(valid) if valid else None
             cell_ts[(clat, clon)].append((date_str, mean_val))
 
+        # Expand annual data to daily: each year's value applies to all days
+        # in that year. This ensures daily feature lookups hit nightlight data.
+        from calendar import isleap
         data = {}
+        n_expanded = 0
         for (clat, clon), ts in cell_ts.items():
             all_vals = [v for _, v in ts if v is not None]
             mean_all = sum(all_vals) / len(all_vals) if all_vals else 0.0
             std_all = (sum((v - mean_all) ** 2 for v in all_vals) / max(len(all_vals), 1)) ** 0.5 if len(all_vals) > 1 else 1.0
             for date_str, val in ts:
-                data[(date_str, clat, clon)] = {
+                rec = {
                     "radiance": val,
                     "radiance_mean_6m": mean_all,
                     "radiance_std_6m": max(std_all, 0.01),
                 }
+                # Expand to all days in the year
+                try:
+                    dt = datetime.strptime(date_str, "%Y-%m-%d")
+                    ndays = 366 if isleap(dt.year) else 365
+                    base = datetime(dt.year, 1, 1)
+                    for d_off in range(ndays):
+                        day_str = (base + timedelta(days=d_off)).strftime("%Y-%m-%d")
+                        data[(day_str, clat, clon)] = rec
+                        n_expanded += 1
+                except ValueError:
+                    data[(date_str, clat, clon)] = rec
+                    n_expanded += 1
 
         n_raw = len(rows)
-        n_grid = len(data)
-        logger.info("  Nightlight data loaded: %d raw → %d grid-cell records (cell_key snap)",
-                     n_raw, n_grid)
+        logger.info("  Nightlight data loaded: %d raw → %d daily-expanded records (cell_key snap)",
+                     n_raw, n_expanded)
         return data
     except Exception as e:
         logger.warning("  Nightlight load failed (non-fatal): %s", e)

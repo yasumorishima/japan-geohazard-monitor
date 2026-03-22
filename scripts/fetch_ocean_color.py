@@ -70,10 +70,10 @@ START_YEAR = 2018  # DINEOF dataset starts 2018-01-01
 
 
 def _build_erddap_url(time_iso: str) -> str:
-    """Build ERDDAP griddap CSV URL for a single monthly time step.
+    """Build ERDDAP griddap CSV URL for a single time step.
 
     The DINEOF dataset has daily composites with altitude dimension.
-    We sample monthly (1st of each month) to match prediction cadence.
+    We sample weekly (every 7 days) for denser temporal coverage.
     """
     return (
         f"{ERDDAP_BASE}/{DATASET_ID}.csv"
@@ -168,12 +168,11 @@ def _parse_erddap_csv(text: str) -> list[dict]:
     return rows
 
 
-async def fetch_chlor_month(
-    session: aiohttp.ClientSession, year: int, month: int
+async def fetch_chlor_date(
+    session: aiohttp.ClientSession, date_str: str
 ) -> list[dict]:
-    """Fetch monthly chlorophyll-a from CoastWatch ERDDAP for one month."""
-    # Use mid-month date for the ERDDAP time query
-    time_iso = f"{year:04d}-{month:02d}-16T00:00:00Z"
+    """Fetch chlorophyll-a from CoastWatch ERDDAP for a single date."""
+    time_iso = f"{date_str}T00:00:00Z"
     url = _build_erddap_url(time_iso)
 
     for attempt in range(1, MAX_RETRIES + 1):
@@ -182,39 +181,39 @@ async def fetch_chlor_month(
                 if resp.status == 200:
                     text = await resp.text()
                     if not text or "<html" in text[:200].lower():
-                        logger.debug("ERDDAP returned HTML for %04d-%02d", year, month)
+                        logger.debug("ERDDAP returned HTML for %s", date_str)
                         return []
                     return _parse_erddap_csv(text)
                 elif resp.status == 404:
-                    logger.debug("No ERDDAP data for %04d-%02d (404)", year, month)
+                    logger.debug("No ERDDAP data for %s (404)", date_str)
                     return []
                 else:
                     body = await resp.text()
                     logger.debug(
-                        "ERDDAP HTTP %d for %04d-%02d: %s",
-                        resp.status, year, month, body[:200],
+                        "ERDDAP HTTP %d for %s: %s",
+                        resp.status, date_str, body[:200],
                     )
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             if attempt == MAX_RETRIES:
                 logger.debug(
-                    "ERDDAP %04d-%02d failed after %d retries: %s",
-                    year, month, MAX_RETRIES, type(e).__name__,
+                    "ERDDAP %s failed after %d retries: %s",
+                    date_str, MAX_RETRIES, type(e).__name__,
                 )
             await asyncio.sleep(2 ** attempt)
 
     return []
 
 
-def _generate_month_list(start_year: int) -> list[tuple[int, int]]:
-    """Generate (year, month) tuples from start_year to current month."""
-    now = datetime.now(timezone.utc)
-    months = []
-    for y in range(start_year, now.year + 1):
-        for m in range(1, 13):
-            if y == now.year and m > now.month:
-                break
-            months.append((y, m))
-    return months
+def _generate_weekly_dates(start_year: int) -> list[str]:
+    """Generate weekly date strings (every 7 days) from start_year to yesterday."""
+    from datetime import timedelta as td
+    now = datetime.now(timezone.utc).date()
+    d = datetime(start_year, 1, 1).date()
+    dates = []
+    while d < now:
+        dates.append(d.strftime("%Y-%m-%d"))
+        d += td(days=7)
+    return dates
 
 
 async def main():
@@ -223,30 +222,27 @@ async def main():
 
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    # Determine which months we already have in the DB
+    # Determine which dates we already have in the DB
     async with aiosqlite.connect(DB_PATH) as db:
         existing_rows = await db.execute_fetchall(
-            "SELECT DISTINCT substr(observed_at, 1, 7) FROM ocean_color"
+            "SELECT DISTINCT observed_at FROM ocean_color"
         )
-    existing_months = set(r[0] for r in existing_rows) if existing_rows else set()
+    existing_dates = set(r[0] for r in existing_rows) if existing_rows else set()
 
-    # Build list of months to fetch
-    all_months = _generate_month_list(START_YEAR)
-    months_to_fetch = [
-        (y, m) for y, m in all_months
-        if f"{y:04d}-{m:02d}" not in existing_months
-    ]
+    # Build list of weekly dates to fetch
+    all_dates = _generate_weekly_dates(START_YEAR)
+    dates_to_fetch = [d for d in all_dates if d not in existing_dates][:600]
 
-    if not months_to_fetch:
-        logger.info("All ocean color months already fetched (up to current month)")
+    if not dates_to_fetch:
+        logger.info("All ocean color weekly dates already fetched")
         return
 
-    logger.info("Ocean color: %d months to fetch via CoastWatch ERDDAP", len(months_to_fetch))
+    logger.info("Ocean color: %d weekly dates to fetch via CoastWatch ERDDAP", len(dates_to_fetch))
 
     total_records = 0
     async with aiohttp.ClientSession() as session:
-        for i, (year, month) in enumerate(months_to_fetch):
-            rows = await fetch_chlor_month(session, year, month)
+        for i, date_str in enumerate(dates_to_fetch):
+            rows = await fetch_chlor_date(session, date_str)
             if rows:
                 async with aiosqlite.connect(DB_PATH) as db:
                     await db.executemany(
@@ -261,15 +257,15 @@ async def main():
                     await db.commit()
                 total_records += len(rows)
 
-            if (i + 1) % 10 == 0:
+            if (i + 1) % 20 == 0:
                 logger.info(
-                    "Ocean color: %d/%d months, %d records",
-                    i + 1, len(months_to_fetch), total_records,
+                    "Ocean color: %d/%d dates, %d records",
+                    i + 1, len(dates_to_fetch), total_records,
                 )
             # Be polite to ERDDAP server
             await asyncio.sleep(1.0)
 
-    logger.info("Ocean color fetch complete: %d records from %d months", total_records, len(months_to_fetch))
+    logger.info("Ocean color fetch complete: %d records from %d dates", total_records, len(dates_to_fetch))
 
 
 if __name__ == "__main__":

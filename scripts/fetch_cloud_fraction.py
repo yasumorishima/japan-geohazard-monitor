@@ -59,7 +59,7 @@ LON_END = 330
 
 MAX_RETRIES = 3
 TIMEOUT = aiohttp.ClientTimeout(total=300, connect=60)
-START_YEAR = 2011
+START_YEAR = 2000
 
 
 async def init_cloud_table():
@@ -224,28 +224,27 @@ async def main():
         )
         return
 
-    # Fetch dates around M6+ earthquakes
+    # Continuous daily fetch — ML anomaly detection requires full baselines
     async with aiosqlite.connect(DB_PATH) as db:
-        eq_rows = await db.execute_fetchall(
-            "SELECT DISTINCT DATE(occurred_at) FROM earthquakes "
-            "WHERE magnitude >= 6.0 AND DATE(occurred_at) >= '2011-01-01'"
-        )
         existing = await db.execute_fetchall(
             "SELECT DISTINCT observed_at FROM cloud_fraction"
         )
     existing_dates = set(r[0] for r in existing) if existing else set()
 
-    target_dates = set()
-    for r in eq_rows:
-        d = datetime.strptime(r[0], "%Y-%m-%d")
-        for offset in range(-7, 8):
-            target_dates.add(d + timedelta(days=offset))
+    # Generate all dates from START_YEAR to yesterday
+    today = datetime.now(timezone.utc).date()
+    d = datetime(START_YEAR, 1, 1).date()
+    target_dates = []
+    while d < today:
+        ds = d.strftime("%Y-%m-%d")
+        if ds not in existing_dates:
+            target_dates.append(datetime(d.year, d.month, d.day))
+        d += timedelta(days=1)
 
-    dates_to_fetch = sorted(
-        d for d in target_dates
-        if d.strftime("%Y-%m-%d") not in existing_dates
-        and d.year >= START_YEAR
-    )[:200]
+    # Prioritize analysis period (2011+) first, then backfill pre-2011
+    analysis_dates = [dt for dt in target_dates if dt.year >= 2011]
+    backfill_dates = [dt for dt in target_dates if dt.year < 2011]
+    dates_to_fetch = (analysis_dates + backfill_dates)[:600]
 
     if not dates_to_fetch:
         logger.info("All cloud fraction target dates already fetched")

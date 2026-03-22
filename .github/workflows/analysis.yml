@@ -20,7 +20,7 @@ on:
 jobs:
   analyze:
     runs-on: ubuntu-latest
-    timeout-minutes: 420
+    timeout-minutes: 500
 
     steps:
       - uses: actions/checkout@v4
@@ -285,7 +285,7 @@ jobs:
 
       - name: Fetch OMI SO2 column data (Earthdata auth)
         continue-on-error: true
-        timeout-minutes: 20
+        timeout-minutes: 60
         if: steps.earthdata_check.outputs.earthdata_ok == 'true'
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
@@ -318,7 +318,7 @@ jobs:
 
       - name: Fetch NASA ocean color chlorophyll-a (Earthdata auth optional)
         continue-on-error: true
-        timeout-minutes: 20
+        timeout-minutes: 40
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
@@ -329,7 +329,7 @@ jobs:
 
       - name: Fetch MODIS cloud fraction (Earthdata auth)
         continue-on-error: true
-        timeout-minutes: 20
+        timeout-minutes: 60
         if: steps.earthdata_check.outputs.earthdata_ok == 'true'
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
