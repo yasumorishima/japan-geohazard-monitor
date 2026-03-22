@@ -884,7 +884,7 @@ Phase 13 revealed that 15 out of 27 data sources had been silently failing (only
 | ❌ EMPTY (4) | so2_column, lightning, satellite_em, collector_status |
 | ❌ MISSING (1) | snet_pressure (NIED approval pending) |
 
-Phase 15h (running): SO2 OPeNDAP parser fix (small test 1999 rows PASS) + GES DISC Hyrax approval + SMAP CPC extension + ISS LIS timeout fix. Remaining unfixable: lightning (Blitzortung restricted), satellite_em (CSES auth), collector_status (internal).
+Phase 15h (running): **SO2 408,351行取得成功** (0→408K, OPeNDAP parser fix + Hyrax approval). ML結果待ち。Remaining unfixable: lightning (Blitzortung restricted), satellite_em (CSES auth), collector_status (internal).
 
 CSEP Benchmark: ML_HistGBT Molchan skill **0.9811** (best), beating Simple_ETAS (0.8713), Relative_Intensity (0.7745), Smoothed_Seismicity (0.2220).
 
@@ -903,7 +903,7 @@ Feature matrix exported: 1,790 timesteps × 11×11 grid × 78 features → ready
 | **Phase 15c** | ✅ Complete | cloud_fraction ✅ (120K rows), ISS LIS ✅ (537 rows). Feature matrix export fixed (14h→sec) |
 | **Phase 15d-f** | ✅ Complete | tide_gauge ✅ (2.4M rows), nightlight ✅ (950 rows), electron flux ✅ (80→3,316 rows). SO2 still EMPTY |
 | **Phase 15g** | ✅ Complete | **Test AUC 0.7540** (best ever), 75 active features. electron flux SEISS L2 大幅増が効いた |
-| **Phase 15h** | 🔄 Running | SO2 OPeNDAP ASCIIパーサー修正（全行ヘッダ扱いバグ）+ GES DISC Hyrax承認 → 小テスト1999行PASS。SMAP SMOPS 2022キャップ+CPC月次2023拡張+User-Agent 403修正。ISS LIS granule cap 2000→700（timeout対策）。Cookie Jar汚染修正。小テストCI構築。Discord中間通知追加 |
+| **Phase 15h** | 🔄 Running | SO2パーサー修正 → **408,351行取得成功**（0→408K）。Hyrax承認+Cookie Jar汚染修正+SMAP 2022キャップ+ISS LIS timeout修正。小テストCI構築。Discord中間通知を全テーブル対応（EMPTY/LOW/coverage表示）+midrun artifact追加。ML結果待ち |
 | **ConvLSTM** | 🟢 Colab-ready | Spatiotemporal neural network. Script + feature_matrix.json deployed to Drive |
 | **SeismoGNN** | 🟢 Colab-ready | Graph Attention Network with fault-network topology. Script deployed to Drive |
 | **Transformer** | 📋 Next | SafeNet-style multi-window features (7/14/30/90/365d) + attention (SafeNet, Sci. Reports 2025) |
