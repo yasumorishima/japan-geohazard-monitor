@@ -868,23 +868,23 @@ Phase 13 revealed that 15 out of 27 data sources had been silently failing (only
 
 **Net result**: 11 broken sources fixed + 2 new sources (ISS LIS, VNP46A4) + 1 removed (animal). 8 sources switched to auth-free alternatives. All verified with curl before commit. Expected active features: **71-74/78** (from 57/79).
 
-### Phase 15 Results — Test AUC 0.7499 (best ever), 70 active features
+### Phase 15g Results — Test AUC 0.7540 (best ever), 75 active features
 
-| Metric | Phase 14 | Phase 15 | Change |
-|---|---|---|---|
-| CV AUC (pooled) | **0.7415** | 0.7411 | −0.0004 |
-| Test AUC | 0.7485 | **0.7499** | **+0.0014** |
-| Active features | 65/79 | **70/78** | +5 |
+| Metric | Phase 14 | Phase 15 | Phase 15g | Change (14→15g) |
+|---|---|---|---|---|
+| CV AUC (pooled) | **0.7415** | 0.7411 | 0.7415 | ±0 |
+| Test AUC | 0.7485 | 0.7499 | **0.7540** | **+0.0055** |
+| Active features | 65/79 | 70/78 | **75/78** | +10 |
 
-**Data validation (Phase 15c: 23 OK / 6 EMPTY / 1 MISSING)**:
+**Data validation (Phase 15g: 25 OK / 4 EMPTY / 1 MISSING)**:
 
 | Status | Tables |
 |---|---|
-| ✅ OK (23) | earthquakes, focal_mechanisms, tec, gnss_tec, geomag_kp, geomag_hourly, cosmic_ray, olr, earth_rotation, solar_wind, gravity_mascon, soil_moisture, ocean_color, goes_xray, goes_proton, tidal_stress, particle_flux, dart_pressure, ioc_sea_level, modis_lst, ulf_magnetic, **cloud_fraction** (120K rows), **iss_lis_lightning** (537 rows) |
-| ❌ EMPTY (6) | tide_gauge, so2_column, nightlight, lightning, satellite_em, collector_status |
+| ✅ OK (25) | earthquakes, focal_mechanisms, tec, gnss_tec, geomag_kp, geomag_hourly, cosmic_ray, olr, earth_rotation, solar_wind, gravity_mascon, soil_moisture, ocean_color, goes_xray, goes_proton, tidal_stress, particle_flux, dart_pressure, ioc_sea_level, modis_lst, ulf_magnetic, cloud_fraction, iss_lis_lightning, **tide_gauge** (2.4M rows), **nightlight** (950 rows) |
+| ❌ EMPTY (4) | so2_column, lightning, satellite_em, collector_status |
 | ❌ MISSING (1) | snet_pressure (NIED approval pending) |
 
-Phase 15c fixed: cloud_fraction (OPeNDAP path), ISS LIS (granule limit 200→2000). Phase 15d targets: tide_gauge (CSV fallback), nightlight (Earthdata Cloud URL), SO2 (cookie fix). Remaining unfixable: lightning (Blitzortung restricted), satellite_em (CSES auth), collector_status (internal).
+Phase 15h (running): SO2 OPeNDAP parser fix (small test 1999 rows PASS) + GES DISC Hyrax approval + SMAP CPC extension + ISS LIS timeout fix. Remaining unfixable: lightning (Blitzortung restricted), satellite_em (CSES auth), collector_status (internal).
 
 CSEP Benchmark: ML_HistGBT Molchan skill **0.9811** (best), beating Simple_ETAS (0.8713), Relative_Intensity (0.7745), Smoothed_Seismicity (0.2220).
 
@@ -900,8 +900,10 @@ Feature matrix exported: 1,790 timesteps × 11×11 grid × 78 features → ready
 | **Phase 14b** | ✅ Complete | Data acquisition overhaul: 57→71+ features (see table above) |
 | **Phase 15** | ✅ Complete | 70/78 active features. **Test AUC 0.7499** (best ever). Data preservation validated |
 | **Phase 15b** | ✅ Complete | Earthdata Bearer auth rewrite + ISS LIS table fix + workflow 420min timeout. AUC 0.7499 maintained |
-| **Phase 15c** | ⚠️ Partial | cloud_fraction ✅ (120K rows), ISS LIS ✅ (537 rows). tide_gauge/nightlight/SO2 still EMPTY. Feature matrix export fixed (14h→sec). ML step cancelled (6h timeout) |
-| **Phase 15d** | 🔄 Running | 3 remaining EMPTY fixes: tide_gauge (UHSLC CSV fallback), nightlight (Earthdata Cloud URL, EULA bypass), SO2 (fresh session cookie fix). All verified locally |
+| **Phase 15c** | ✅ Complete | cloud_fraction ✅ (120K rows), ISS LIS ✅ (537 rows). Feature matrix export fixed (14h→sec) |
+| **Phase 15d-f** | ✅ Complete | tide_gauge ✅ (2.4M rows), nightlight ✅ (950 rows), electron flux ✅ (80→3,316 rows). SO2 still EMPTY |
+| **Phase 15g** | ✅ Complete | **Test AUC 0.7540** (best ever), 75 active features. electron flux SEISS L2 大幅増が効いた |
+| **Phase 15h** | 🔄 Running | SO2 OPeNDAP ASCIIパーサー修正（全行ヘッダ扱いバグ）+ GES DISC Hyrax承認 → 小テスト1999行PASS。SMAP SMOPS 2022キャップ+CPC月次2023拡張+User-Agent 403修正。ISS LIS granule cap 2000→700（timeout対策）。Cookie Jar汚染修正。小テストCI構築。Discord中間通知追加 |
 | **ConvLSTM** | 🟢 Colab-ready | Spatiotemporal neural network. Script + feature_matrix.json deployed to Drive |
 | **SeismoGNN** | 🟢 Colab-ready | Graph Attention Network with fault-network topology. Script deployed to Drive |
 | **Transformer** | 📋 Next | SafeNet-style multi-window features (7/14/30/90/365d) + attention (SafeNet, Sci. Reports 2025) |
