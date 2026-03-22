@@ -304,6 +304,40 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
     n_pos = sum(1 for _, _, _, _, y in samples if y == 1)
     logger.info("  Dataset: %d samples (pos=%d, %.2f%%)", len(samples), n_pos, 100 * n_pos / max(len(samples), 1))
 
+    # --- Feature non-zero rate check (detect coordinate mismatch bugs) ---
+    # If a spatial data source has data but its feature column is 100% zero,
+    # it likely means the lookup key coordinates don't match the grid.
+    if samples:
+        n_samples = len(samples)
+        spatial_features_to_check = {
+            "so2_column_anomaly": so2_data,
+            "olr_anomaly": olr_data,
+            "gravity_anomaly_rate": gravity_data,
+            "soil_moisture_anomaly": soil_moisture_data,
+            "ocean_color_anomaly": ocean_color_data,
+            "cloud_fraction_anomaly": cloud_fraction_data,
+            "nightlight_anomaly": nightlight_data,
+        }
+        zero_alert_sources = []
+        for feat_name, source_data in spatial_features_to_check.items():
+            if not source_data:
+                continue  # No data loaded, skip
+            if feat_name not in active_feature_names:
+                continue  # Feature excluded, skip
+            feat_idx = active_feature_names.index(feat_name)
+            nonzero = sum(1 for _, _, _, feats, _ in samples if feats[feat_idx] != 0.0)
+            pct = 100 * nonzero / n_samples
+            if nonzero == 0:
+                zero_alert_sources.append(feat_name)
+                logger.warning("  ⚠️ ZERO-HIT: %s has %d source records but 0%% non-zero in features "
+                               "(likely coordinate mismatch)", feat_name, len(source_data))
+            else:
+                logger.info("  Feature check: %s non-zero %.1f%% (%d/%d)",
+                            feat_name, pct, nonzero, n_samples)
+        if zero_alert_sources:
+            logger.warning("  ⚠️ %d spatial features have data but 0%% hit rate: %s",
+                           len(zero_alert_sources), ", ".join(zero_alert_sources))
+
     metadata = {
         "n_events_m3": len(events),
         "n_active_cells": len(active_cells),
@@ -1365,6 +1399,7 @@ async def load_phase10_olr(db_path):
     """Load OLR data with 30-day rolling statistics for anomaly computation.
 
     Returns dict: {(date_str, cell_lat, cell_lon): {olr_wm2, olr_mean_30d, olr_std_30d}}
+    where cell coords are snapped to the 2° prediction grid via cell_key().
     """
     try:
         async with aiosqlite.connect(db_path) as db:
@@ -1375,16 +1410,26 @@ async def load_phase10_olr(db_path):
             logger.info("  No OLR data available")
             return {}
 
-        # Build per-cell time series for rolling stats
         from collections import defaultdict
-        cell_ts = defaultdict(list)
+        sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+        from features import cell_key
+
+        # Snap raw coords to 2° grid and average same-date same-cell values
+        cell_date_values = defaultdict(list)
         for r in rows:
-            cell_ts[(r[1], r[2])].append((r[0], r[3]))
+            clat, clon = cell_key(r[1], r[2])
+            cell_date_values[(r[0], clat, clon)].append(r[3])
+
+        # Build per-cell time series (sorted by date) for rolling stats
+        cell_ts = defaultdict(list)
+        for (date_str, clat, clon), vals in sorted(cell_date_values.items()):
+            valid = [v for v in vals if v is not None]
+            mean_val = sum(valid) / len(valid) if valid else None
+            cell_ts[(clat, clon)].append((date_str, mean_val))
 
         data = {}
         for (lat, lon), ts in cell_ts.items():
             for i, (date_str, olr) in enumerate(ts):
-                # 30-day rolling window
                 start_idx = max(0, i - 30)
                 window = [v for _, v in ts[start_idx:i] if v is not None]
                 mean_30d = sum(window) / len(window) if window else olr
@@ -1394,7 +1439,9 @@ async def load_phase10_olr(db_path):
                     "olr_mean_30d": mean_30d,
                     "olr_std_30d": max(std_30d, 0.1),
                 }
-        logger.info("  OLR data loaded: %d cell-date records", len(data))
+        n_raw = len(rows)
+        logger.info("  OLR data loaded: %d raw → %d grid-cell records (cell_key snap)",
+                     n_raw, len(data))
         return data
     except Exception as e:
         logger.warning("  OLR load failed (non-fatal): %s", e)
@@ -1472,6 +1519,7 @@ async def load_phase10_gravity(db_path):
     """Load GRACE gravity anomaly with month-to-month differences.
 
     Returns dict: {(date_str, cell_lat, cell_lon): {lwe_cm, lwe_prev_cm}}
+    where cell coords are snapped to the 2° prediction grid via cell_key().
     """
     try:
         async with aiosqlite.connect(db_path) as db:
@@ -1484,9 +1532,21 @@ async def load_phase10_gravity(db_path):
             return {}
 
         from collections import defaultdict
-        cell_ts = defaultdict(list)
+        sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+        from features import cell_key
+
+        # Snap raw coords to 2° grid and average same-date same-cell values
+        cell_date_values = defaultdict(list)
         for r in rows:
-            cell_ts[(r[1], r[2])].append((r[0], r[3]))
+            clat, clon = cell_key(r[1], r[2])
+            cell_date_values[(r[0], clat, clon)].append(r[3])
+
+        # Build per-cell time series sorted by date
+        cell_ts = defaultdict(list)
+        for (date_str, clat, clon), vals in sorted(cell_date_values.items()):
+            valid = [v for v in vals if v is not None]
+            mean_val = sum(valid) / len(valid) if valid else 0.0
+            cell_ts[(clat, clon)].append((date_str, mean_val))
 
         data = {}
         for (lat, lon), ts in cell_ts.items():
@@ -1497,7 +1557,9 @@ async def load_phase10_gravity(db_path):
                     "lwe_prev_cm": prev_lwe,
                 }
                 prev_lwe = lwe
-        logger.info("  GRACE gravity data loaded: %d cell-date records", len(data))
+        n_raw = len(rows)
+        logger.info("  GRACE gravity data loaded: %d raw → %d grid-cell records (cell_key snap)",
+                     n_raw, len(data))
         return data
     except Exception as e:
         logger.warning("  GRACE gravity load failed (non-fatal): %s", e)
@@ -1508,6 +1570,10 @@ async def load_phase10_so2(db_path):
     """Load SO2 column data with seasonal baseline.
 
     Returns dict: {(date_str, cell_lat, cell_lon): {so2_du, so2_baseline}}
+    where cell_lat/cell_lon are snapped to the 2° prediction grid via cell_key().
+
+    Raw OMI SO2 coordinates (e.g. 35.875, 139.625) are aggregated (mean)
+    into 2° grid cells to match the feature extractor's lookup keys.
     """
     try:
         async with aiosqlite.connect(db_path) as db:
@@ -1518,24 +1584,39 @@ async def load_phase10_so2(db_path):
             logger.info("  No SO2 data available")
             return {}
 
-        # Compute per-cell mean as baseline
+        # Snap raw coords to 2° grid and aggregate per (date, cell)
         from collections import defaultdict
-        cell_values = defaultdict(list)
+        sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+        from features import cell_key
+
+        # Collect all values per (date, grid_cell)
+        cell_date_values = defaultdict(list)
         for r in rows:
-            cell_values[(r[1], r[2])].append(r[3])
+            clat, clon = cell_key(r[1], r[2])
+            cell_date_values[(r[0], clat, clon)].append(r[3])
+
+        # Compute per-cell baseline (mean across all dates)
+        cell_all_values = defaultdict(list)
+        for (date_str, clat, clon), vals in cell_date_values.items():
+            cell_all_values[(clat, clon)].extend(vals)
 
         cell_baseline = {}
-        for k, vals in cell_values.items():
+        for k, vals in cell_all_values.items():
             cell_baseline[k] = sum(vals) / len(vals)
 
+        # Build final dict with mean SO2 per (date, cell)
         data = {}
-        for r in rows:
-            key = (r[0], r[1], r[2])
-            data[key] = {
-                "so2_du": r[3],
-                "so2_baseline": cell_baseline.get((r[1], r[2]), 0.0),
+        for (date_str, clat, clon), vals in cell_date_values.items():
+            mean_so2 = sum(vals) / len(vals)
+            data[(date_str, clat, clon)] = {
+                "so2_du": mean_so2,
+                "so2_baseline": cell_baseline.get((clat, clon), 0.0),
             }
-        logger.info("  SO2 data loaded: %d cell-date records", len(data))
+
+        n_raw = len(rows)
+        n_grid = len(data)
+        logger.info("  SO2 data loaded: %d raw → %d grid-cell records (cell_key snap)",
+                     n_raw, n_grid)
         return data
     except Exception as e:
         logger.warning("  SO2 load failed (non-fatal): %s", e)
@@ -1546,6 +1627,10 @@ async def load_phase10_soil_moisture(db_path):
     """Load soil moisture data with 30-day rolling statistics.
 
     Returns dict: {(date_str, cell_lat, cell_lon): {sm, sm_mean_30d, sm_std_30d}}
+    where cell_lat/cell_lon are snapped to the 2° prediction grid via cell_key().
+
+    Raw soil moisture coordinates are aggregated (mean) into 2° grid cells
+    to match the feature extractor's lookup keys.
     """
     try:
         async with aiosqlite.connect(db_path) as db:
@@ -1558,23 +1643,43 @@ async def load_phase10_soil_moisture(db_path):
             return {}
 
         from collections import defaultdict
-        cell_ts = defaultdict(list)
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+        from features import cell_key
+
+        # Snap raw coords to 2° grid; multiple raw coords may map to the same cell.
+        # Build per-cell time series: cell_ts[(clat, clon)] = [(date_str, sm), ...]
+        # On the same date, average values that fall in the same grid cell.
+        cell_date_values = defaultdict(list)
         for r in rows:
-            cell_ts[(r[1], r[2])].append((r[0], r[3]))
+            clat, clon = cell_key(r[1], r[2])
+            cell_date_values[(r[0], clat, clon)].append(r[3])
+
+        # Average same-cell same-date values, then rebuild sorted time series per cell
+        cell_ts = defaultdict(list)
+        for (date_str, clat, clon), vals in sorted(cell_date_values.items()):
+            valid = [v for v in vals if v is not None]
+            mean_val = sum(valid) / len(valid) if valid else None
+            cell_ts[(clat, clon)].append((date_str, mean_val))
 
         data = {}
-        for (lat, lon), ts in cell_ts.items():
+        for (clat, clon), ts in cell_ts.items():
             for i, (date_str, sm) in enumerate(ts):
                 start_idx = max(0, i - 30)
                 window = [v for _, v in ts[start_idx:i] if v is not None]
                 mean_30d = sum(window) / len(window) if window else sm
                 std_30d = (sum((v - mean_30d) ** 2 for v in window) / max(len(window), 1)) ** 0.5 if len(window) > 1 else 1.0
-                data[(date_str, lat, lon)] = {
+                data[(date_str, clat, clon)] = {
                     "sm": sm,
                     "sm_mean_30d": mean_30d,
                     "sm_std_30d": max(std_30d, 0.001),
                 }
-        logger.info("  Soil moisture data loaded: %d cell-date records", len(data))
+
+        n_raw = len(rows)
+        n_grid = len(data)
+        logger.info("  Soil moisture data loaded: %d raw → %d grid-cell records (cell_key snap)",
+                     n_raw, n_grid)
         return data
     except Exception as e:
         logger.warning("  Soil moisture load failed (non-fatal): %s", e)
@@ -1614,7 +1719,10 @@ async def load_phase10b_tide_gauge(db_path):
 
 
 async def load_phase10b_ocean_color(db_path):
-    """Load ocean color with rolling baseline."""
+    """Load ocean color with rolling baseline.
+
+    Cell coords are snapped to the 2° prediction grid via cell_key().
+    """
     try:
         async with aiosqlite.connect(db_path) as db:
             rows = await db.execute_fetchall(
@@ -1626,9 +1734,20 @@ async def load_phase10b_ocean_color(db_path):
             return {}
 
         from collections import defaultdict
-        cell_ts = defaultdict(list)
+        sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+        from features import cell_key
+
+        # Snap raw coords to 2° grid and average same-date same-cell values
+        cell_date_values = defaultdict(list)
         for r in rows:
-            cell_ts[(r[1], r[2])].append((r[0], r[3]))
+            clat, clon = cell_key(r[1], r[2])
+            cell_date_values[(r[0], clat, clon)].append(r[3])
+
+        cell_ts = defaultdict(list)
+        for (date_str, clat, clon), vals in sorted(cell_date_values.items()):
+            valid = [v for v in vals if v is not None]
+            mean_val = sum(valid) / len(valid) if valid else None
+            cell_ts[(clat, clon)].append((date_str, mean_val))
 
         data = {}
         for (lat, lon), ts in cell_ts.items():
@@ -1642,7 +1761,9 @@ async def load_phase10b_ocean_color(db_path):
                     "chlor_mean_30d": mean_30d,
                     "chlor_std_30d": max(std_30d, 0.01),
                 }
-        logger.info("  Ocean color data loaded: %d cell-date records", len(data))
+        n_raw = len(rows)
+        logger.info("  Ocean color data loaded: %d raw → %d grid-cell records (cell_key snap)",
+                     n_raw, len(data))
         return data
     except Exception as e:
         logger.warning("  Ocean color load failed (non-fatal): %s", e)
@@ -1650,7 +1771,14 @@ async def load_phase10b_ocean_color(db_path):
 
 
 async def load_phase10b_cloud_fraction(db_path):
-    """Load cloud fraction with rolling baseline."""
+    """Load cloud fraction with rolling baseline.
+
+    Returns dict: {(date_str, cell_lat, cell_lon): {cloud_frac, cloud_mean_30d, cloud_std_30d}}
+    where cell_lat/cell_lon are snapped to the 2° prediction grid via cell_key().
+
+    Raw cloud fraction coordinates are aggregated (mean) into 2° grid cells
+    to match the feature extractor's lookup keys.
+    """
     try:
         async with aiosqlite.connect(db_path) as db:
             rows = await db.execute_fetchall(
@@ -1662,23 +1790,40 @@ async def load_phase10b_cloud_fraction(db_path):
             return {}
 
         from collections import defaultdict
-        cell_ts = defaultdict(list)
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+        from features import cell_key
+
+        # Snap raw coords to 2° grid and average same-cell same-date values
+        cell_date_values = defaultdict(list)
         for r in rows:
-            cell_ts[(r[1], r[2])].append((r[0], r[3]))
+            clat, clon = cell_key(r[1], r[2])
+            cell_date_values[(r[0], clat, clon)].append(r[3])
+
+        cell_ts = defaultdict(list)
+        for (date_str, clat, clon), vals in sorted(cell_date_values.items()):
+            valid = [v for v in vals if v is not None]
+            mean_val = sum(valid) / len(valid) if valid else None
+            cell_ts[(clat, clon)].append((date_str, mean_val))
 
         data = {}
-        for (lat, lon), ts in cell_ts.items():
+        for (clat, clon), ts in cell_ts.items():
             for i, (date_str, val) in enumerate(ts):
                 start_idx = max(0, i - 30)
                 window = [v for _, v in ts[start_idx:i] if v is not None]
                 mean_30d = sum(window) / len(window) if window else val
                 std_30d = (sum((v - mean_30d) ** 2 for v in window) / max(len(window), 1)) ** 0.5 if len(window) > 1 else 1.0
-                data[(date_str, lat, lon)] = {
+                data[(date_str, clat, clon)] = {
                     "cloud_frac": val,
                     "cloud_mean_30d": mean_30d,
                     "cloud_std_30d": max(std_30d, 0.01),
                 }
-        logger.info("  Cloud fraction data loaded: %d cell-date records", len(data))
+
+        n_raw = len(rows)
+        n_grid = len(data)
+        logger.info("  Cloud fraction data loaded: %d raw → %d grid-cell records (cell_key snap)",
+                     n_raw, n_grid)
         return data
     except Exception as e:
         logger.warning("  Cloud fraction load failed (non-fatal): %s", e)
@@ -1686,7 +1831,14 @@ async def load_phase10b_cloud_fraction(db_path):
 
 
 async def load_phase10b_nightlight(db_path):
-    """Load nighttime light with baseline."""
+    """Load nighttime light with baseline.
+
+    Returns dict: {(date_str, cell_lat, cell_lon): {radiance, radiance_mean_6m, radiance_std_6m}}
+    where cell_lat/cell_lon are snapped to the 2° prediction grid via cell_key().
+
+    Raw nightlight coordinates are aggregated (mean) into 2° grid cells
+    to match the feature extractor's lookup keys.
+    """
     try:
         async with aiosqlite.connect(db_path) as db:
             rows = await db.execute_fetchall(
@@ -1698,22 +1850,39 @@ async def load_phase10b_nightlight(db_path):
             return {}
 
         from collections import defaultdict
-        cell_ts = defaultdict(list)
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+        from features import cell_key
+
+        # Snap raw coords to 2° grid and average same-cell same-date values
+        cell_date_values = defaultdict(list)
         for r in rows:
-            cell_ts[(r[1], r[2])].append((r[0], r[3]))
+            clat, clon = cell_key(r[1], r[2])
+            cell_date_values[(r[0], clat, clon)].append(r[3])
+
+        cell_ts = defaultdict(list)
+        for (date_str, clat, clon), vals in sorted(cell_date_values.items()):
+            valid = [v for v in vals if v is not None]
+            mean_val = sum(valid) / len(valid) if valid else None
+            cell_ts[(clat, clon)].append((date_str, mean_val))
 
         data = {}
-        for (lat, lon), ts in cell_ts.items():
+        for (clat, clon), ts in cell_ts.items():
             all_vals = [v for _, v in ts if v is not None]
             mean_all = sum(all_vals) / len(all_vals) if all_vals else 0.0
             std_all = (sum((v - mean_all) ** 2 for v in all_vals) / max(len(all_vals), 1)) ** 0.5 if len(all_vals) > 1 else 1.0
             for date_str, val in ts:
-                data[(date_str, lat, lon)] = {
+                data[(date_str, clat, clon)] = {
                     "radiance": val,
                     "radiance_mean_6m": mean_all,
                     "radiance_std_6m": max(std_all, 0.01),
                 }
-        logger.info("  Nightlight data loaded: %d cell-date records", len(data))
+
+        n_raw = len(rows)
+        n_grid = len(data)
+        logger.info("  Nightlight data loaded: %d raw → %d grid-cell records (cell_key snap)",
+                     n_raw, n_grid)
         return data
     except Exception as e:
         logger.warning("  Nightlight load failed (non-fatal): %s", e)
