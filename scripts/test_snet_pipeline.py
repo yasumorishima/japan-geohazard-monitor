@@ -158,16 +158,55 @@ def main():
         fail(2, f"Station list error: {e}")
         sys.exit(1)
 
+    # --- 2b. Network code survey ---
+    # S-net has multiple network codes; find which one has pressure channels
+    print()
+    print("--- S-net network code survey ---")
+    snet_codes = ["0120", "0120A", "0120B", "0120C"]
+    survey_work = tempfile.mkdtemp(prefix="snet_survey_")
+    survey_target = datetime.utcnow() - timedelta(days=2)
+    survey_start = survey_target.replace(hour=12, minute=0, second=0, microsecond=0)
+    best_code = "0120A"  # fallback
+    for code in snet_codes:
+        try:
+            sdata = client.get_continuous_waveform(code, survey_start, 1, outdir=survey_work)
+            if sdata and isinstance(sdata, tuple) and sdata[0] is not None:
+                fsize = Path(sdata[0]).stat().st_size
+                # Quick decode to check channel types
+                from HinetPy import win32
+                try:
+                    survey_sac = win32.extract_sac(sdata[0], sdata[1], outdir=survey_work)
+                    if not survey_sac:
+                        survey_sac = list(Path(survey_work).glob("**/*.SAC"))
+                    ch_types = Counter()
+                    for sf in survey_sac:
+                        parts = Path(str(sf)).stem.split(".")
+                        if len(parts) > 3:
+                            ch_types[parts[3]] += 1
+                    has_u = any(ch.endswith("U") for ch in ch_types)
+                    print(f"  {code}: {fsize:>10,} bytes, {len(survey_sac)} SAC files, "
+                          f"channels: {dict(ch_types.most_common(5))} {'← HAS PRESSURE' if has_u else ''}")
+                    if has_u:
+                        best_code = code
+                except Exception as e2:
+                    print(f"  {code}: {fsize:>10,} bytes, decode error: {str(e2)[:50]}")
+            else:
+                print(f"  {code}: no data")
+        except Exception as e:
+            print(f"  {code}: error - {str(e)[:60]}")
+    shutil.rmtree(survey_work, ignore_errors=True)
+    print(f"  Selected network: {best_code}")
+
     # --- 3. Waveform download (main test segment) ---
     # Run main pipeline FIRST before latency/coverage probes to avoid session limits
     print()
     target = datetime.utcnow() - timedelta(days=2)  # 2 days ago to avoid edge cases
     start = target.replace(hour=12, minute=0, second=0, microsecond=0)
     work_dir = tempfile.mkdtemp(prefix="snet_main_")
-    print(f"--- Main test: {start.strftime('%Y-%m-%d %H:%M')} UTC, 5 min ---")
+    print(f"--- Main test: {start.strftime('%Y-%m-%d %H:%M')} UTC, 5 min, network {best_code} ---")
 
     try:
-        data = client.get_continuous_waveform("0120A", start, 5, outdir=work_dir)
+        data = client.get_continuous_waveform(best_code, start, 5, outdir=work_dir)
         if data is None or not isinstance(data, tuple) or data[0] is None:
             fail(3, "Waveform download: no data returned")
             sys.exit(1)
@@ -428,7 +467,7 @@ def main():
         dt = datetime.utcnow() - timedelta(days=days_ago)
         probe = dt.replace(hour=0, minute=0, second=0, microsecond=0)
         try:
-            pdata = client.get_continuous_waveform("0120A", probe, 1, outdir=latency_work)
+            pdata = client.get_continuous_waveform(best_code, probe, 1, outdir=latency_work)
             if pdata and isinstance(pdata, tuple) and pdata[0] is not None:
                 fsize = Path(pdata[0]).stat().st_size if Path(pdata[0]).exists() else 0
                 print(f"  {days_ago}d ago ({probe.strftime('%Y-%m-%d')}): OK  {fsize:>10,} bytes")
@@ -468,7 +507,7 @@ def main():
     for label, dt in probe_dates:
         probe_start = dt.replace(hour=12, minute=0, second=0, microsecond=0)
         try:
-            pdata = client.get_continuous_waveform("0120A", probe_start, 1, outdir=probe_work)
+            pdata = client.get_continuous_waveform(best_code, probe_start, 1, outdir=probe_work)
             if pdata and isinstance(pdata, tuple) and pdata[0] is not None:
                 psize = Path(pdata[0]).stat().st_size if Path(pdata[0]).exists() else 0
                 status = "OK"
