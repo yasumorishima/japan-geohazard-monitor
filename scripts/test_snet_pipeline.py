@@ -3,18 +3,18 @@
 Tests every step from authentication to data storage, with full
 visibility into data content, coverage, and quality at each stage.
 
-Test items:
+Test items (ordered to run critical pipeline first, probes last):
   1.  Authentication
   2.  Station list + geographic coverage
-  3.  Data latency (most recent available date)
-  4.  Waveform download (5 min segment)
-  5.  WIN32 decode + channel table analysis
-  6.  SAC file parsing + sampling rate
-  7.  Channel type classification (pressure vs seismometer)
-  8.  Per-station data availability
-  9.  Pressure value physical validation
-  10. SQLite write/read round-trip
-  11. Temporal coverage probe (2016-present, 9 dates)
+  3.  Waveform download (5 min segment)
+  4.  WIN32 decode + channel table analysis
+  5.  SAC file parsing + sampling rate
+  6.  Channel type classification (pressure vs seismometer)
+  7.  Per-station data availability
+  8.  Pressure value physical validation
+  9.  SQLite write/read round-trip
+  10. Data latency (most recent available date)
+  11. Temporal coverage probe (2016-present, 11 dates)
   12. fetch_snet_pressure.py compatibility check
 """
 
@@ -158,36 +158,10 @@ def main():
         fail(2, f"Station list error: {e}")
         sys.exit(1)
 
-    # --- 3. Data latency check ---
+    # --- 3. Waveform download (main test segment) ---
+    # Run main pipeline FIRST before latency/coverage probes to avoid session limits
     print()
-    print("--- Data latency check ---")
-    latency_work = tempfile.mkdtemp(prefix="snet_latency_")
-    latest_available = None
-    for days_ago in [0, 1, 2, 3, 5]:
-        dt = datetime.utcnow() - timedelta(days=days_ago)
-        probe = dt.replace(hour=0, minute=0, second=0, microsecond=0)
-        try:
-            pdata = client.get_continuous_waveform("0120A", probe, 1, outdir=latency_work)
-            if pdata and isinstance(pdata, tuple) and pdata[0] is not None:
-                fsize = Path(pdata[0]).stat().st_size if Path(pdata[0]).exists() else 0
-                print(f"  {days_ago}d ago ({probe.strftime('%Y-%m-%d')}): OK  {fsize:>10,} bytes")
-                if latest_available is None:
-                    latest_available = probe
-            else:
-                print(f"  {days_ago}d ago ({probe.strftime('%Y-%m-%d')}): no data")
-        except Exception as e:
-            print(f"  {days_ago}d ago ({probe.strftime('%Y-%m-%d')}): error - {str(e)[:60]}")
-    shutil.rmtree(latency_work, ignore_errors=True)
-
-    if latest_available:
-        lag = (datetime.utcnow() - latest_available).days
-        ok(3, f"Data latency: latest available = {latest_available.strftime('%Y-%m-%d')} ({lag}d lag)")
-    else:
-        warn(3, "Data latency: could not determine latest available date")
-
-    # --- 4. Waveform download (main test segment) ---
-    print()
-    target = datetime.utcnow() - timedelta(days=1)
+    target = datetime.utcnow() - timedelta(days=2)  # 2 days ago to avoid edge cases
     start = target.replace(hour=12, minute=0, second=0, microsecond=0)
     work_dir = tempfile.mkdtemp(prefix="snet_main_")
     print(f"--- Main test: {start.strftime('%Y-%m-%d %H:%M')} UTC, 5 min ---")
@@ -195,17 +169,17 @@ def main():
     try:
         data = client.get_continuous_waveform("0120A", start, 5, outdir=work_dir)
         if data is None or not isinstance(data, tuple) or data[0] is None:
-            fail(4, "Waveform download: no data returned")
+            fail(3, "Waveform download: no data returned")
             sys.exit(1)
         win32_file, ch_table = data
         fsize = Path(win32_file).stat().st_size
-        ok(4, f"Waveform download: {fsize:,} bytes")
+        ok(3, f"Waveform download: {fsize:,} bytes")
         print(f"       File: {Path(win32_file).name}")
     except Exception as e:
-        fail(4, f"Waveform download: {e}")
+        fail(3, f"Waveform download: {e}")
         sys.exit(1)
 
-    # --- 5. WIN32 decode + channel table ---
+    # --- 4. WIN32 decode + channel table ---
     ch_table_lines = []
     if ch_table and Path(ch_table).exists():
         ch_table_lines = Path(ch_table).read_text().strip().split("\n")
@@ -219,7 +193,7 @@ def main():
         print(f"       catwin32:   {catwin32_path}")
         print(f"       win2sac_32: {win2sac_path}")
         if not win2sac_path:
-            fail(5, "WIN32 decode: win2sac_32 not found in PATH")
+            fail(4, "WIN32 decode: win2sac_32 not found in PATH")
             sys.exit(1)
 
         # List work_dir before extract
@@ -242,17 +216,17 @@ def main():
                 sac_files = all_sac
                 print(f"       extract_sac returned empty but found {len(all_sac)} SAC files on disk")
             else:
-                fail(5, f"WIN32 decode: 0 SAC files (new files: {sorted(new_files)[:5]})")
+                fail(4, f"WIN32 decode: 0 SAC files (new files: {sorted(new_files)[:5]})")
                 sys.exit(1)
-        ok(5, f"WIN32 decode: {len(sac_files)} SAC files from {len(ch_table_lines)} channels")
+        ok(4, f"WIN32 decode: {len(sac_files)} SAC files from {len(ch_table_lines)} channels")
         sizes = [Path(str(f)).stat().st_size for f in sac_files if Path(str(f)).exists()]
         if sizes:
             print(f"       SAC sizes: min={min(sizes):,}  max={max(sizes):,}  total={sum(sizes):,} bytes")
     except Exception as e:
-        fail(5, f"WIN32 decode: {e}")
+        fail(4, f"WIN32 decode: {e}")
         sys.exit(1)
 
-    # --- 6. SAC parsing + sampling rate ---
+    # --- 5. SAC parsing + sampling rate ---
     parsed = []
     parse_errors = 0
     sampling_rates = set()
@@ -277,14 +251,14 @@ def main():
         })
 
     if parsed:
-        ok(6, f"SAC parsing: {len(parsed)}/{len(sac_files)} OK, {parse_errors} errors")
+        ok(5, f"SAC parsing: {len(parsed)}/{len(sac_files)} OK, {parse_errors} errors")
         print(f"       Sampling rates found: {sorted(sampling_rates)} Hz")
         print(f"       Expected: 10 Hz (S-net continuous), 100 Hz (triggered)")
     else:
-        fail(6, f"SAC parsing: 0 files parsed, {parse_errors} errors")
+        fail(5, f"SAC parsing: 0 files parsed, {parse_errors} errors")
         sys.exit(1)
 
-    # --- 7. Channel type classification ---
+    # --- 6. Channel type classification ---
     print()
     channel_types = Counter(p["channel"] for p in parsed)
     channel_suffixes = Counter(p["channel"][-1] for p in parsed)
@@ -302,14 +276,14 @@ def main():
         print(f"    {ch:>8}: {count:>4} files  [{label}]")
 
     if pressure_ch:
-        ok(7, f"Pressure channels: {len(pressure_ch)} (suffix 'U'), "
+        ok(6, f"Pressure channels: {len(pressure_ch)} (suffix 'U'), "
               f"accel/vel: {len(accel_ch)}, other: {len(other_ch)}")
     else:
-        warn(7, f"No channels ending with 'U' found. "
+        warn(6, f"No channels ending with 'U' found. "
                f"Available suffixes: {dict(channel_suffixes)}. "
                f"fetch_snet_pressure.py filter needs update!")
 
-    # --- 8. Per-station data availability ---
+    # --- 7. Per-station data availability ---
     print()
     station_data = defaultdict(lambda: {"pressure": 0, "accel": 0, "other": 0, "channels": []})
     for p in parsed:
@@ -325,7 +299,7 @@ def main():
     stations_with_pressure = sum(1 for v in station_data.values() if v["pressure"] > 0)
     stations_with_any = len(station_data)
 
-    ok(8, f"Per-station: {stations_with_any}/{n_stations} have data, "
+    ok(7, f"Per-station: {stations_with_any}/{n_stations} have data, "
           f"{stations_with_pressure} have pressure channel")
     print(f"       Stations with pressure data: {stations_with_pressure}/{n_stations} "
           f"({100*stations_with_pressure/n_stations:.0f}%)")
@@ -349,7 +323,7 @@ def main():
         chs = ",".join(sorted(set(info["channels"])))
         print(f"       {st:<12} {info['pressure']:>3} {info['accel']:>3} {info['other']:>3}  {chs}")
 
-    # --- 9. Pressure value physical validation ---
+    # --- 8. Pressure value physical validation ---
     print()
     if pressure_ch:
         means = [p["mean"] for p in pressure_ch]
@@ -390,13 +364,13 @@ def main():
             print(f"  Interpretation: values ~{median_mean:.2f} → unit unclear, needs investigation")
 
         if valid > 0:
-            ok(9, f"Pressure validation: {valid}/{len(pressure_ch)} valid channels")
+            ok(8, f"Pressure validation: {valid}/{len(pressure_ch)} valid channels")
         else:
-            warn(9, f"Pressure validation: all channels have zero-std or NaN")
+            warn(8, f"Pressure validation: all channels have zero-std or NaN")
     else:
-        warn(9, "Pressure validation skipped: no pressure channels identified")
+        warn(8, "Pressure validation skipped: no pressure channels identified")
 
-    # --- 10. SQLite write/read round-trip ---
+    # --- 9. SQLite write/read round-trip ---
     print()
     import sqlite3
     db_path = os.environ.get("GEOHAZARD_DB_PATH", "./data/geohazard.db")
@@ -439,11 +413,38 @@ def main():
         ).fetchall()
         conn.close()
 
-        ok(10, f"SQLite round-trip: {inserted} written, {count} in table")
+        ok(9, f"SQLite round-trip: {inserted} written, {count} in table")
         for row in sample:
             print(f"       {row[0]}: mean={row[1]:.2f} hPa, std={row[2]:.4f}, n={row[3]}")
     except Exception as e:
-        fail(10, f"SQLite: {e}")
+        fail(9, f"SQLite: {e}")
+
+    # --- 10. Data latency ---
+    print()
+    print("--- Data latency check ---")
+    latency_work = tempfile.mkdtemp(prefix="snet_latency_")
+    latest_available = None
+    for days_ago in [0, 1, 2, 3, 5]:
+        dt = datetime.utcnow() - timedelta(days=days_ago)
+        probe = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        try:
+            pdata = client.get_continuous_waveform("0120A", probe, 1, outdir=latency_work)
+            if pdata and isinstance(pdata, tuple) and pdata[0] is not None:
+                fsize = Path(pdata[0]).stat().st_size if Path(pdata[0]).exists() else 0
+                print(f"  {days_ago}d ago ({probe.strftime('%Y-%m-%d')}): OK  {fsize:>10,} bytes")
+                if latest_available is None:
+                    latest_available = probe
+            else:
+                print(f"  {days_ago}d ago ({probe.strftime('%Y-%m-%d')}): no data")
+        except Exception as e:
+            print(f"  {days_ago}d ago ({probe.strftime('%Y-%m-%d')}): error - {str(e)[:60]}")
+    shutil.rmtree(latency_work, ignore_errors=True)
+
+    if latest_available:
+        lag = (datetime.utcnow() - latest_available).days
+        ok(10, f"Data latency: latest = {latest_available.strftime('%Y-%m-%d')} ({lag}d lag)")
+    else:
+        warn(10, "Data latency: could not determine latest available date")
 
     # --- 11. Temporal coverage probe ---
     print()
