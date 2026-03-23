@@ -2323,7 +2323,8 @@ async def _load_sensor_data(db_path, sensor_type_filter, extra_columns=""):
             }
             # Extra columns (vlf_power, vlf_hv_ratio for velocity)
             if extra_columns:
-                col_names = [c.strip().split(")")[-1].strip() for c in extra_columns.split(",")]
+                # Extract column name from AVG(col_name) expressions
+                col_names = [c.strip().split("(")[-1].rstrip(")").strip() for c in extra_columns.split(",")]
                 for j, col_name in enumerate(col_names):
                     entry[col_name] = r[7 + j] if r[7 + j] is not None else 0.0
             daily.append(entry)

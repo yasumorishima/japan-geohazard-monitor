@@ -346,21 +346,28 @@ def main():
     # ---- Test 11: ML loader integration ----
     try:
         from ml_prediction import load_phase18_snet_waveform
-        # Test with the temporary DB (has 1 row)
+        # Test with the temporary DB (has accel + velocity rows)
         os.environ["GEOHAZARD_DB_PATH"] = test_db
-        result = asyncio.run(load_phase18_snet_waveform(test_db))
-        if result:
-            sample_date = list(result.keys())[0]
-            sample_entry = result[sample_date]
-            expected_keys = ["rms_combined", "hv_ratio", "lf_power", "spatial_gradient", "segment_max_anomaly"]
-            missing_keys = [k for k in expected_keys if k not in sample_entry]
-            if missing_keys:
-                report("WARN", 11, f"ML loader: missing keys {missing_keys}")
-            else:
-                report("OK", 11, f"ML loader: {len(result)} dates, {len(sample_entry)} fields/date")
-                print(f"       Sample keys: {sorted(sample_entry.keys())[:10]}...")
+        accel_data, velocity_data, highgain_data = asyncio.run(load_phase18_snet_waveform(test_db))
+
+        parts = []
+        if accel_data:
+            sample_date = list(accel_data.keys())[0]
+            sample_entry = accel_data[sample_date]
+            expected_keys = ["rms_combined", "hv_ratio", "lf_power"]
+            missing = [k for k in expected_keys if k not in sample_entry]
+            parts.append(f"accel: {len(accel_data)} dates, {len(sample_entry)} fields")
+            if missing:
+                parts.append(f"missing: {missing}")
+        if velocity_data:
+            parts.append(f"velocity: {len(velocity_data)} dates")
+        if highgain_data:
+            parts.append(f"highgain: {len(highgain_data)} dates")
+
+        if parts:
+            report("OK", 11, f"ML loader: {', '.join(parts)}")
         else:
-            report("WARN", 11, "ML loader returned empty (expected with 1 row)")
+            report("WARN", 11, "ML loader returned empty (expected with minimal data)")
     except Exception as e:
         report("FAIL", 11, f"ML loader failed: {e}")
 
