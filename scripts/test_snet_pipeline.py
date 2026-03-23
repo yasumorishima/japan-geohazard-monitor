@@ -135,13 +135,10 @@ def main():
             print(f"       Stations with lat=None: {none_lat_count}/{n_stations}")
 
         for st in stations:
-            # Try multiple attribute patterns
-            sid = (getattr(st, "code", None) or getattr(st, "name", None)
-                   or (st[0] if isinstance(st, (list, tuple)) and len(st) > 0 else None))
-            lat = (getattr(st, "latitude", None)
-                   or (float(st[2]) if isinstance(st, (list, tuple)) and len(st) > 2 else None))
-            lon = (getattr(st, "longitude", None)
-                   or (float(st[3]) if isinstance(st, (list, tuple)) and len(st) > 3 else None))
+            # Use 'name' (e.g. N.S1N01) as station ID, not 'code' (0120A for all)
+            sid = getattr(st, "name", None) or getattr(st, "code", None)
+            lat = getattr(st, "latitude", None)
+            lon = getattr(st, "longitude", None)
             if sid and lat is not None:
                 station_coords[str(sid)] = (float(lat), float(lon))
 
@@ -215,10 +212,38 @@ def main():
 
     try:
         from HinetPy import win32
-        sac_files = win32.extract_sac(win32_file, ch_table, outdir=work_dir)
-        if not sac_files:
-            fail(5, "WIN32 decode: 0 SAC files")
+        import subprocess
+        # Verify win32tools are available
+        catwin32_path = shutil.which("catwin32")
+        win2sac_path = shutil.which("win2sac_32")
+        print(f"       catwin32:   {catwin32_path}")
+        print(f"       win2sac_32: {win2sac_path}")
+        if not win2sac_path:
+            fail(5, "WIN32 decode: win2sac_32 not found in PATH")
             sys.exit(1)
+
+        # List work_dir before extract
+        pre_files = set(os.listdir(work_dir))
+
+        sac_files = win32.extract_sac(win32_file, ch_table, outdir=work_dir)
+
+        # Check what files were actually created
+        post_files = set(os.listdir(work_dir))
+        new_files = post_files - pre_files
+        sac_on_disk = [f for f in new_files if f.endswith(".SAC") or f.endswith(".sac")]
+        print(f"       New files created: {len(new_files)} (SAC: {len(sac_on_disk)})")
+        if new_files and not sac_on_disk:
+            print(f"       Non-SAC files: {sorted(new_files)[:10]}")
+
+        if not sac_files:
+            # Try listing all SAC files manually
+            all_sac = list(Path(work_dir).glob("**/*.SAC")) + list(Path(work_dir).glob("**/*.sac"))
+            if all_sac:
+                sac_files = all_sac
+                print(f"       extract_sac returned empty but found {len(all_sac)} SAC files on disk")
+            else:
+                fail(5, f"WIN32 decode: 0 SAC files (new files: {sorted(new_files)[:5]})")
+                sys.exit(1)
         ok(5, f"WIN32 decode: {len(sac_files)} SAC files from {len(ch_table_lines)} channels")
         sizes = [Path(str(f)).stat().st_size for f in sac_files if Path(str(f)).exists()]
         if sizes:

@@ -137,8 +137,9 @@ def _fetch_snet_data(user: str, password: str, target_date: datetime) -> list[di
         stations = client.get_station_list(SNET_PRESSURE_CODE)
         if stations is not None:
             for st in stations:
-                # HinetPy station list: each item has .code, .name, .latitude, .longitude
-                sid = getattr(st, "code", None) or getattr(st, "name", None)
+                # HinetPy station list: .code is network (0120A for all),
+                # .name is station ID (N.S1N01, etc.)
+                sid = getattr(st, "name", None) or getattr(st, "code", None)
                 lat = getattr(st, "latitude", None)
                 lon = getattr(st, "longitude", None)
                 if sid and lat is not None and lon is not None:
