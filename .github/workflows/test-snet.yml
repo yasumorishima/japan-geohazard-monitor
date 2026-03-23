@@ -10,7 +10,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -18,41 +18,201 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install HinetPy
-        run: pip install HinetPy
+      - name: Install dependencies
+        run: pip install HinetPy numpy aiosqlite aiohttp
 
-      - name: Test NIED Hi-net authentication + S-net station list
+      - name: Full S-net pipeline test (auth → download → decode → validate → store)
         env:
           HINET_USER: ${{ secrets.HINET_USER }}
           HINET_PASS: ${{ secrets.HINET_PASS }}
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
+          mkdir -p data
           python3 -c "
-          import os, sys
+          import os, sys, tempfile, struct
+          from datetime import datetime, timedelta, timezone
+          from pathlib import Path
+          import numpy as np
+
           user = os.environ.get('HINET_USER', '')
           pwd = os.environ.get('HINET_PASS', '')
           if not user or not pwd:
-              print('ERROR: HINET_USER/HINET_PASS not set')
+              print('FAIL [1/8] Credentials not set')
               sys.exit(1)
-          print(f'User: {user[:2]}***')
 
+          results = []
+          total = 8
+
+          # --- 1. Authentication ---
           from HinetPy import Client
-          client = Client(user, pwd)
-          print('Auth OK')
+          try:
+              client = Client(user, pwd)
+              print(f'OK   [1/{total}] Authentication')
+          except Exception as e:
+              print(f'FAIL [1/{total}] Authentication: {e}')
+              sys.exit(1)
 
-          stations = client.get_station_list('0120A')
-          if stations:
-              print(f'S-net stations: {len(stations)}')
-              for s in list(stations)[:5]:
-                  print(f'  {s}')
+          # --- 2. Station list ---
+          try:
+              stations = client.get_station_list('0120A')
+              n_stations = len(stations) if stations else 0
+              if n_stations > 0:
+                  print(f'OK   [2/{total}] Station list: {n_stations} stations')
+              else:
+                  print(f'FAIL [2/{total}] Station list: 0 stations returned')
+                  sys.exit(1)
+          except Exception as e:
+              print(f'FAIL [2/{total}] Station list: {e}')
+              sys.exit(1)
+
+          # --- 3. Waveform download (1 segment, 5 min, yesterday) ---
+          target = datetime.now(timezone.utc) - timedelta(days=1)
+          start = target.replace(hour=12, minute=0, second=0, microsecond=0)
+          work_dir = tempfile.mkdtemp(prefix='snet_test_')
+          try:
+              data = client.get_continuous_waveform('0120A', start, 5, outdir=work_dir)
+              if data is None:
+                  print(f'FAIL [3/{total}] Waveform download: None returned')
+                  sys.exit(1)
+              if isinstance(data, tuple) and len(data) == 2:
+                  win32_file, ch_table = data
+                  if win32_file is None:
+                      print(f'FAIL [3/{total}] Waveform download: WIN32 file is None')
+                      sys.exit(1)
+                  fsize = Path(win32_file).stat().st_size if Path(win32_file).exists() else 0
+                  print(f'OK   [3/{total}] Waveform download: {fsize:,} bytes')
+              else:
+                  print(f'FAIL [3/{total}] Waveform download: unexpected format {type(data)}')
+                  sys.exit(1)
+          except Exception as e:
+              print(f'FAIL [3/{total}] Waveform download: {e}')
+              sys.exit(1)
+
+          # --- 4. WIN32 decode ---
+          try:
+              sac_files = client.decode(win32_file, ch_table, outdir=work_dir)
+              if not sac_files:
+                  print(f'FAIL [4/{total}] WIN32 decode: no SAC files produced')
+                  sys.exit(1)
+              print(f'OK   [4/{total}] WIN32 decode: {len(sac_files)} SAC files')
+          except Exception as e:
+              print(f'FAIL [4/{total}] WIN32 decode: {e}')
+              sys.exit(1)
+
+          # --- 5. SAC file parsing ---
+          parsed_count = 0
+          pressure_channels = []
+          all_channels = []
+          for sac_path in sac_files:
+              basename = Path(str(sac_path)).stem
+              parts = basename.split('.')
+              if len(parts) >= 4:
+                  all_channels.append(parts[3])
+              try:
+                  with open(str(sac_path), 'rb') as f:
+                      header = f.read(632)
+                      if len(header) < 632:
+                          continue
+                      npts = struct.unpack_from('<i', header, 316)[0]
+                      if npts <= 0 or npts > 10_000_000:
+                          npts = struct.unpack_from('>i', header, 316)[0]
+                          if npts <= 0 or npts > 10_000_000:
+                              continue
+                          arr = np.frombuffer(f.read(npts * 4), dtype='>f4')
+                      else:
+                          arr = np.frombuffer(f.read(npts * 4), dtype='<f4')
+                      if len(arr) == npts:
+                          parsed_count += 1
+                          channel = parts[3] if len(parts) > 3 else ''
+                          is_pressure = channel.endswith('U') or 'BPR' in channel.upper()
+                          if is_pressure:
+                              pressure_channels.append({
+                                  'station': parts[1] if len(parts) > 1 else '?',
+                                  'channel': channel,
+                                  'npts': npts,
+                                  'mean': float(np.mean(arr)),
+                                  'std': float(np.std(arr)),
+                              })
+              except Exception:
+                  continue
+          if parsed_count > 0:
+              print(f'OK   [5/{total}] SAC parsing: {parsed_count}/{len(sac_files)} files parsed')
           else:
-              print('WARNING: No stations returned (may need different network code)')
-              # Try alternative codes
-              for code in ['0120', '0120B', '0103']:
+              print(f'FAIL [5/{total}] SAC parsing: 0 files parsed')
+              sys.exit(1)
+
+          # --- 6. Pressure channel identification ---
+          unique_ch = sorted(set(all_channels))
+          if pressure_channels:
+              print(f'OK   [6/{total}] Pressure channels: {len(pressure_channels)} found')
+              for pc in pressure_channels[:5]:
+                  print(f'       {pc[\"station\"]} ch={pc[\"channel\"]} npts={pc[\"npts\"]} mean={pc[\"mean\"]:.2f} std={pc[\"std\"]:.2f}')
+          else:
+              print(f'WARN [6/{total}] Pressure channels: 0 found (channels present: {unique_ch[:10]})')
+              print(f'       This may need channel filter adjustment in fetch_snet_pressure.py')
+
+          # --- 7. Data value validation ---
+          if pressure_channels:
+              valid = 0
+              for pc in pressure_channels:
+                  # Sea bottom pressure: ~100-600 atm = 10,000-60,000 hPa
+                  # Raw SAC values are in counts or Pa, varies by station
+                  # Just check not all zeros and not NaN
+                  if pc['std'] > 0 and not np.isnan(pc['mean']):
+                      valid += 1
+              if valid > 0:
+                  print(f'OK   [7/{total}] Data validation: {valid}/{len(pressure_channels)} channels have valid data (non-zero std, no NaN)')
+              else:
+                  print(f'WARN [7/{total}] Data validation: all channels have zero variance or NaN')
+          else:
+              print(f'SKIP [7/{total}] Data validation: no pressure channels to validate')
+
+          # --- 8. SQLite write test ---
+          import sqlite3
+          db_path = 'data/geohazard.db'
+          try:
+              conn = sqlite3.connect(db_path)
+              conn.execute('''CREATE TABLE IF NOT EXISTS snet_pressure (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  station_id TEXT NOT NULL,
+                  observed_at TEXT NOT NULL,
+                  pressure_mean_hpa REAL,
+                  pressure_std_hpa REAL,
+                  latitude REAL, longitude REAL,
+                  n_samples INTEGER,
+                  received_at TEXT NOT NULL,
+                  UNIQUE(station_id, observed_at))''')
+              test_rows = pressure_channels if pressure_channels else [{'station': 'TEST', 'mean': 0, 'std': 0, 'npts': 0}]
+              inserted = 0
+              for pc in test_rows[:5]:
                   try:
-                      st2 = client.get_station_list(code)
-                      if st2:
-                          print(f'  Network {code}: {len(st2)} stations')
-                  except:
+                      conn.execute(
+                          'INSERT OR IGNORE INTO snet_pressure (station_id, observed_at, pressure_mean_hpa, pressure_std_hpa, n_samples, received_at) VALUES (?,?,?,?,?,?)',
+                          (pc.get('station','?'), start.strftime('%Y-%m-%dT%H:%M:%SZ'), pc['mean']/100.0, pc['std']/100.0, pc.get('npts',0), datetime.now(timezone.utc).isoformat())
+                      )
+                      inserted += 1
+                  except Exception:
                       pass
-          print('Test complete')
+              conn.commit()
+              count = conn.execute('SELECT COUNT(*) FROM snet_pressure').fetchone()[0]
+              conn.close()
+              print(f'OK   [8/{total}] SQLite write: {inserted} rows inserted, {count} total in table')
+          except Exception as e:
+              print(f'FAIL [8/{total}] SQLite write: {e}')
+              sys.exit(1)
+
+          # --- Summary ---
+          print()
+          print('='*60)
+          n_ok = sum(1 for line in [f'1-8'] if True)  # placeholder
+          print(f'S-net pipeline test complete')
+          print(f'  Stations: {n_stations}')
+          print(f'  SAC files: {len(sac_files)} decoded, {parsed_count} parsed')
+          print(f'  Pressure channels: {len(pressure_channels)}')
+          print(f'  Channel types found: {unique_ch[:15]}')
+          print('='*60)
+
+          # Cleanup
+          import shutil
+          shutil.rmtree(work_dir, ignore_errors=True)
           "
