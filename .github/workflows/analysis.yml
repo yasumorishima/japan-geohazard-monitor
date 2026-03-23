@@ -55,17 +55,29 @@ jobs:
               --dir /tmp/db-restore 2>/dev/null || true
             if [ -f /tmp/db-restore/data/geohazard.db ]; then
               cp /tmp/db-restore/data/geohazard.db data/geohazard.db
+              # Remove stale WAL/SHM files that cause "malformed" errors
+              rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
-              echo "✅ Restored DB from run $PREV_RUN ($DB_SIZE)"
+              echo "Restored DB from run $PREV_RUN ($DB_SIZE) — running integrity check..."
               python3 -c "
-          import sqlite3
+          import sqlite3, sys
           conn = sqlite3.connect('data/geohazard.db')
+          result = conn.execute('PRAGMA integrity_check').fetchone()[0]
+          if result != 'ok':
+              print(f'❌ DB integrity check FAILED: {result}')
+              conn.close()
+              sys.exit(1)
           tables = conn.execute(\"SELECT name FROM sqlite_master WHERE type='table'\").fetchall()
           for t in tables:
               count = conn.execute(f'SELECT COUNT(*) FROM {t[0]}').fetchone()[0]
               print(f'  {t[0]}: {count:,} rows')
           conn.close()
-          " || true
+          print('✅ DB integrity check passed')
+          "
+              if [ $? -ne 0 ]; then
+                echo "⚠️ Corrupted checkpoint — deleting and starting fresh"
+                rm -f data/geohazard.db
+              fi
             else
               echo "⚠️ No DB file in checkpoint artifact"
             fi
@@ -546,6 +558,19 @@ jobs:
           path: results/midrun/
           retention-days: 7
 
+      - name: Flush WAL before checkpoint upload
+        if: always()
+        run: |
+          if [ -f data/geohazard.db ]; then
+            python3 -c "
+          import sqlite3
+          conn = sqlite3.connect('data/geohazard.db')
+          conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+          conn.close()
+          print('✅ WAL flushed — safe to upload')
+          " || echo "⚠️ WAL flush failed (DB may be corrupted)"
+          fi
+
       - name: Upload database checkpoint (post-fetch)
         if: always()
         uses: actions/upload-artifact@v4
@@ -591,11 +616,18 @@ jobs:
             echo "::error::Database not found after restore"
             exit 1
           fi
+          # Remove stale WAL/SHM files
+          rm -f data/geohazard.db-wal data/geohazard.db-shm
           DB_SIZE=$(du -h data/geohazard.db | cut -f1)
-          echo "✅ Database restored ($DB_SIZE)"
+          echo "Database restored ($DB_SIZE) — running integrity check..."
           python3 -c "
-          import sqlite3
+          import sqlite3, sys
           conn = sqlite3.connect('data/geohazard.db')
+          result = conn.execute('PRAGMA integrity_check').fetchone()[0]
+          if result != 'ok':
+              print(f'::error::DB integrity check FAILED: {result}')
+              conn.close()
+              sys.exit(1)
           tables = conn.execute(\"SELECT name FROM sqlite_master WHERE type='table'\").fetchall()
           total = 0
           for t in tables:
@@ -604,6 +636,7 @@ jobs:
               print(f'  {t[0]}: {count:,} rows')
           print(f'Total: {total:,} rows across {len(tables)} tables')
           conn.close()
+          print('✅ DB integrity check passed')
           "
 
       # ====== ANALYSIS PHASE ======
