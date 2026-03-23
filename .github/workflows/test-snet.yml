@@ -48,3 +48,38 @@ jobs:
           name: snet-test-${{ github.run_id }}
           path: results/snet_test.txt
           retention-days: 30
+
+      - name: Notify Discord
+        if: always()
+        run: |
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then exit 0; fi
+          STATUS="${{ job.status }}"
+          if [ "$STATUS" = "success" ]; then
+            TITLE="✅ S-net Pipeline Test PASSED"
+            COLOR=3066993
+          else
+            TITLE="❌ S-net Pipeline Test FAILED"
+            COLOR=15158332
+          fi
+          # Extract summary line from test output
+          SUMMARY=$(grep -E "Results:|FINAL SUMMARY" results/snet_test.txt 2>/dev/null | head -1 || echo "See logs")
+          COUNTS=$(grep -E "^  Results:" results/snet_test.txt 2>/dev/null | head -1 || echo "")
+          if [ -z "$COUNTS" ]; then
+            COUNTS=$(tail -20 results/snet_test.txt 2>/dev/null | grep -E "OK|FAIL|WARN" | head -1 || echo "Check artifact")
+          fi
+          curl -s -X POST "$DISCORD_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"embeds\": [{
+                \"title\": \"$TITLE\",
+                \"color\": $COLOR,
+                \"fields\": [
+                  {\"name\": \"Results\", \"value\": \"$COUNTS\", \"inline\": false},
+                  {\"name\": \"Log\", \"value\": \"[Actions](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\", \"inline\": true}
+                ],
+                \"footer\": {\"text\": \"S-net Pipeline Test\"}
+              }]
+            }"
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        continue-on-error: true
