@@ -114,10 +114,28 @@ def main():
             fail(2, "Station list: 0 stations")
             sys.exit(1)
 
+        # Debug: inspect station object structure
+        sample_st = stations[0] if stations else None
+        if sample_st:
+            print(f"       Station object type: {type(sample_st)}")
+            if hasattr(sample_st, "__dict__"):
+                print(f"       Attributes: {list(sample_st.__dict__.keys())}")
+            elif isinstance(sample_st, (list, tuple)):
+                print(f"       Tuple/list length: {len(sample_st)}, values: {sample_st}")
+            else:
+                print(f"       Repr: {repr(sample_st)}")
+            # Show first 3 stations raw
+            for i, s in enumerate(stations[:3]):
+                print(f"       Raw station[{i}]: {repr(s)}")
+
         for st in stations:
-            sid = getattr(st, "code", None) or getattr(st, "name", None)
-            lat = getattr(st, "latitude", None)
-            lon = getattr(st, "longitude", None)
+            # Try multiple attribute patterns
+            sid = (getattr(st, "code", None) or getattr(st, "name", None)
+                   or (st[0] if isinstance(st, (list, tuple)) and len(st) > 0 else None))
+            lat = (getattr(st, "latitude", None)
+                   or (float(st[2]) if isinstance(st, (list, tuple)) and len(st) > 2 else None))
+            lon = (getattr(st, "longitude", None)
+                   or (float(st[3]) if isinstance(st, (list, tuple)) and len(st) > 3 else None))
             if sid and lat is not None:
                 station_coords[str(sid)] = (float(lat), float(lon))
 

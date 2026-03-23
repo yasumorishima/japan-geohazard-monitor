@@ -21,6 +21,17 @@ jobs:
       - name: Install dependencies
         run: pip install HinetPy numpy aiosqlite aiohttp
 
+      - name: Install win32tools (catwin32 + win2sac_32)
+        env:
+          HINET_USER: ${{ secrets.HINET_USER }}
+          HINET_PASS: ${{ secrets.HINET_PASS }}
+        run: |
+          python3 -c "from HinetPy import Client; Client('${{ secrets.HINET_USER }}', '${{ secrets.HINET_PASS }}')._get_win32tools()"
+          tar -xf win32tools.tar.gz && rm win32tools.tar.gz
+          cd win32tools && make && mkdir -p bin && mv catwin32.src/catwin32 win2sac.src/win2sac_32 bin/ && cd ..
+          echo "${{ github.workspace }}/win32tools/bin" >> $GITHUB_PATH
+          echo "Installed: $(which catwin32) $(which win2sac_32 2>/dev/null || echo 'win2sac_32 not in PATH yet')"
+
       - name: Full S-net pipeline test
         env:
           HINET_USER: ${{ secrets.HINET_USER }}

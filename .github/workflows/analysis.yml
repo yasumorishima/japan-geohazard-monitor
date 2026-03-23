@@ -358,6 +358,25 @@ jobs:
         run: |
           python3 scripts/fetch_ioc_sealevel.py || echo "IOC sea level fetch failed (non-fatal)"
 
+      - name: Install win32tools for S-net (catwin32 + win2sac_32)
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          HINET_USER: ${{ secrets.HINET_USER }}
+          HINET_PASS: ${{ secrets.HINET_PASS }}
+        run: |
+          if [ -z "$HINET_USER" ] || [ -z "$HINET_PASS" ]; then
+            echo "HINET credentials not set, skipping win32tools"
+            exit 0
+          fi
+          pip install HinetPy 2>/dev/null || true
+          python3 -c "from HinetPy import Client; Client('${HINET_USER}', '${HINET_PASS}')._get_win32tools()" || exit 0
+          if [ -f win32tools.tar.gz ]; then
+            tar -xf win32tools.tar.gz && rm win32tools.tar.gz
+            cd win32tools && make && mkdir -p bin && mv catwin32.src/catwin32 win2sac.src/win2sac_32 bin/ && cd ..
+            echo "${{ github.workspace }}/win32tools/bin" >> $GITHUB_PATH
+          fi
+
       - name: Fetch S-net seafloor pressure (NIED credentials required)
         continue-on-error: true
         timeout-minutes: 15
@@ -366,7 +385,6 @@ jobs:
           HINET_USER: ${{ secrets.HINET_USER }}
           HINET_PASS: ${{ secrets.HINET_PASS }}
         run: |
-          pip install HinetPy 2>/dev/null || true
           python3 scripts/fetch_snet_pressure.py || echo "S-net pressure fetch failed (non-fatal)"
 
       # ====== DATA PRESERVATION CHECKPOINT ======
