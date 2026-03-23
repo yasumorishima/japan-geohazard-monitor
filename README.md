@@ -159,7 +159,7 @@ ssh yasu@<RPi5-tailscale-ip> "cd ~/japan-geohazard-monitor && sudo git pull && s
 - **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 420min timeout). **Data preservation**: DB checkpoint after fetch phase + ML results checkpoint (feature_matrix + predictions) + final DB upload, all `if: always()`. Earthdata auth pre-validation skips 4 sources on credential failure. Data validation report (31 tables checked) saved to artifacts
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
 
-## Analysis Results (2011-2026, 29K M3+ earthquakes, 4M TEC, 44K Kp, 31K GNSS-TEC, 1.3M ULF, 78 features with dynamic selection)
+## Analysis Results (2011-2026, 29K M3+ earthquakes, 4M TEC, 44K Kp, 31K GNSS-TEC, 1.3M ULF, 84 features with dynamic selection)
 
 ### Summary
 
@@ -897,7 +897,9 @@ Phase 15i (complete): Coordinate snap fix verified — SO2 non-zero rate improve
 
 Phase 16 (timeout): Continuous daily fetch + temporal expansion implemented. Fetch completed (SO2 2.3M rows 11.6% coverage, cloud 547K rows 21.7%) but **6-hour GitHub Actions hard limit hit before ML phase**. DB checkpoint (610MB) saved — data accumulation successful.
 
-Phase 17 (running): **CI split into 2 jobs** (fetch 350min + analyze 350min) to bypass 6h/job limit. Added `diagnose_data_gaps.py` — per-table actual date coverage, year-by-year breakdown, spatial cell overlap with Japan 2° grid, critical ML gap detection. Gap diagnosis runs after fetch, before ML.
+Phase 17 (cancelled): CI split into 2 jobs (fetch 350min + analyze 350min) to bypass 6h/job limit. Added `diagnose_data_gaps.py`. Run manually cancelled before completion.
+
+Phase 18 (testing): **S-net waveform feature extraction** — replaced single `snet_pressure_anomaly` with 7 multi-scale waveform features from 151 ocean-bottom accelerometers (0120A, 100 Hz, 3-component). Features: RMS anomaly, H/V spectral ratio, low-freq power (slow-slip proxy), high-freq power (microseismicity), spectral slope, along-trench spatial gradient, per-segment max anomaly. Total features: 78 → 84. New DB table `snet_waveform` with incremental backfill (2016-08 to present). Discord progress notifications during fetch. Test run validating feature extraction + investigating 0120/B/C network codes for additional velocity data.
 
 CSEP Benchmark: ML_HistGBT Molchan skill **0.9811** (best), beating Simple_ETAS (0.8713), Relative_Intensity (0.7745), Smoothed_Seismicity (0.2220).
 
@@ -919,13 +921,14 @@ Feature matrix exported to BigQuery (`geohazard.feature_matrix`: 216,711 rows, 1
 | **Phase 15h** | ✅ Complete | SO2パーサー修正 → **408,351行取得成功**（0→408K）。AUC変化なし（座標不一致で特徴量未反映と判明）。BQへfeature_matrix保管 |
 | **Phase 15i** | ✅ Complete | 座標スナップ修正OK、SO2 0%→2%。但しAUC変化なし（非ゼロ率低すぎ）。根本原因: イベントベースfetch + 月次/年次データの日次lookup不整合 |
 | **Phase 16** | ⏱️ Timeout | SO2/cloud連続日次fetch成功（SO2 2.3M行、cloud 547K行）、但し6h制限でMLに未到達。DB checkpoint保存済み |
-| **Phase 17** | ⏸️ Pending | **CI 2ジョブ分割**（fetch+analyze）で6h制限回避 + `diagnose_data_gaps.py` でデータ抜け可視化。S-netテスト完了後に実行 |
+| **Phase 17** | ❌ Cancelled | CI 2ジョブ分割 + ギャップ診断。手動キャンセル |
+| **Phase 18** | 🔬 Testing | **S-net波形特徴量**: 1→7特徴量（RMS/HV比/帯域パワー/スペクトル傾斜/空間勾配/セグメント最大anomaly）。78→84特徴量。0120/B/Cチャンネル調査中 |
 | **BQ Integration** | ✅ Active | CI完了後にfeature_matrix + AUC + 非ゼロ率を自動ロード。座標不一致バグはBQ集計クエリで発見 |
 | **ConvLSTM** | 🟢 Colab-ready | Spatiotemporal neural network. Script + feature_matrix.json deployed to Drive + BigQuery |
 | **SeismoGNN** | 🟢 Colab-ready | Graph Attention Network with fault-network topology. Script deployed to Drive |
 | **Transformer** | 📋 Next | SafeNet-style multi-window features (7/14/30/90/365d) + attention (SafeNet, Sci. Reports 2025) |
 | **PINN** | 📋 Next | Physics-Informed NN with Rate-State friction loss (Nature Comms 2023) |
-| **S-net** | 🔬 Testing | NIED承認済(3/23)。HinetPy 12項目パイプラインテスト中: 認証OK、151局座標OK、temporal coverage 2016-08〜OK。`0120A`は加速度のみ→圧力チャンネル(suffix U)探索中（`0120`/`0120B`/`0120C`試行） |
+| **S-net** | 🔬 Testing | NIED承認済。圧力チャンネル全コードで不在→**波形特徴量(Phase 18)**に転換。0120Aは加速度(A1X/Y/Z 100Hz)。0120/B/C(速度?)は未調査→テスト中 |
 | **INTERMAGNET backfill** | 🔄 In progress | 500 days/station/run (step timeout 60min). Full 15-year coverage accumulates over weekly runs |
 
 ### GCP BigQuery Data Platform
