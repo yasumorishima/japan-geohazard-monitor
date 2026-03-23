@@ -1,0 +1,58 @@
+name: Test S-net Authentication
+
+on:
+  workflow_dispatch:
+    inputs:
+      memo:
+        description: 'What are you testing?'
+        required: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install HinetPy
+        run: pip install HinetPy
+
+      - name: Test NIED Hi-net authentication + S-net station list
+        env:
+          HINET_USER: ${{ secrets.HINET_USER }}
+          HINET_PASS: ${{ secrets.HINET_PASS }}
+        run: |
+          python3 -c "
+          import os, sys
+          user = os.environ.get('HINET_USER', '')
+          pwd = os.environ.get('HINET_PASS', '')
+          if not user or not pwd:
+              print('ERROR: HINET_USER/HINET_PASS not set')
+              sys.exit(1)
+          print(f'User: {user[:2]}***')
+
+          from HinetPy import Client
+          client = Client(user, pwd)
+          print('Auth OK')
+
+          stations = client.get_station_list('0120A')
+          if stations:
+              print(f'S-net stations: {len(stations)}')
+              for s in list(stations)[:5]:
+                  print(f'  {s}')
+          else:
+              print('WARNING: No stations returned (may need different network code)')
+              # Try alternative codes
+              for code in ['0120', '0120B', '0103']:
+                  try:
+                      st2 = client.get_station_list(code)
+                      if st2:
+                          print(f'  Network {code}: {len(st2)} stations')
+                  except:
+                      pass
+          print('Test complete')
+          "
