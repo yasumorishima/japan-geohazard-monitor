@@ -1,30 +1,36 @@
-"""Fetch S-net waveform features from NIED Hi-net — Phase 18.
+"""Fetch S-net waveform features from NIED Hi-net — Phase 19 (multi-sensor).
 
 S-net (Seafloor Observation Network for Earthquakes and Tsunamis along the
-Japan Trench) has 150 ocean bottom stations with 3-component accelerometers.
-This script extracts multi-scale waveform features for earthquake prediction,
-replacing the single-feature pressure approach (Phase 13).
+Japan Trench) has 150 ocean bottom stations with multiple sensor types:
+    - 0120  (VX/VY/VZ):    Broadband velocity — tremor/SSE detection (0.01–0.1 Hz)
+    - 0120A (A1X/A1Y/A1Z): Acceleration — strong motion, microseismicity
+    - 0120C (A2HX/A2HY/A2HZ): High-gain acceleration — micro-amplitude signals
 
-Features extracted per station per day:
-    - RMS acceleration (vertical + horizontal)
+Features extracted per station per day per sensor:
+    - RMS (vertical + horizontal)
     - H/V spectral ratio (site response indicator)
-    - Band-specific power: low-freq (0.1–1 Hz), high-freq (1–10 Hz)
+    - Band-specific power: LF (0.1–1 Hz), HF (1–10 Hz)
     - Spectral slope (noise source characterization)
+    - [Velocity only] VLF power (0.01–0.1 Hz), VLF H/V ratio
 
-Aggregated ML features (7 total):
-    1. snet_rms_anomaly        — overall seismic noise level vs 30-day baseline
-    2. snet_hv_ratio_anomaly   — H/V ratio change (structural/coupling change)
-    3. snet_lf_power_anomaly   — low-freq power anomaly (slow-slip proxy)
-    4. snet_hf_power_anomaly   — high-freq power anomaly (microseismicity)
-    5. snet_spectral_slope_anomaly — noise source characterization change
-    6. snet_spatial_gradient    — along-trench RMS gradient (stress migration)
-    7. snet_segment_max_anomaly — max per-segment anomaly (localized precursor)
+Aggregated ML features (15 total):
+    Acceleration (7):
+        snet_rms/hv_ratio/lf_power/hf_power/spectral_slope _anomaly
+        snet_spatial_gradient, snet_segment_max_anomaly
+    Velocity (5):
+        snet_vlf_power/vlf_hv_ratio/velocity_rms _anomaly
+        snet_vlf_spatial_gradient, snet_spectral_slope_velocity
+    Cross-sensor (2):
+        snet_vlf_hf_ratio, snet_accel_velocity_coherence
+    High-gain (1):
+        snet_highgain_snr_anomaly
 
 Backfill strategy:
-    - Checks existing coverage in DB
-    - Fills recent 7 days (6 segments/day) + backfill older gaps (1 segment/day)
-    - HinetPy session limits: ~50 MB, ~200 req/day
-    - Reports coverage & gaps via Discord webhook at each milestone
+    - Checks existing coverage per sensor_type in DB
+    - Recent 7 days (4 segments/day) + backfill gaps (1 segment/day)
+    - Priority: velocity (0120) > acceleration (0120A) > high-gain (0120C)
+    - HinetPy session limits: ~200 req/day → budget ~160 for 3 codes
+    - Reports per-sensor coverage via Discord
 
 References:
     Aoi et al. (2020) Earth Planets Space 72:126 (S-net overview)
@@ -57,17 +63,23 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-# S-net network codes — 0120A confirmed as 3-component acceleration (100 Hz)
-# TODO Phase 19: investigate 0120 (velocity?), 0120B, 0120C for additional features
-SNET_NETWORK_CODE = "0120A"
+# S-net multi-sensor configuration (Phase 19)
+# Priority determines fetch order within each date (lower = first)
+SNET_SENSORS = {
+    "0120":  {"sensor_type": "velocity",  "priority": 1, "vlf_analysis": True},
+    "0120A": {"sensor_type": "accel",     "priority": 2, "vlf_analysis": False},
+    "0120C": {"sensor_type": "accel_hg",  "priority": 3, "vlf_analysis": False},
+}
+# 0120B (low-gain accel) skipped — redundant with 0120A, same physical quantity
 
-# HinetPy constraints
+# HinetPy constraints (budget: ~200 req/day across 3 sensor codes)
 REQUEST_DURATION_MIN = 5       # Max 5 min per request
-SEGMENTS_RECENT = 6            # 6 segments for recent days (every 4h)
+SEGMENTS_RECENT = 4            # 4 segments for recent days (every 6h)
 SEGMENTS_BACKFILL = 1          # 1 segment for backfill days (daily average)
 RECENT_DAYS = 7                # Last 7 days get high-resolution sampling
-MAX_BACKFILL_DAYS_PER_RUN = 60 # Conservative: ~60 days backfill per CI run
+MAX_BACKFILL_DAYS_PER_RUN = 25 # 25 days × 3 codes = 75 backfill requests
 QUOTA_COOLDOWN_SEC = 2         # Pause between requests to respect quota
+MAX_REQUESTS_PER_RUN = 190     # Hard cap (200 limit - 10 safety margin)
 
 # S-net cable segments for spatial analysis
 SNET_CABLE_SEGMENTS = {
@@ -80,9 +92,14 @@ SNET_CABLE_SEGMENTS = {
 }
 
 # Spectral analysis bands (Hz)
+BAND_VLF = (0.01, 0.1)  # Very low frequency — SSE/tremor (velocity only)
 BAND_LF = (0.1, 1.0)    # Low frequency — slow-slip, tremor
 BAND_HF = (1.0, 10.0)   # High frequency — local seismicity, microseisms
 BAND_FULL = (0.1, 10.0)  # Full band for spectral slope estimation
+
+# FFT window sizes
+FFT_WINDOW_SEC = 10      # Standard window for acceleration (0.1 Hz resolution)
+VLF_FFT_WINDOW_SEC = 200 # Long window for velocity VLF (0.005 Hz resolution)
 
 # Sampling rate from test: 100 Hz
 EXPECTED_FS = 100.0
@@ -125,19 +142,22 @@ CREATE TABLE IF NOT EXISTS snet_waveform (
     station_id TEXT NOT NULL,
     date_str TEXT NOT NULL,
     segment_hour INTEGER NOT NULL,
+    sensor_type TEXT NOT NULL DEFAULT '0120A',
     -- Per-station waveform features
-    rms_z REAL,              -- Vertical RMS acceleration (counts)
+    rms_z REAL,              -- Vertical RMS (counts)
     rms_h REAL,              -- Horizontal RMS = sqrt(rms_x² + rms_y²)
     hv_ratio REAL,           -- H/V spectral ratio (Nakano method)
     lf_power REAL,           -- Log10 power in 0.1–1 Hz band
     hf_power REAL,           -- Log10 power in 1–10 Hz band
     spectral_slope REAL,     -- β in log-log PSD (0.1–10 Hz)
+    vlf_power REAL,          -- Log10 power in 0.01–0.1 Hz band (velocity only)
+    vlf_hv_ratio REAL,       -- H/V ratio in VLF band (velocity only)
     n_samples INTEGER,       -- Number of valid samples
     latitude REAL,
     longitude REAL,
     cable_segment TEXT,      -- S1..S6
     received_at TEXT NOT NULL,
-    UNIQUE(station_id, date_str, segment_hour)
+    UNIQUE(station_id, date_str, segment_hour, sensor_type)
 );
 """
 
@@ -145,14 +165,43 @@ INDEX_DDL = [
     "CREATE INDEX IF NOT EXISTS idx_snet_wf_date ON snet_waveform(date_str);",
     "CREATE INDEX IF NOT EXISTS idx_snet_wf_station ON snet_waveform(station_id);",
     "CREATE INDEX IF NOT EXISTS idx_snet_wf_segment ON snet_waveform(cable_segment);",
+    "CREATE INDEX IF NOT EXISTS idx_snet_wf_sensor ON snet_waveform(sensor_type);",
 ]
 
 
 async def ensure_table(db: aiosqlite.Connection) -> None:
-    """Create snet_waveform table and indexes."""
+    """Create snet_waveform table and indexes, with migration for Phase 18 → 19."""
     await db.execute(TABLE_DDL)
     for idx in INDEX_DDL:
         await db.execute(idx)
+
+    # Migration: add columns if upgrading from Phase 18 schema
+    columns = {row[1] for row in await db.execute_fetchall(
+        "PRAGMA table_info(snet_waveform)"
+    )}
+
+    migrated = False
+    for col, ddl in [
+        ("sensor_type", "ALTER TABLE snet_waveform ADD COLUMN sensor_type TEXT NOT NULL DEFAULT '0120A'"),
+        ("vlf_power", "ALTER TABLE snet_waveform ADD COLUMN vlf_power REAL"),
+        ("vlf_hv_ratio", "ALTER TABLE snet_waveform ADD COLUMN vlf_hv_ratio REAL"),
+    ]:
+        if col not in columns:
+            await db.execute(ddl)
+            migrated = True
+            logger.info("Migration: added column %s to snet_waveform", col)
+
+    if migrated:
+        # Recreate unique index to include sensor_type
+        await db.execute("DROP INDEX IF EXISTS sqlite_autoindex_snet_waveform_1")
+        # SQLite cannot ALTER UNIQUE constraint, but new rows will use the new DDL's constraint.
+        # For existing data, create a unique index explicitly.
+        await db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_snet_wf_unique "
+            "ON snet_waveform(station_id, date_str, segment_hour, sensor_type)"
+        )
+        logger.info("Migration: unique index updated to include sensor_type")
+
     await db.commit()
 
 
@@ -160,19 +209,28 @@ async def ensure_table(db: aiosqlite.Connection) -> None:
 # Coverage analysis
 # ---------------------------------------------------------------------------
 
-async def get_existing_dates(db: aiosqlite.Connection) -> set[str]:
-    """Return set of date_str values already in snet_waveform."""
+async def get_existing_dates(db: aiosqlite.Connection) -> set[tuple[str, str]]:
+    """Return set of (date_str, sensor_type) tuples already in snet_waveform."""
     rows = await db.execute_fetchall(
-        "SELECT DISTINCT date_str FROM snet_waveform"
+        "SELECT DISTINCT date_str, sensor_type FROM snet_waveform"
     )
-    return {r[0] for r in rows}
+    return {(r[0], r[1]) for r in rows}
 
 
 async def get_coverage_report(db: aiosqlite.Connection) -> dict:
-    """Generate detailed coverage report."""
+    """Generate detailed coverage report with per-sensor breakdown."""
     total_rows = (await db.execute_fetchall(
         "SELECT COUNT(*) FROM snet_waveform"
     ))[0][0]
+
+    # Per-sensor type coverage
+    sensor_coverage = {}
+    sensor_rows = await db.execute_fetchall(
+        "SELECT sensor_type, COUNT(*), COUNT(DISTINCT date_str) "
+        "FROM snet_waveform GROUP BY sensor_type"
+    )
+    for sr in sensor_rows:
+        sensor_coverage[sr[0]] = {"rows": sr[1], "dates": sr[2]}
 
     dates = await db.execute_fetchall(
         "SELECT date_str, COUNT(DISTINCT station_id), COUNT(*) "
@@ -218,6 +276,7 @@ async def get_coverage_report(db: aiosqlite.Connection) -> dict:
         "last_date": all_dates[-1] if dates else None,
         "stations_per_date": {d[0]: d[1] for d in dates[-7:]} if dates else {},  # last 7 days
         "segments": {s[0]: {"stations": s[1], "dates": s[2]} for s in segments},
+        "sensor_coverage": sensor_coverage,
         "top_gaps": gaps[:5],
     }
 
@@ -279,24 +338,116 @@ def read_sac_data(filepath: str) -> tuple:
 # Spectral analysis (pure NumPy — no scipy dependency)
 # ---------------------------------------------------------------------------
 
+def _compute_psd(z, x, y, fs: float, window_sec: float):
+    """Compute Welch-like PSD for 3-component data.
+
+    Args:
+        z, x, y: Detrended, zero-mean component arrays (float64)
+        fs: Sampling frequency (Hz)
+        window_sec: FFT window length in seconds
+
+    Returns:
+        (psd_z, psd_x, psd_y, freqs, n_windows) or None if insufficient data.
+    """
+    import numpy as np
+
+    n = len(z)
+    win_samples = int(fs * window_sec)
+    if n < win_samples:
+        return None
+
+    hop = win_samples // 2
+    n_windows = max(1, (n - win_samples) // hop + 1)
+
+    hann = np.hanning(win_samples)
+    hann_norm = np.sum(hann ** 2)
+
+    psd_z = np.zeros(win_samples // 2 + 1)
+    psd_x = np.zeros_like(psd_z)
+    psd_y = np.zeros_like(psd_z)
+
+    for i in range(n_windows):
+        start = i * hop
+        end = start + win_samples
+        if end > n:
+            break
+
+        seg_z = z[start:end] * hann
+        seg_x = x[start:end] * hann
+        seg_y = y[start:end] * hann
+
+        psd_z += np.abs(np.fft.rfft(seg_z)) ** 2
+        psd_x += np.abs(np.fft.rfft(seg_x)) ** 2
+        psd_y += np.abs(np.fft.rfft(seg_y)) ** 2
+
+    scale = 2.0 / (fs * hann_norm * n_windows) if n_windows > 0 else 1.0
+    psd_z *= scale
+    psd_x *= scale
+    psd_y *= scale
+
+    freqs = np.fft.rfftfreq(win_samples, d=1.0 / fs)
+    return psd_z, psd_x, psd_y, freqs, n_windows
+
+
+def _band_power(psd, freqs, f_low, f_high):
+    """Compute log10 integrated power in a frequency band."""
+    import numpy as np
+    mask = (freqs >= f_low) & (freqs < f_high)
+    if not np.any(mask):
+        return 0.0
+    _trapz = getattr(np, "trapezoid", None) or np.trapz
+    power = float(_trapz(psd[mask], freqs[mask]))
+    return math.log10(max(power, 1e-30))
+
+
+def _hv_ratio(psd_x, psd_y, psd_z, freqs, f_low, f_high):
+    """Compute average H/V spectral ratio in a frequency band."""
+    import numpy as np
+    psd_h = psd_x + psd_y
+    safe_z = np.where(psd_z > 0, psd_z, 1e-30)
+    hv_spectrum = np.sqrt(psd_h / safe_z)
+    mask = (freqs >= f_low) & (freqs <= f_high)
+    if np.any(mask):
+        return float(np.mean(hv_spectrum[mask]))
+    return 1.0
+
+
+def _spectral_slope(psd_total, freqs, f_low, f_high):
+    """Compute spectral slope (beta) via log-log linear fit."""
+    import numpy as np
+    mask = (freqs >= f_low) & (freqs <= f_high) & (psd_total > 0)
+    if np.sum(mask) > 5:
+        log_f = np.log10(freqs[mask])
+        log_p = np.log10(psd_total[mask])
+        mean_f = np.mean(log_f)
+        mean_p = np.mean(log_p)
+        cov = np.sum((log_f - mean_f) * (log_p - mean_p))
+        var_f = np.sum((log_f - mean_f) ** 2)
+        return float(cov / var_f) if var_f > 0 else -2.0
+    return -2.0  # Default: Brownian noise
+
+
 def compute_waveform_features(
-    data_z, data_x, data_y, fs: float
+    data_z, data_x, data_y, fs: float, vlf_analysis: bool = False
 ) -> dict | None:
-    """Compute waveform features from 3-component acceleration data.
+    """Compute waveform features from 3-component data.
 
     Args:
         data_z: Vertical component (numpy array)
         data_x: X (North-South) component
         data_y: Y (East-West) component
         fs: Sampling frequency (Hz)
+        vlf_analysis: If True, compute VLF features using 200s FFT windows
+                      (for velocity/broadband sensors)
 
     Returns:
-        Dict with rms_z, rms_h, hv_ratio, lf_power, hf_power, spectral_slope
-        or None if data is insufficient.
+        Dict with features, or None if data is insufficient.
+        Standard: rms_z, rms_h, hv_ratio, lf_power, hf_power, spectral_slope
+        VLF (when vlf_analysis=True): vlf_power, vlf_hv_ratio
     """
     import numpy as np
 
-    min_samples = int(fs * 10)  # Need at least 10 seconds
+    min_samples = int(fs * FFT_WINDOW_SEC)  # At least one standard window
     if data_z is None or len(data_z) < min_samples:
         return None
     if data_x is None or len(data_x) < min_samples:
@@ -325,97 +476,42 @@ def compute_waveform_features(
     rms_y = float(np.sqrt(np.mean(y ** 2)))
     rms_h = math.sqrt(rms_x ** 2 + rms_y ** 2)
 
-    # --- FFT-based PSD (Welch-like: segmented + averaged) ---
-    # Use 10-second windows with 50% overlap for stable spectral estimates
-    win_samples = int(fs * 10)  # 10-second window
-    hop = win_samples // 2
-    n_windows = max(1, (n - win_samples) // hop + 1)
+    # --- Standard PSD (10-second windows) ---
+    psd_result = _compute_psd(z, x, y, fs, FFT_WINDOW_SEC)
+    if psd_result is None:
+        return None
+    psd_z, psd_x, psd_y, freqs, _ = psd_result
 
-    # Hanning window
-    hann = np.hanning(win_samples)
-    hann_norm = np.sum(hann ** 2)
-
-    psd_z = np.zeros(win_samples // 2 + 1)
-    psd_x = np.zeros_like(psd_z)
-    psd_y = np.zeros_like(psd_z)
-
-    for i in range(n_windows):
-        start = i * hop
-        end = start + win_samples
-        if end > n:
-            break
-
-        seg_z = z[start:end] * hann
-        seg_x = x[start:end] * hann
-        seg_y = y[start:end] * hann
-
-        fft_z = np.fft.rfft(seg_z)
-        fft_x = np.fft.rfft(seg_x)
-        fft_y = np.fft.rfft(seg_y)
-
-        psd_z += np.abs(fft_z) ** 2
-        psd_x += np.abs(fft_x) ** 2
-        psd_y += np.abs(fft_y) ** 2
-
-    # Normalize
-    scale = 2.0 / (fs * hann_norm * n_windows) if n_windows > 0 else 1.0
-    psd_z *= scale
-    psd_x *= scale
-    psd_y *= scale
-
-    freqs = np.fft.rfftfreq(win_samples, d=1.0 / fs)
-
-    # --- H/V spectral ratio (Nakamura method) ---
-    psd_h = psd_x + psd_y
-    # Avoid division by zero
-    safe_z = np.where(psd_z > 0, psd_z, 1e-30)
-    hv_spectrum = np.sqrt(psd_h / safe_z)
-
-    # Average H/V in 0.1–10 Hz band
-    mask_hv = (freqs >= 0.1) & (freqs <= 10.0)
-    if np.any(mask_hv):
-        hv_ratio = float(np.mean(hv_spectrum[mask_hv]))
-    else:
-        hv_ratio = 1.0
-
-    # --- Band power (log10) ---
-    def band_power(psd, f_low, f_high):
-        mask = (freqs >= f_low) & (freqs < f_high)
-        if not np.any(mask):
-            return 0.0
-        # np.trapezoid (NumPy 2.0+) / np.trapz (legacy)
-        _trapz = getattr(np, "trapezoid", None) or np.trapz
-        power = float(_trapz(psd[mask], freqs[mask]))
-        return math.log10(max(power, 1e-30))
-
-    # Combined (all 3 components) for band power
+    hv_ratio = _hv_ratio(psd_x, psd_y, psd_z, freqs, 0.1, 10.0)
     psd_total = psd_z + psd_x + psd_y
-    lf_power = band_power(psd_total, *BAND_LF)
-    hf_power = band_power(psd_total, *BAND_HF)
+    lf_power = _band_power(psd_total, freqs, *BAND_LF)
+    hf_power = _band_power(psd_total, freqs, *BAND_HF)
+    slope = _spectral_slope(psd_total, freqs, *BAND_FULL)
 
-    # --- Spectral slope (linear fit in log-log space) ---
-    mask_slope = (freqs >= BAND_FULL[0]) & (freqs <= BAND_FULL[1]) & (psd_total > 0)
-    if np.sum(mask_slope) > 5:
-        log_f = np.log10(freqs[mask_slope])
-        log_p = np.log10(psd_total[mask_slope])
-        # Least-squares linear fit
-        n_pts = len(log_f)
-        mean_f = np.mean(log_f)
-        mean_p = np.mean(log_p)
-        cov = np.sum((log_f - mean_f) * (log_p - mean_p))
-        var_f = np.sum((log_f - mean_f) ** 2)
-        spectral_slope = float(cov / var_f) if var_f > 0 else -2.0
-    else:
-        spectral_slope = -2.0  # Default: Brownian noise
-
-    return {
+    result = {
         "rms_z": rms_z,
         "rms_h": rms_h,
         "hv_ratio": hv_ratio,
         "lf_power": lf_power,
         "hf_power": hf_power,
-        "spectral_slope": spectral_slope,
+        "spectral_slope": slope,
+        "vlf_power": None,
+        "vlf_hv_ratio": None,
     }
+
+    # --- VLF analysis (velocity sensors: 200-second windows) ---
+    if vlf_analysis:
+        vlf_result = _compute_psd(z, x, y, fs, VLF_FFT_WINDOW_SEC)
+        if vlf_result is not None:
+            vpsd_z, vpsd_x, vpsd_y, vfreqs, _ = vlf_result
+            vpsd_total = vpsd_z + vpsd_x + vpsd_y
+            result["vlf_power"] = _band_power(vpsd_total, vfreqs, *BAND_VLF)
+            result["vlf_hv_ratio"] = _hv_ratio(vpsd_x, vpsd_y, vpsd_z, vfreqs,
+                                                BAND_VLF[0], BAND_VLF[1])
+        else:
+            logger.debug("VLF analysis: data too short for %ds window", VLF_FFT_WINDOW_SEC)
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -464,13 +560,19 @@ def _check_credentials() -> tuple[str, str] | None:
 # ---------------------------------------------------------------------------
 
 def _fetch_day(
-    client, station_coords: dict, target_date: datetime, n_segments: int
+    client, station_coords: dict, target_date: datetime, n_segments: int,
+    network_code: str = "0120A", sensor_config: dict = None,
 ) -> list[dict]:
-    """Fetch and process one day's S-net waveform data.
+    """Fetch and process one day's S-net waveform data for a single sensor code.
 
     Returns list of per-station feature dicts for each segment.
     """
     import numpy as np
+
+    if sensor_config is None:
+        sensor_config = SNET_SENSORS.get(network_code, {"sensor_type": "accel", "vlf_analysis": False})
+    sensor_type = sensor_config["sensor_type"]
+    vlf_analysis = sensor_config.get("vlf_analysis", False)
 
     results = []
     date_str = target_date.strftime("%Y-%m-%d")
@@ -478,16 +580,17 @@ def _fetch_day(
 
     for hour in segment_hours:
         start = target_date.replace(hour=hour, minute=0, second=0, microsecond=0)
-        work_dir = tempfile.mkdtemp(prefix=f"snet_{date_str}_{hour:02d}_")
+        work_dir = tempfile.mkdtemp(prefix=f"snet_{network_code}_{date_str}_{hour:02d}_")
 
         try:
-            logger.info("Requesting %s %02d:00 (%d min)", date_str, hour, REQUEST_DURATION_MIN)
+            logger.info("Requesting %s [%s] %02d:00 (%d min)",
+                        date_str, network_code, hour, REQUEST_DURATION_MIN)
 
             data = client.get_continuous_waveform(
-                SNET_NETWORK_CODE, start, REQUEST_DURATION_MIN, outdir=work_dir,
+                network_code, start, REQUEST_DURATION_MIN, outdir=work_dir,
             )
             if data is None or not isinstance(data, tuple) or len(data) != 2:
-                logger.warning("No data for %s %02d:00", date_str, hour)
+                logger.warning("No data for %s [%s] %02d:00", date_str, network_code, hour)
                 continue
 
             win32_file, ch_table = data
@@ -498,10 +601,10 @@ def _fetch_day(
             from HinetPy import win32 as hinetwin32
             sac_files = hinetwin32.extract_sac(win32_file, ch_table, outdir=work_dir)
             if not sac_files:
-                # HinetPy sometimes returns empty but files exist on disk
                 sac_files = list(Path(work_dir).glob("*.SAC"))
             if not sac_files:
-                logger.warning("No SAC files decoded for %s %02d:00", date_str, hour)
+                logger.warning("No SAC files decoded for %s [%s] %02d:00",
+                               date_str, network_code, hour)
                 continue
 
             # Group SAC files by station
@@ -515,25 +618,14 @@ def _fetch_day(
                 # Handle both 4-part (N.STA.LOC.CHA) and 3-part (N.STA.CHA) formats
                 channel = parts[3] if len(parts) > 3 else parts[-1]
 
-                # Classify component by suffix
                 suffix = channel[-1].upper() if channel else ""
-                if suffix == "Z":
-                    comp = "Z"
-                elif suffix == "X":
-                    comp = "X"
-                elif suffix == "Y":
-                    comp = "Y"
-                else:
-                    continue
-
-                if station_id not in station_files:
-                    station_files[station_id] = {}
-                station_files[station_id][comp] = str(sac_path)
+                if suffix in ("Z", "X", "Y"):
+                    station_files.setdefault(station_id, {})[suffix] = str(sac_path)
 
             # Process each station with all 3 components
             for station_id, comps in station_files.items():
                 if len(comps) < 3:
-                    continue  # Need all 3 components for H/V ratio
+                    continue
 
                 data_z, info_z = read_sac_data(comps.get("Z", ""))
                 data_x, info_x = read_sac_data(comps.get("X", ""))
@@ -544,7 +636,8 @@ def _fetch_day(
 
                 fs = info_z.get("fs", EXPECTED_FS) if info_z else EXPECTED_FS
 
-                features = compute_waveform_features(data_z, data_x, data_y, fs)
+                features = compute_waveform_features(
+                    data_z, data_x, data_y, fs, vlf_analysis=vlf_analysis)
                 if features is None:
                     continue
 
@@ -556,7 +649,6 @@ def _fetch_day(
                     if stla != -12345.0 and stlo != -12345.0:
                         lat, lon = stla, stlo
 
-                # Classify cable segment
                 cable_seg = classify_cable_segment(station_id)
                 if cable_seg is None and lat is not None:
                     cable_seg = classify_cable_segment_by_coords(lat, lon)
@@ -565,12 +657,15 @@ def _fetch_day(
                     "station_id": station_id,
                     "date_str": date_str,
                     "segment_hour": hour,
+                    "sensor_type": sensor_type,
                     "rms_z": features["rms_z"],
                     "rms_h": features["rms_h"],
                     "hv_ratio": features["hv_ratio"],
                     "lf_power": features["lf_power"],
                     "hf_power": features["hf_power"],
                     "spectral_slope": features["spectral_slope"],
+                    "vlf_power": features.get("vlf_power"),
+                    "vlf_hv_ratio": features.get("vlf_hv_ratio"),
                     "n_samples": info_z.get("npts", 0),
                     "latitude": lat,
                     "longitude": lon,
@@ -608,13 +703,13 @@ def _fetch_day(
 
 def _fetch_multiple_days(
     user: str, password: str,
-    dates_to_fetch: list[tuple[datetime, int]],
+    dates_to_fetch: list[tuple[datetime, int, str, dict]],
     station_coords_out: dict,
 ) -> list[dict]:
-    """Fetch waveform data for multiple days.
+    """Fetch waveform data for multiple days across sensor codes.
 
     Args:
-        dates_to_fetch: list of (date, n_segments) tuples
+        dates_to_fetch: list of (date, n_segments, network_code, sensor_config) tuples
         station_coords_out: dict to populate with station coordinates
 
     Returns list of all per-station feature records.
@@ -632,9 +727,9 @@ def _fetch_multiple_days(
         logger.error("Authentication failed: %s", exc)
         return []
 
-    # Fetch station metadata once
+    # Fetch station metadata once (use 0120A which is the primary code)
     try:
-        stations = client.get_station_list(SNET_NETWORK_CODE)
+        stations = client.get_station_list("0120A")
         if stations:
             for st in stations:
                 sid = getattr(st, "name", None) or getattr(st, "code", None)
@@ -647,28 +742,52 @@ def _fetch_multiple_days(
         logger.warning("Station metadata fetch failed: %s", exc)
 
     all_results = []
-    total_days = len(dates_to_fetch)
+    total_items = len(dates_to_fetch)
+    request_count = 0
 
-    for i, (target_date, n_segments) in enumerate(dates_to_fetch):
+    for i, (target_date, n_segments, network_code, sensor_config) in enumerate(dates_to_fetch):
         date_str = target_date.strftime("%Y-%m-%d")
+
+        # Quota check: each day/code combo uses n_segments requests
+        if request_count + n_segments > MAX_REQUESTS_PER_RUN:
+            logger.warning(
+                "Quota limit approaching (%d/%d). Stopping after %d items.",
+                request_count, MAX_REQUESTS_PER_RUN, i,
+            )
+            send_discord(
+                "⚠️ S-net Quota Limit Reached",
+                f"Stopped at {request_count} requests ({i}/{total_items} items)",
+                color=16776960,
+            )
+            break
+
         logger.info(
-            "=== Day %d/%d: %s (%d segments) ===",
-            i + 1, total_days, date_str, n_segments,
+            "=== Item %d/%d: %s [%s] (%d segments) ===",
+            i + 1, total_items, date_str, network_code, n_segments,
         )
 
-        day_results = _fetch_day(client, station_coords_out, target_date, n_segments)
+        day_results = _fetch_day(
+            client, station_coords_out, target_date, n_segments,
+            network_code=network_code, sensor_config=sensor_config,
+        )
         all_results.extend(day_results)
+        request_count += n_segments
 
-        # Progress notification every 10 days or at end
-        if (i + 1) % 10 == 0 or i + 1 == total_days:
+        # Progress notification every 20 items or at end
+        if (i + 1) % 20 == 0 or i + 1 == total_items:
             n_stations = len(set(r["station_id"] for r in day_results)) if day_results else 0
+            sensor_counts = {}
+            for r in all_results:
+                st = r.get("sensor_type", "accel")
+                sensor_counts[st] = sensor_counts.get(st, 0) + 1
+            sensor_text = ", ".join(f"{k}: {v:,}" for k, v in sorted(sensor_counts.items()))
             send_discord(
-                "🌊 S-net Waveform Fetch Progress",
-                f"Day {i + 1}/{total_days}: {date_str}",
+                "🌊 S-net Multi-Sensor Fetch Progress",
+                f"Item {i + 1}/{total_items}: {date_str} [{network_code}]",
                 fields=[
-                    {"name": "Stations today", "value": str(n_stations), "inline": True},
+                    {"name": "Requests used", "value": f"{request_count}/{MAX_REQUESTS_PER_RUN}", "inline": True},
                     {"name": "Total records", "value": f"{len(all_results):,}", "inline": True},
-                    {"name": "Days remaining", "value": str(total_days - i - 1), "inline": True},
+                    {"name": "By sensor", "value": sensor_text or "—", "inline": False},
                 ],
                 color=3447003,
             )
@@ -681,7 +800,7 @@ def _fetch_multiple_days(
 # ---------------------------------------------------------------------------
 
 async def main() -> None:
-    """Fetch S-net waveform features with incremental backfill."""
+    """Fetch S-net waveform features with incremental backfill (multi-sensor)."""
     credentials = _check_credentials()
     if credentials is None:
         logger.warning(
@@ -691,77 +810,94 @@ async def main() -> None:
         return
 
     user, password = credentials
-    logger.info("Starting S-net waveform feature extraction (Phase 18)")
+    logger.info("Starting S-net multi-sensor waveform extraction (Phase 19)")
+    logger.info("Sensor codes: %s", ", ".join(SNET_SENSORS.keys()))
 
     await init_db()
 
     async with aiosqlite.connect(DB_PATH) as db:
         await ensure_table(db)
-        existing_dates = await get_existing_dates(db)
+        existing = await get_existing_dates(db)
 
-    logger.info("Existing coverage: %d dates in DB", len(existing_dates))
+    logger.info("Existing coverage: %d (date, sensor_type) pairs in DB", len(existing))
 
-    # Build fetch schedule
+    # Build fetch schedule: for each sensor code, build recent + backfill list
     now_utc = datetime.now(timezone.utc)
-    dates_to_fetch = []
+    snet_start = datetime(2016, 8, 15)
 
-    # 1. Recent days (high resolution: 6 segments)
+    # Sort sensor configs by priority
+    sorted_sensors = sorted(SNET_SENSORS.items(), key=lambda x: x[1]["priority"])
+
+    # Interleave: for each date, fetch all needed codes before moving to next date
+    # This ensures cross-sensor features have matching date coverage
+    recent_dates = []
     for days_ago in range(1, RECENT_DAYS + 1):
         target = (now_utc - timedelta(days=days_ago)).replace(
             hour=0, minute=0, second=0, microsecond=0, tzinfo=None
         )
-        date_str = target.strftime("%Y-%m-%d")
-        if date_str not in existing_dates:
-            dates_to_fetch.append((target, SEGMENTS_RECENT))
+        recent_dates.append(target)
 
-    # 2. Backfill: oldest gaps first (1 segment per day)
-    # S-net data available from ~2016-08
-    snet_start = datetime(2016, 8, 15)
-    backfill_candidates = []
-
+    backfill_dates = []
     current = (now_utc - timedelta(days=RECENT_DAYS + 1)).replace(
         hour=0, minute=0, second=0, microsecond=0, tzinfo=None
     )
-    while current >= snet_start and len(backfill_candidates) < MAX_BACKFILL_DAYS_PER_RUN * 3:
-        date_str = current.strftime("%Y-%m-%d")
-        if date_str not in existing_dates:
-            backfill_candidates.append((current, SEGMENTS_BACKFILL))
+    while current >= snet_start and len(backfill_dates) < MAX_BACKFILL_DAYS_PER_RUN * 3:
+        backfill_dates.append(current)
         current -= timedelta(days=1)
+    # Most recent gaps first
+    backfill_dates = backfill_dates[:MAX_BACKFILL_DAYS_PER_RUN]
 
-    # Prioritize: most recent gaps first (more useful for ML training window)
-    backfill_candidates.sort(key=lambda x: x[0], reverse=True)
-    backfill_candidates = backfill_candidates[:MAX_BACKFILL_DAYS_PER_RUN]
+    # Build interleaved fetch list: (date, n_segments, code, config)
+    dates_to_fetch = []
 
-    dates_to_fetch.extend(backfill_candidates)
+    # Recent: all codes for each date
+    for target in recent_dates:
+        date_str = target.strftime("%Y-%m-%d")
+        for code, config in sorted_sensors:
+            if (date_str, config["sensor_type"]) not in existing:
+                dates_to_fetch.append((target, SEGMENTS_RECENT, code, config))
+
+    # Backfill: all codes for each date
+    for target in backfill_dates:
+        date_str = target.strftime("%Y-%m-%d")
+        for code, config in sorted_sensors:
+            if (date_str, config["sensor_type"]) not in existing:
+                dates_to_fetch.append((target, SEGMENTS_BACKFILL, code, config))
 
     if not dates_to_fetch:
-        logger.info("All dates already covered. Nothing to fetch.")
-        # Still generate coverage report
+        logger.info("All dates/sensors already covered. Nothing to fetch.")
         async with aiosqlite.connect(DB_PATH) as db:
             report = await get_coverage_report(db)
         _log_coverage_report(report)
         send_discord(
-            "🌊 S-net Waveform — All Covered",
+            "🌊 S-net Multi-Sensor — All Covered",
             f"{report['total_dates']} dates, {report['total_rows']:,} rows, "
             f"coverage {report['coverage_pct']}%",
-            color=5763719,  # green
+            color=5763719,
         )
         return
 
+    # Count by type
+    n_recent = len([d for d in dates_to_fetch if d[1] == SEGMENTS_RECENT])
+    n_backfill = len([d for d in dates_to_fetch if d[1] == SEGMENTS_BACKFILL])
+    code_counts = {}
+    for _, _, code, _ in dates_to_fetch:
+        code_counts[code] = code_counts.get(code, 0) + 1
+    est_requests = sum(d[1] for d in dates_to_fetch)
+
     logger.info(
-        "Fetch schedule: %d recent + %d backfill = %d days",
-        len([d for d in dates_to_fetch if d[1] == SEGMENTS_RECENT]),
-        len([d for d in dates_to_fetch if d[1] == SEGMENTS_BACKFILL]),
-        len(dates_to_fetch),
+        "Fetch schedule: %d recent + %d backfill = %d items (~%d requests)",
+        n_recent, n_backfill, len(dates_to_fetch), est_requests,
     )
+    logger.info("  Per code: %s", ", ".join(f"{k}: {v}" for k, v in sorted(code_counts.items())))
 
     send_discord(
-        "🌊 S-net Waveform Fetch Starting",
-        f"Fetching {len(dates_to_fetch)} days "
-        f"({len(existing_dates)} already in DB)",
+        "🌊 S-net Multi-Sensor Fetch Starting",
+        f"{len(dates_to_fetch)} items (~{est_requests} requests)",
         fields=[
-            {"name": "Recent (6 seg)", "value": str(len([d for d in dates_to_fetch if d[1] == SEGMENTS_RECENT])), "inline": True},
-            {"name": "Backfill (1 seg)", "value": str(len([d for d in dates_to_fetch if d[1] == SEGMENTS_BACKFILL])), "inline": True},
+            {"name": "Recent", "value": str(n_recent), "inline": True},
+            {"name": "Backfill", "value": str(n_backfill), "inline": True},
+            {"name": "Codes", "value": ", ".join(f"{k}: {v}" for k, v in sorted(code_counts.items())), "inline": False},
         ],
     )
 
@@ -778,7 +914,7 @@ async def main() -> None:
             "⚠️ S-net Waveform — No Data",
             "Fetch completed but no records were retrieved. "
             "Check Hi-net credentials and quota.",
-            color=15158332,  # red
+            color=15158332,
         )
         return
 
@@ -793,26 +929,38 @@ async def main() -> None:
             try:
                 await db.execute(
                     """INSERT OR IGNORE INTO snet_waveform
-                       (station_id, date_str, segment_hour,
+                       (station_id, date_str, segment_hour, sensor_type,
                         rms_z, rms_h, hv_ratio, lf_power, hf_power,
-                        spectral_slope, n_samples, latitude, longitude,
+                        spectral_slope, vlf_power, vlf_hv_ratio,
+                        n_samples, latitude, longitude,
                         cable_segment, received_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         rec["station_id"], rec["date_str"], rec["segment_hour"],
+                        rec["sensor_type"],
                         rec["rms_z"], rec["rms_h"], rec["hv_ratio"],
                         rec["lf_power"], rec["hf_power"], rec["spectral_slope"],
+                        rec.get("vlf_power"), rec.get("vlf_hv_ratio"),
                         rec["n_samples"], rec["latitude"], rec["longitude"],
                         rec["cable_segment"], now_str,
                     ),
                 )
                 inserted += 1
             except Exception as exc:
-                logger.warning("Insert failed for %s/%s: %s", rec["station_id"], rec["date_str"], exc)
+                logger.warning("Insert failed for %s/%s/%s: %s",
+                               rec["station_id"], rec["date_str"], rec.get("sensor_type"), exc)
                 skipped += 1
         await db.commit()
 
     logger.info("Inserted %d records (%d skipped/duplicate)", inserted, skipped)
+
+    # Per-sensor insert counts
+    sensor_inserted = {}
+    for rec in records:
+        st = rec.get("sensor_type", "accel")
+        sensor_inserted[st] = sensor_inserted.get(st, 0) + 1
+    for st, cnt in sorted(sensor_inserted.items()):
+        logger.info("  %s: %d records", st, cnt)
 
     # Generate and report coverage
     async with aiosqlite.connect(DB_PATH) as db:
@@ -835,17 +983,20 @@ async def main() -> None:
         f"  {seg}: {info['stations']} stn, {info['dates']} days"
         for seg, info in sorted(report["segments"].items())
     ) if report["segments"] else "No segment data"
+    sensor_text = "\n".join(
+        f"  {st}: {info['rows']:,} rows, {info['dates']} days"
+        for st, info in sorted(report.get("sensor_coverage", {}).items())
+    ) or "—"
 
     send_discord(
-        "🌊 S-net Waveform Fetch Complete",
-        f"Inserted {inserted:,} records for {len(dates_to_fetch)} days",
+        "🌊 S-net Multi-Sensor Fetch Complete",
+        f"Inserted {inserted:,} records",
         fields=[
             {"name": "Coverage", "value": f"{report['coverage_pct']}% ({report['total_dates']}/{report['expected_dates']} days)", "inline": True},
             {"name": "Date range", "value": f"{report['first_date']} → {report['last_date']}", "inline": True},
             {"name": "Total rows", "value": f"{report['total_rows']:,}", "inline": True},
-            {"name": "Gap days", "value": str(report["gap_days"]), "inline": True},
+            {"name": "Sensors", "value": sensor_text, "inline": False},
             {"name": "Top gaps", "value": gap_text, "inline": False},
-            {"name": "Segments", "value": segment_text, "inline": False},
         ],
         color=5763719 if report["coverage_pct"] > 80 else 16776960,
     )
@@ -863,6 +1014,10 @@ def _log_coverage_report(report: dict) -> None:
         logger.info("  Top gaps:")
         for g in report["top_gaps"][:5]:
             logger.info("    %s → %s (%d days)", g[0], g[1], g[2])
+    if report.get("sensor_coverage"):
+        logger.info("  Per sensor type:")
+        for st, info in sorted(report["sensor_coverage"].items()):
+            logger.info("    %s: %d rows, %d dates", st, info["rows"], info["dates"])
     if report["segments"]:
         logger.info("  Per segment:")
         for seg, info in sorted(report["segments"].items()):

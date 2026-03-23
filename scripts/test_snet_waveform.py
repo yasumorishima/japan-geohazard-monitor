@@ -1,14 +1,15 @@
-"""Test S-net waveform feature extraction pipeline (Phase 18).
+"""Test S-net multi-sensor waveform pipeline (Phase 19).
 
 Validates:
     1. HinetPy authentication & data download
     2. WIN32 decode → SAC parsing → 3-component grouping
     3. Spectral analysis: RMS, H/V ratio, band power, spectral slope
-    4. Per-station feature completeness
-    5. Cable segment classification
-    6. SQLite round-trip (insert + query)
-    7. ML loader integration (load_phase18_snet_waveform)
-    8. Network code survey: 0120/0120A/0120B/0120C channel names from SAC header
+    4. VLF spectral analysis: 200s window, 0.01-0.1 Hz band (velocity)
+    5. Per-station feature completeness
+    6. Cable segment classification
+    7. SQLite round-trip with sensor_type column
+    8. ML loader integration (multi-sensor)
+    9. Network code survey: 0120/0120A/0120C
 
 Run: python scripts/test_snet_waveform.py
 """
@@ -199,14 +200,15 @@ def main():
         f"3-component grouping: {len(complete_stations)}/{len(station_files)} stations complete",
     )
 
-    # ---- Test 7: Waveform feature extraction ----
-    # Import the actual function from our module
+    # ---- Test 7: Waveform feature extraction (standard + VLF) ----
     sys.path.insert(0, str(Path(__file__).parent))
     from fetch_snet_waveform import compute_waveform_features, read_sac_data
 
     features_computed = 0
     features_failed = 0
+    vlf_computed = 0
     sample_features = None
+    sample_vlf_features = None
 
     for station_id, comps in list(complete_stations.items())[:20]:
         data_z, info_z = read_sac_data(comps["Z"])
@@ -218,21 +220,35 @@ def main():
             continue
 
         fs = info_z.get("fs", 100.0) if info_z else 100.0
-        features = compute_waveform_features(data_z, data_x, data_y, fs)
 
+        # Standard extraction (acceleration mode)
+        features = compute_waveform_features(data_z, data_x, data_y, fs)
         if features:
             features_computed += 1
             if sample_features is None:
                 sample_features = (station_id, features)
+
+            # VLF extraction (velocity mode — test with same data)
+            vlf_features = compute_waveform_features(
+                data_z, data_x, data_y, fs, vlf_analysis=True)
+            if vlf_features and vlf_features.get("vlf_power") is not None:
+                vlf_computed += 1
+                if sample_vlf_features is None:
+                    sample_vlf_features = (station_id, vlf_features)
         else:
             features_failed += 1
 
     if features_computed > 0:
-        report("OK", 7, f"Feature extraction: {features_computed} OK, {features_failed} failed")
+        report("OK", 7, f"Feature extraction: {features_computed} OK, {features_failed} failed, VLF: {vlf_computed}")
         sid, sf = sample_features
         print(f"       Sample ({sid}):")
         for k, v in sf.items():
-            print(f"         {k}: {v:.6f}")
+            print(f"         {k}: {v:.6f}" if v is not None else f"         {k}: None")
+        if sample_vlf_features:
+            vsid, vsf = sample_vlf_features
+            print(f"       VLF sample ({vsid}):")
+            print(f"         vlf_power: {vsf['vlf_power']:.6f}")
+            print(f"         vlf_hv_ratio: {vsf['vlf_hv_ratio']:.6f}")
     else:
         report("FAIL", 7, "Feature extraction: all failed")
 
@@ -280,30 +296,47 @@ def main():
         f"Cable segment: {classified} classified, {unclassified} unclassified",
     )
 
-    # ---- Test 10: SQLite round-trip ----
+    # ---- Test 10: SQLite round-trip (Phase 19 schema with sensor_type) ----
     import sqlite3
     test_db = os.path.join(work_dir, "test.db")
     try:
         conn = sqlite3.connect(test_db)
         conn.execute("""CREATE TABLE snet_waveform (
             id INTEGER PRIMARY KEY, station_id TEXT, date_str TEXT,
-            segment_hour INTEGER, rms_z REAL, rms_h REAL, hv_ratio REAL,
+            segment_hour INTEGER, sensor_type TEXT NOT NULL DEFAULT '0120A',
+            rms_z REAL, rms_h REAL, hv_ratio REAL,
             lf_power REAL, hf_power REAL, spectral_slope REAL,
+            vlf_power REAL, vlf_hv_ratio REAL,
             n_samples INTEGER, latitude REAL, longitude REAL,
             cable_segment TEXT, received_at TEXT,
-            UNIQUE(station_id, date_str, segment_hour))""")
+            UNIQUE(station_id, date_str, segment_hour, sensor_type))""")
 
         if sample_features:
             sid, sf = sample_features
+            # Insert acceleration row
             conn.execute(
-                "INSERT INTO snet_waveform VALUES (NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (sid, "2026-03-21", 12, sf["rms_z"], sf["rms_h"], sf["hv_ratio"],
+                "INSERT INTO snet_waveform VALUES (NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (sid, "2026-03-21", 12, "accel",
+                 sf["rms_z"], sf["rms_h"], sf["hv_ratio"],
                  sf["lf_power"], sf["hf_power"], sf["spectral_slope"],
+                 None, None,
+                 30000, 35.0, 142.0, "S3", "2026-03-23T10:00:00Z"),
+            )
+            # Insert velocity row (same station, same time, different sensor_type)
+            vlf_p = sample_vlf_features[1]["vlf_power"] if sample_vlf_features else None
+            vlf_hv = sample_vlf_features[1]["vlf_hv_ratio"] if sample_vlf_features else None
+            conn.execute(
+                "INSERT INTO snet_waveform VALUES (NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (sid, "2026-03-21", 12, "velocity",
+                 sf["rms_z"], sf["rms_h"], sf["hv_ratio"],
+                 sf["lf_power"], sf["hf_power"], sf["spectral_slope"],
+                 vlf_p, vlf_hv,
                  30000, 35.0, 142.0, "S3", "2026-03-23T10:00:00Z"),
             )
             conn.commit()
-            row = conn.execute("SELECT * FROM snet_waveform").fetchone()
-            report("OK", 10, f"SQLite round-trip: inserted and read back (rms_z={row[4]:.4f})")
+            rows = conn.execute("SELECT sensor_type, COUNT(*) FROM snet_waveform GROUP BY sensor_type").fetchall()
+            sensor_summary = ", ".join(f"{r[0]}: {r[1]}" for r in rows)
+            report("OK", 10, f"SQLite round-trip: {sensor_summary}")
         else:
             report("WARN", 10, "SQLite round-trip skipped (no features)")
         conn.close()

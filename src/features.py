@@ -166,7 +166,7 @@ FEATURE_NAMES = [
     "dart_pressure_rate",     # pressure rate of change (m/day)
     # AH. IOC sea level (Phase 13) — additional coastal stations
     "ioc_sealevel_anomaly",   # IOC sea level deviation from 30-day mean (σ)
-    # AI. S-net waveform features (Phase 18) — Aoi et al. 2020
+    # AI. S-net acceleration features (Phase 18) — Aoi et al. 2020
     "snet_rms_anomaly",            # overall seismic noise level vs 30-day baseline (σ)
     "snet_hv_ratio_anomaly",       # H/V spectral ratio change (σ)
     "snet_lf_power_anomaly",       # low-freq (0.1–1 Hz) power anomaly — slow-slip proxy (σ)
@@ -174,6 +174,15 @@ FEATURE_NAMES = [
     "snet_spectral_slope_anomaly", # spectral slope change (σ)
     "snet_spatial_gradient",       # along-trench RMS gradient (unitless)
     "snet_segment_max_anomaly",    # max per-segment RMS anomaly (σ)
+    # AJ. S-net velocity features (Phase 19) — Obara 2002 tremor detection
+    "snet_vlf_power_anomaly",           # VLF (0.01–0.1 Hz) power anomaly — SSE/tremor direct proxy (σ)
+    "snet_vlf_hv_ratio_anomaly",       # VLF band H/V ratio change — coupling at tremor freqs (σ)
+    "snet_velocity_rms_anomaly",       # broadband velocity RMS anomaly (σ)
+    "snet_vlf_hf_ratio",              # VLF/HF power ratio — tremor vs microseismicity discriminator
+    "snet_accel_velocity_coherence",   # accel-velocity RMS correlation anomaly — mechanical change
+    "snet_vlf_spatial_gradient",       # along-trench VLF power gradient — SSE migration detection
+    "snet_highgain_snr_anomaly",       # high-gain sensor SNR anomaly — micro-amplitude change (σ)
+    "snet_spectral_slope_velocity",    # velocity spectral slope anomaly (σ)
 ]
 
 N_FEATURES = len(FEATURE_NAMES)
@@ -212,6 +221,18 @@ OPTIONAL_FEATURE_GROUPS = {
         "snet_lf_power_anomaly", "snet_hf_power_anomaly",
         "snet_spectral_slope_anomaly", "snet_spatial_gradient",
         "snet_segment_max_anomaly",
+    ],
+    # Phase 19 — S-net multi-sensor
+    "snet_velocity": [
+        "snet_vlf_power_anomaly", "snet_vlf_hv_ratio_anomaly",
+        "snet_velocity_rms_anomaly", "snet_vlf_spatial_gradient",
+        "snet_spectral_slope_velocity",
+    ],
+    "snet_cross_sensor": [
+        "snet_vlf_hf_ratio", "snet_accel_velocity_coherence",
+    ],
+    "snet_highgain": [
+        "snet_highgain_snr_anomaly",
     ],
 }
 
@@ -275,7 +296,9 @@ class FeatureExtractor:
                  particle_flux_data: dict = None,
                  dart_pressure_data: dict = None,
                  ioc_sealevel_data: dict = None,
-                 snet_waveform_data: dict = None):
+                 snet_waveform_data: dict = None,
+                 snet_velocity_data: dict = None,
+                 snet_highgain_data: dict = None):
         """
         Args:
             events: list of dicts with keys: time, mag, lat, lon, depth, t_days
@@ -294,6 +317,9 @@ class FeatureExtractor:
             gravity_data: {(date_str, cell_lat, cell_lon): {lwe_cm, lwe_prev_cm}}
             so2_data: {(date_str, cell_lat, cell_lon): {so2_du, so2_baseline}}
             soil_moisture_data: {(date_str, cell_lat, cell_lon): {sm, sm_mean_30d, sm_std_30d}}
+            snet_waveform_data: {date_str: {rms_combined, ...}} — acceleration features
+            snet_velocity_data: {date_str: {vel_rms_combined, vlf_power, ...}} — velocity features
+            snet_highgain_data: {date_str: {hg_rms_combined, ...}} — high-gain accel features
         """
         self.events = events
         self.fm_dict = fm_dict
@@ -324,6 +350,8 @@ class FeatureExtractor:
         self.dart_pressure_data = dart_pressure_data or {}
         self.ioc_sealevel_data = ioc_sealevel_data or {}
         self.snet_waveform_data = snet_waveform_data or {}
+        self.snet_velocity_data = snet_velocity_data or {}
+        self.snet_highgain_data = snet_highgain_data or {}
 
         # Pre-compute cell → zone mapping + zone → cells index
         self.cell_zone = {}
@@ -1054,6 +1082,34 @@ class FeatureExtractor:
         snet_spatial_gradient = sw.get("spatial_gradient", 0.0) or 0.0
         snet_segment_max_anomaly = sw.get("segment_max_anomaly", 0.0) or 0.0
 
+        # --- AJ. S-net velocity features (Phase 19) ---
+        sv = self.snet_velocity_data.get(date_str, {})
+
+        def _snet_vel_anomaly(key):
+            val = sv.get(key, 0.0) or 0.0
+            mean = sv.get(f"{key}_mean_30d", 0.0) or 0.0
+            std = sv.get(f"{key}_std_30d", 1.0) or 1.0
+            return (val - mean) / max(std, 0.001) if val != 0 else 0.0
+
+        snet_vlf_power_anomaly = _snet_vel_anomaly("vlf_power")
+        snet_vlf_hv_ratio_anomaly = _snet_vel_anomaly("vlf_hv_ratio")
+        snet_velocity_rms_anomaly = _snet_vel_anomaly("vel_rms_combined")
+        snet_vlf_spatial_gradient = sv.get("vlf_spatial_gradient", 0.0) or 0.0
+        snet_spectral_slope_velocity = _snet_vel_anomaly("vel_spectral_slope")
+
+        # Cross-sensor features (require both accel + velocity data on same date)
+        snet_vlf_hf_ratio = sv.get("vlf_hf_ratio", 0.0) or 0.0
+        snet_accel_velocity_coherence = sv.get("accel_velocity_coherence", 0.0) or 0.0
+
+        # High-gain features
+        sh = self.snet_highgain_data.get(date_str, {})
+        snet_highgain_snr_anomaly = 0.0
+        hg_val = sh.get("hg_rms_combined", 0.0) or 0.0
+        hg_mean = sh.get("hg_rms_combined_mean_30d", 0.0) or 0.0
+        hg_std = sh.get("hg_rms_combined_std_30d", 1.0) or 1.0
+        if hg_val != 0:
+            snet_highgain_snr_anomaly = (hg_val - hg_mean) / max(hg_std, 0.001)
+
         # Assemble feature vector
         return [
             rate_7d,
@@ -1155,7 +1211,7 @@ class FeatureExtractor:
             dart_pressure_rate,
             # AH. IOC sea level (Phase 13)
             ioc_sealevel_anomaly,
-            # AI. S-net waveform features (Phase 18)
+            # AI. S-net acceleration features (Phase 18)
             snet_rms_anomaly,
             snet_hv_ratio_anomaly,
             snet_lf_power_anomaly,
@@ -1163,6 +1219,15 @@ class FeatureExtractor:
             snet_spectral_slope_anomaly,
             snet_spatial_gradient,
             snet_segment_max_anomaly,
+            # AJ. S-net velocity features (Phase 19)
+            snet_vlf_power_anomaly,
+            snet_vlf_hv_ratio_anomaly,
+            snet_velocity_rms_anomaly,
+            snet_vlf_hf_ratio,
+            snet_accel_velocity_coherence,
+            snet_vlf_spatial_gradient,
+            snet_highgain_snr_anomaly,
+            snet_spectral_slope_velocity,
         ]
 
     def extract_dict(self, cell_lat, cell_lon, t_now_days) -> dict:

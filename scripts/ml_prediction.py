@@ -171,6 +171,7 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
                    tidal_stress_data=None, particle_flux_data=None,
                    dart_pressure_data=None, ioc_sealevel_data=None,
                    snet_waveform_data=None,
+                   snet_velocity_data=None, snet_highgain_data=None,
                    min_target_mag=None, window_days=None, step_days=None):
     """Generate feature matrix and labels.
 
@@ -235,6 +236,8 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
         dart_pressure_data=dart_pressure_data,
         ioc_sealevel_data=ioc_sealevel_data,
         snet_waveform_data=snet_waveform_data,
+        snet_velocity_data=snet_velocity_data,
+        snet_highgain_data=snet_highgain_data,
     )
     # Build index mask: which positions in the full feature vector to keep
     feature_mask = [i for i, name in enumerate(FEATURE_NAMES) if name in set(active_feature_names)]
@@ -276,6 +279,8 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
         dart_pressure_data=dart_pressure_data,
         ioc_sealevel_data=ioc_sealevel_data,
         snet_waveform_data=snet_waveform_data,
+        snet_velocity_data=snet_velocity_data,
+        snet_highgain_data=snet_highgain_data,
     )
 
     # Generate samples
@@ -2167,57 +2172,140 @@ async def load_phase13_ioc_sealevel(db_path):
         return {}
 
 
-async def load_phase18_snet_waveform(db_path):
-    """Load S-net waveform features with rolling baselines and spatial analysis.
+def _compute_rolling_baselines(daily, feature_keys):
+    """Compute rolling 30-day baseline for a list of daily records.
 
-    Returns dict: {date_str: {
-        rms_combined, rms_combined_mean_30d, rms_combined_std_30d,
-        hv_ratio, hv_ratio_mean_30d, hv_ratio_std_30d,
-        lf_power, lf_power_mean_30d, lf_power_std_30d,
-        hf_power, hf_power_mean_30d, hf_power_std_30d,
-        spectral_slope, spectral_slope_mean_30d, spectral_slope_std_30d,
-        spatial_gradient,        # along-trench RMS gradient
-        segment_max_anomaly,     # max anomaly across cable segments
-    }}
+    Returns dict: {date_str: {key, key_mean_30d, key_std_30d, ...}}
+    """
+    data = {}
+    for i, d in enumerate(daily):
+        date_str = d["date_str"]
+        entry = {}
+
+        start_idx = max(0, i - 30)
+        window = daily[start_idx:i]  # Strictly before current day
+
+        for key in feature_keys:
+            val = d[key]
+            entry[key] = val
+
+            if window:
+                w_vals = [w[key] for w in window if w[key] is not None and w[key] != 0]
+                if w_vals:
+                    mean_30d = sum(w_vals) / len(w_vals)
+                    std_30d = (sum((v - mean_30d) ** 2 for v in w_vals) / len(w_vals)) ** 0.5
+                else:
+                    mean_30d = val
+                    std_30d = 0.001
+            else:
+                mean_30d = val
+                std_30d = 0.001
+
+            entry[f"{key}_mean_30d"] = mean_30d
+            entry[f"{key}_std_30d"] = max(std_30d, 0.001)
+
+        data[date_str] = entry
+    return data
+
+
+def _compute_spatial_gradient(seg_data, date_str):
+    """Compute along-trench linear gradient of RMS from per-segment data."""
+    CABLE_ORDER = {"S1": 0, "S2": 1, "S3": 2, "S4": 3, "S5": 4, "S6": 5}
+    segs = seg_data.get(date_str, {})
+    if len(segs) < 3:
+        return 0.0
+    ordered = sorted(
+        [(CABLE_ORDER.get(s, -1), v) for s, v in segs.items() if s in CABLE_ORDER],
+        key=lambda x: x[0],
+    )
+    if len(ordered) < 3:
+        return 0.0
+    xs = [o[0] for o in ordered]
+    ys = [o[1] for o in ordered]
+    n = len(xs)
+    mean_x = sum(xs) / n
+    mean_y = sum(ys) / n
+    cov = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
+    var_x = sum((x - mean_x) ** 2 for x in xs)
+    return cov / var_x if var_x > 0 else 0.0
+
+
+def _compute_segment_max_anomaly(seg_data, date_str, daily, daily_index):
+    """Compute max z-score across cable segments."""
+    segs = seg_data.get(date_str, {})
+    start_idx = max(0, daily_index - 30)
+    window = daily[start_idx:daily_index]
+
+    if not segs or not window:
+        return 0.0
+
+    seg_anomalies = []
+    for seg_name, seg_rms in segs.items():
+        seg_window_vals = []
+        for w in window:
+            w_segs = seg_data.get(w["date_str"], {})
+            if seg_name in w_segs:
+                seg_window_vals.append(w_segs[seg_name])
+        if seg_window_vals:
+            seg_mean = sum(seg_window_vals) / len(seg_window_vals)
+            seg_std = max(
+                (sum((v - seg_mean) ** 2 for v in seg_window_vals) / len(seg_window_vals)) ** 0.5,
+                0.001,
+            )
+            seg_anomalies.append(abs((seg_rms - seg_mean) / seg_std))
+    return max(seg_anomalies) if seg_anomalies else 0.0
+
+
+async def _load_sensor_data(db_path, sensor_type_filter, extra_columns=""):
+    """Load daily averages and per-segment data for a sensor type.
+
+    Returns (daily_list, seg_data_dict) or ([], {}).
     """
     import math
 
-    CABLE_ORDER = {"S1": 0, "S2": 1, "S3": 2, "S4": 3, "S5": 4, "S6": 5}
+    extra_select = f", {extra_columns}" if extra_columns else ""
 
     try:
         async with aiosqlite.connect(db_path) as db:
-            # Check if table exists
             tables = await db.execute_fetchall(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='snet_waveform'"
             )
             if not tables:
-                logger.info("  snet_waveform table not found (Phase 18 not yet fetched)")
-                return {}
+                return [], {}
 
-            # Daily averages across all stations
+            # Check if sensor_type column exists (backward compat)
+            columns = {row[1] for row in await db.execute_fetchall("PRAGMA table_info(snet_waveform)")}
+            has_sensor_type = "sensor_type" in columns
+
+            if has_sensor_type:
+                where = f"WHERE sensor_type = '{sensor_type_filter}'"
+            else:
+                # Legacy: no sensor_type column, all data is acceleration
+                if sensor_type_filter != "0120A":
+                    return [], {}
+                where = ""
+
             rows = await db.execute_fetchall(
-                """SELECT date_str,
+                f"""SELECT date_str,
                        AVG(rms_z), AVG(rms_h), AVG(hv_ratio),
                        AVG(lf_power), AVG(hf_power), AVG(spectral_slope)
-                   FROM snet_waveform
+                       {extra_select}
+                   FROM snet_waveform {where}
                    GROUP BY date_str ORDER BY date_str"""
             )
 
-            # Per-segment daily averages for spatial analysis
             seg_rows = await db.execute_fetchall(
-                """SELECT date_str, cable_segment,
+                f"""SELECT date_str, cable_segment,
                        AVG(rms_z), AVG(rms_h)
                    FROM snet_waveform
-                   WHERE cable_segment IS NOT NULL
+                   {where + ' AND' if where else 'WHERE'} cable_segment IS NOT NULL
                    GROUP BY date_str, cable_segment
                    ORDER BY date_str, cable_segment"""
             )
 
         if not rows:
-            logger.info("  No S-net waveform data available")
-            return {}
+            return [], {}
 
-        # Parse daily averages
         daily = []
         for r in rows:
             if r[1] is None:
@@ -2225,108 +2313,134 @@ async def load_phase18_snet_waveform(db_path):
             rms_z = r[1] or 0.0
             rms_h = r[2] or 0.0
             rms_combined = math.sqrt(rms_z ** 2 + rms_h ** 2) if (rms_z and rms_h) else 0.0
-            daily.append({
+            entry = {
                 "date_str": r[0],
                 "rms_combined": rms_combined,
                 "hv_ratio": r[3] or 0.0,
                 "lf_power": r[4] or 0.0,
                 "hf_power": r[5] or 0.0,
                 "spectral_slope": r[6] or 0.0,
-            })
+            }
+            # Extra columns (vlf_power, vlf_hv_ratio for velocity)
+            if extra_columns:
+                col_names = [c.strip().split(")")[-1].strip() for c in extra_columns.split(",")]
+                for j, col_name in enumerate(col_names):
+                    entry[col_name] = r[7 + j] if r[7 + j] is not None else 0.0
+            daily.append(entry)
 
-        # Parse per-segment data for spatial gradient
-        seg_data = {}  # {date_str: {segment: rms_combined}}
+        seg_data = {}
         for r in seg_rows:
             date_str, seg = r[0], r[1]
-            if date_str not in seg_data:
-                seg_data[date_str] = {}
+            seg_data.setdefault(date_str, {})
             rms_z = r[2] or 0.0
             rms_h = r[3] or 0.0
             seg_data[date_str][seg] = math.sqrt(rms_z ** 2 + rms_h ** 2)
 
-        # Compute rolling baselines + spatial features
-        feature_keys = ["rms_combined", "hv_ratio", "lf_power", "hf_power", "spectral_slope"]
-        data = {}
-
-        for i, d in enumerate(daily):
-            date_str = d["date_str"]
-            entry = {}
-
-            # Rolling 30-day baseline for each feature
-            start_idx = max(0, i - 30)
-            window = daily[start_idx:i]  # Strictly before current day
-
-            for key in feature_keys:
-                val = d[key]
-                entry[key] = val
-
-                if window:
-                    w_vals = [w[key] for w in window if w[key] is not None and w[key] != 0]
-                    if w_vals:
-                        mean_30d = sum(w_vals) / len(w_vals)
-                        std_30d = (sum((v - mean_30d) ** 2 for v in w_vals) / len(w_vals)) ** 0.5
-                    else:
-                        mean_30d = val
-                        std_30d = 0.001
-                else:
-                    mean_30d = val
-                    std_30d = 0.001
-
-                entry[f"{key}_mean_30d"] = mean_30d
-                entry[f"{key}_std_30d"] = max(std_30d, 0.001)
-
-            # Spatial gradient: linear trend of RMS along trench (S1→S6)
-            segs = seg_data.get(date_str, {})
-            if len(segs) >= 3:
-                ordered = sorted(
-                    [(CABLE_ORDER.get(s, -1), v) for s, v in segs.items() if s in CABLE_ORDER],
-                    key=lambda x: x[0],
-                )
-                if len(ordered) >= 3:
-                    # Simple linear slope
-                    xs = [o[0] for o in ordered]
-                    ys = [o[1] for o in ordered]
-                    n = len(xs)
-                    mean_x = sum(xs) / n
-                    mean_y = sum(ys) / n
-                    cov = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
-                    var_x = sum((x - mean_x) ** 2 for x in xs)
-                    entry["spatial_gradient"] = cov / var_x if var_x > 0 else 0.0
-                else:
-                    entry["spatial_gradient"] = 0.0
-            else:
-                entry["spatial_gradient"] = 0.0
-
-            # Segment max anomaly: max z-score across segments
-            if segs and window:
-                seg_anomalies = []
-                for seg_name, seg_rms in segs.items():
-                    # Get 30-day baseline for this segment
-                    seg_window_vals = []
-                    for w in window:
-                        w_date = w["date_str"]
-                        w_segs = seg_data.get(w_date, {})
-                        if seg_name in w_segs:
-                            seg_window_vals.append(w_segs[seg_name])
-                    if seg_window_vals:
-                        seg_mean = sum(seg_window_vals) / len(seg_window_vals)
-                        seg_std = max(
-                            (sum((v - seg_mean) ** 2 for v in seg_window_vals) / len(seg_window_vals)) ** 0.5,
-                            0.001,
-                        )
-                        seg_anomalies.append(abs((seg_rms - seg_mean) / seg_std))
-                entry["segment_max_anomaly"] = max(seg_anomalies) if seg_anomalies else 0.0
-            else:
-                entry["segment_max_anomaly"] = 0.0
-
-            data[date_str] = entry
-
-        logger.info("  S-net waveform data loaded: %d dates, %d features/date", len(data), len(feature_keys) * 3 + 2)
-        return data
+        return daily, seg_data
 
     except Exception as e:
-        logger.warning("  S-net waveform load failed (non-fatal): %s", e)
-        return {}
+        logger.warning("  Failed to load sensor data for %s: %s", sensor_type_filter, e)
+        return [], {}
+
+
+async def load_phase18_snet_waveform(db_path):
+    """Load S-net multi-sensor features with rolling baselines and spatial analysis.
+
+    Returns tuple: (accel_data, velocity_data, highgain_data)
+        Each is a dict: {date_str: {feature_key: value, ...}}
+    """
+
+    # --- Acceleration (0120A) ---
+    accel_daily, accel_seg = await _load_sensor_data(db_path, "0120A")
+    accel_keys = ["rms_combined", "hv_ratio", "lf_power", "hf_power", "spectral_slope"]
+    accel_data = _compute_rolling_baselines(accel_daily, accel_keys)
+
+    # Add spatial features to accel_data
+    for i, d in enumerate(accel_daily):
+        ds = d["date_str"]
+        if ds in accel_data:
+            accel_data[ds]["spatial_gradient"] = _compute_spatial_gradient(accel_seg, ds)
+            accel_data[ds]["segment_max_anomaly"] = _compute_segment_max_anomaly(
+                accel_seg, ds, accel_daily, i)
+
+    if accel_data:
+        logger.info("  S-net accel (0120A): %d dates", len(accel_data))
+
+    # --- Velocity (0120) ---
+    vel_daily, vel_seg = await _load_sensor_data(
+        db_path, "velocity", extra_columns="AVG(vlf_power), AVG(vlf_hv_ratio)")
+
+    vel_keys = ["rms_combined", "hv_ratio", "lf_power", "hf_power", "spectral_slope",
+                "vlf_power", "vlf_hv_ratio"]
+    velocity_data = {}
+
+    if vel_daily:
+        vel_baseline = _compute_rolling_baselines(vel_daily, vel_keys)
+
+        for i, d in enumerate(vel_daily):
+            ds = d["date_str"]
+            if ds not in vel_baseline:
+                continue
+            entry = vel_baseline[ds]
+
+            # Rename keys for velocity namespace
+            vel_entry = {}
+            for k, v in entry.items():
+                if k.startswith("rms_combined"):
+                    vel_entry["vel_" + k] = v
+                elif k.startswith("spectral_slope"):
+                    vel_entry["vel_" + k] = v
+                else:
+                    vel_entry[k] = v
+
+            # VLF spatial gradient
+            vel_entry["vlf_spatial_gradient"] = _compute_spatial_gradient(vel_seg, ds)
+
+            # Cross-sensor: VLF/HF ratio (velocity VLF power / accel HF power)
+            accel_entry = accel_data.get(ds, {})
+            vlf_pow = entry.get("vlf_power", 0.0)
+            hf_pow = accel_entry.get("hf_power", 0.0)
+            if vlf_pow != 0 and hf_pow != 0:
+                vel_entry["vlf_hf_ratio"] = vlf_pow - hf_pow  # log10 ratio = difference
+            else:
+                vel_entry["vlf_hf_ratio"] = 0.0
+
+            # Cross-sensor: accel-velocity RMS coherence (30-day correlation anomaly)
+            # Simple approach: ratio of current day's accel/vel RMS vs 30-day mean ratio
+            accel_rms = accel_entry.get("rms_combined", 0.0)
+            vel_rms = entry.get("rms_combined", 0.0)
+            accel_rms_mean = accel_entry.get("rms_combined_mean_30d", 0.0)
+            vel_rms_mean = entry.get("rms_combined_mean_30d", 0.0)
+            if accel_rms > 0 and vel_rms > 0 and accel_rms_mean > 0 and vel_rms_mean > 0:
+                ratio_now = accel_rms / vel_rms
+                ratio_baseline = accel_rms_mean / vel_rms_mean
+                if ratio_baseline > 0:
+                    vel_entry["accel_velocity_coherence"] = (ratio_now - ratio_baseline) / ratio_baseline
+                else:
+                    vel_entry["accel_velocity_coherence"] = 0.0
+            else:
+                vel_entry["accel_velocity_coherence"] = 0.0
+
+            velocity_data[ds] = vel_entry
+
+        logger.info("  S-net velocity (0120): %d dates", len(velocity_data))
+
+    # --- High-gain acceleration (0120C) ---
+    hg_daily, _ = await _load_sensor_data(db_path, "accel_hg")
+    hg_keys = ["rms_combined"]
+    highgain_data = {}
+
+    if hg_daily:
+        hg_baseline = _compute_rolling_baselines(hg_daily, hg_keys)
+        for ds, entry in hg_baseline.items():
+            highgain_data[ds] = {
+                "hg_rms_combined": entry.get("rms_combined", 0.0),
+                "hg_rms_combined_mean_30d": entry.get("rms_combined_mean_30d", 0.0),
+                "hg_rms_combined_std_30d": entry.get("rms_combined_std_30d", 0.001),
+            }
+        logger.info("  S-net high-gain (0120C): %d dates", len(highgain_data))
+
+    return accel_data, velocity_data, highgain_data
 
 
 def spatial_smooth_predictions(
@@ -2453,7 +2567,7 @@ async def run_ml_prediction():
     logger.info("--- Loading Phase 13+18 data (DART pressure, IOC sea level, S-net waveform) ---")
     dart_pressure_data = await load_phase13_dart_pressure(DB_PATH)
     ioc_sealevel_data = await load_phase13_ioc_sealevel(DB_PATH)
-    snet_waveform_data = await load_phase18_snet_waveform(DB_PATH)
+    snet_waveform_data, snet_velocity_data, snet_highgain_data = await load_phase18_snet_waveform(DB_PATH)
 
     # Multi-target loop
     target_results = {}
@@ -2496,6 +2610,8 @@ async def run_ml_prediction():
             dart_pressure_data=dart_pressure_data,
             ioc_sealevel_data=ioc_sealevel_data,
             snet_waveform_data=snet_waveform_data,
+            snet_velocity_data=snet_velocity_data,
+            snet_highgain_data=snet_highgain_data,
             min_target_mag=cfg["min_mag"],
             window_days=cfg["window_days"],
             step_days=cfg["step_days"],

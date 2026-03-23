@@ -377,9 +377,9 @@ jobs:
             echo "${{ github.workspace }}/win32tools/bin" >> $GITHUB_PATH
           fi
 
-      - name: Fetch S-net waveform features (Phase 18)
+      - name: Fetch S-net multi-sensor waveform features (Phase 19)
         continue-on-error: true
-        timeout-minutes: 120
+        timeout-minutes: 150
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           HINET_USER: ${{ secrets.HINET_USER }}
