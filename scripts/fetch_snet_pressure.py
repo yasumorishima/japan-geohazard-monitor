@@ -370,7 +370,8 @@ async def main() -> None:
         await ensure_table(db)
 
     # Target: previous day (data has ~2h delay, so yesterday is safe)
-    target_date = datetime.now(timezone.utc) - timedelta(days=1)
+    # HinetPy requires naive (timezone-unaware) datetime objects
+    target_date = datetime.utcnow() - timedelta(days=1)
     target_date_str = target_date.strftime("%Y-%m-%d")
     logger.info("Target date: %s", target_date_str)
 
