@@ -919,13 +919,13 @@ Feature matrix exported to BigQuery (`geohazard.feature_matrix`: 216,711 rows, 1
 | **Phase 15h** | ✅ Complete | SO2パーサー修正 → **408,351行取得成功**（0→408K）。AUC変化なし（座標不一致で特徴量未反映と判明）。BQへfeature_matrix保管 |
 | **Phase 15i** | ✅ Complete | 座標スナップ修正OK、SO2 0%→2%。但しAUC変化なし（非ゼロ率低すぎ）。根本原因: イベントベースfetch + 月次/年次データの日次lookup不整合 |
 | **Phase 16** | ⏱️ Timeout | SO2/cloud連続日次fetch成功（SO2 2.3M行、cloud 547K行）、但し6h制限でMLに未到達。DB checkpoint保存済み |
-| **Phase 17** | 🔄 Running | **CI 2ジョブ分割**（fetch+analyze）で6h制限回避 + `diagnose_data_gaps.py` でデータ抜け可視化 |
+| **Phase 17** | ⏸️ Pending | **CI 2ジョブ分割**（fetch+analyze）で6h制限回避 + `diagnose_data_gaps.py` でデータ抜け可視化。S-netテスト完了後に実行 |
 | **BQ Integration** | ✅ Active | CI完了後にfeature_matrix + AUC + 非ゼロ率を自動ロード。座標不一致バグはBQ集計クエリで発見 |
 | **ConvLSTM** | 🟢 Colab-ready | Spatiotemporal neural network. Script + feature_matrix.json deployed to Drive + BigQuery |
 | **SeismoGNN** | 🟢 Colab-ready | Graph Attention Network with fault-network topology. Script deployed to Drive |
 | **Transformer** | 📋 Next | SafeNet-style multi-window features (7/14/30/90/365d) + attention (SafeNet, Sci. Reports 2025) |
 | **PINN** | 📋 Next | Physics-Informed NN with Rate-State friction loss (Nature Comms 2023) |
-| **S-net** | ✅ NIED approved | 150 stations, sub-Pa pressure at Japan Trench. Registration approved 2026-03-23 |
+| **S-net** | 🔬 Testing | NIED承認済(3/23)。HinetPy 12項目パイプラインテスト中: 認証OK、151局座標OK、temporal coverage 2016-08〜OK。`0120A`は加速度のみ→圧力チャンネル(suffix U)探索中（`0120`/`0120B`/`0120C`試行） |
 | **INTERMAGNET backfill** | 🔄 In progress | 500 days/station/run (step timeout 60min). Full 15-year coverage accumulates over weekly runs |
 
 ### GCP BigQuery Data Platform
