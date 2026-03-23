@@ -18,9 +18,12 @@ on:
         default: 'all'
 
 jobs:
-  analyze:
+  # ====== JOB 1: FETCH ======
+  # Data collection + validation + gap diagnosis.
+  # Runs independently with its own 6-hour budget.
+  fetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 500
+    timeout-minutes: 350
 
     steps:
       - uses: actions/checkout@v4
@@ -119,54 +122,12 @@ jobs:
         run: |
           python3 scripts/fetch_cmt.py
 
-      - name: Run Coulomb stress analysis
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-        run: |
-          python3 scripts/coulomb_analysis.py --min-mag 5.0
-
-      - name: Run ETAS analysis
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-        run: |
-          python3 scripts/etas_analysis.py --min-mag 5.0
-
-      - name: Run cluster analysis (Zaliapin-Ben-Zion)
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-        run: |
-          python3 scripts/cluster_analysis.py --min-mag 5.0
-
       - name: Fetch GNSS-TEC high-resolution data (Nagoya University ISEE)
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
           pip install netCDF4 2>/dev/null || pip install scipy 2>/dev/null || true
           python3 scripts/fetch_gnss_tec.py || echo "GNSS-TEC fetch non-fatal failure"
-
-      - name: Run Phase 2 validation (isolation + delay + correlation + prospective)
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-        run: |
-          python3 scripts/validate_phase2.py
-
-      - name: Run LURR analysis (tidal stress response)
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-        run: |
-          python3 scripts/lurr_analysis.py
-
-      - name: Run Natural Time analysis (criticality detection)
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-        run: |
-          python3 scripts/natural_time_analysis.py
-
-      - name: Run Earthquake Nowcasting
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-        run: |
-          python3 scripts/nowcast_analysis.py
 
       - name: Fetch MODIS LST (thermal anomaly discovery)
         continue-on-error: true
@@ -184,12 +145,6 @@ jobs:
         run: |
           python3 scripts/fetch_kakioka_ulf.py || echo "ULF fetch completed (may need WDC registration for full access)"
 
-      - name: Run ULF magnetic anomaly analysis
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-        run: |
-          python3 scripts/ulf_analysis.py || echo "ULF analysis skipped (insufficient data)"
-
       # --- Phase 9: Non-traditional precursor data sources ---
 
       - name: Fetch NMDB cosmic ray data (Homola et al. 2023)
@@ -199,12 +154,6 @@ jobs:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
           python3 scripts/fetch_nmdb_cosmicray.py || echo "NMDB fetch failed (non-fatal)"
-
-      - name: Run cosmic ray anomaly analysis
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-        run: |
-          python3 scripts/cosmic_ray_analysis.py || echo "Cosmic ray analysis skipped (insufficient data)"
 
       - name: Fetch Blitzortung lightning data
         continue-on-error: true
@@ -365,7 +314,7 @@ jobs:
 
       - name: Fetch GOES X-ray flux (solar flares, no auth)
         continue-on-error: true
-        timeout-minutes: 10
+        timeout-minutes: 20
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
@@ -421,8 +370,7 @@ jobs:
           python3 scripts/fetch_snet_pressure.py || echo "S-net pressure fetch failed (non-fatal)"
 
       # ====== DATA PRESERVATION CHECKPOINT ======
-      # All fetch steps complete. Validate + save DB before analysis.
-      # This ensures data survives even if analysis steps fail/timeout.
+      # All fetch steps complete. Validate + diagnose + save DB.
 
       - name: Download previous validation report
         if: always()
@@ -453,6 +401,13 @@ jobs:
             PREV_FLAG="--previous /tmp/prev_validation.json"
           fi
           python3 scripts/validate_data.py $PREV_FLAG
+
+      - name: Diagnose data gaps
+        if: always()
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/diagnose_data_gaps.py --db ./data/geohazard.db --json --ci
 
       - name: Notify Discord — fetch phase complete
         if: always()
@@ -526,9 +481,12 @@ jobs:
           issue_str = '\n'.join(all_issues[:15]) if all_issues else 'All healthy'
           pathlib.Path('/tmp/notify_problems.txt').write_text(issue_str)
           "
-          # Copy validation JSON for artifact
+          # Copy reports for artifact
           if [ -f results/data_validation.json ]; then
             cp results/data_validation.json results/midrun/
+          fi
+          if [ -f results/data_gaps.json ]; then
+            cp results/data_gaps.json results/midrun/
           fi
           SUMMARY=$(cat /tmp/notify_summary.txt 2>/dev/null || echo "Stats unavailable")
           PROBLEMS=$(cat /tmp/notify_problems.txt 2>/dev/null || echo "Unknown")
@@ -546,7 +504,7 @@ jobs:
                     {\"name\": \"Problems\", \"value\": \"$PROBLEMS\", \"inline\": false},
                     {\"name\": \"Log\", \"value\": \"[Actions](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\", \"inline\": true}
                   ],
-                  \"footer\": {\"text\": \"ML phase starting next\"}
+                  \"footer\": {\"text\": \"Analyze job starting next\"}
                 }]
               }"
           fi
@@ -571,9 +529,113 @@ jobs:
           path: |
             data/geohazard.db
             results/data_validation.json
+            results/data_gaps.json
           retention-days: 90
 
+  # ====== JOB 2: ANALYZE ======
+  # Restores DB from fetch job, runs all analysis + ML.
+  # Separate 6-hour budget ensures ML always has time to complete.
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    needs: fetch
+    if: always() && needs.fetch.result != 'cancelled'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install aiohttp aiosqlite scikit-learn scipy numpy netCDF4
+
+      - name: Restore database from fetch job
+        uses: actions/download-artifact@v4
+        with:
+          name: database-checkpoint-${{ github.run_id }}
+          path: .
+
+      - name: Verify restored database
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          if [ ! -f data/geohazard.db ]; then
+            echo "::error::Database not found after restore"
+            exit 1
+          fi
+          DB_SIZE=$(du -h data/geohazard.db | cut -f1)
+          echo "✅ Database restored ($DB_SIZE)"
+          python3 -c "
+          import sqlite3
+          conn = sqlite3.connect('data/geohazard.db')
+          tables = conn.execute(\"SELECT name FROM sqlite_master WHERE type='table'\").fetchall()
+          total = 0
+          for t in tables:
+              count = conn.execute(f'SELECT COUNT(*) FROM {t[0]}').fetchone()[0]
+              total += count
+              print(f'  {t[0]}: {count:,} rows')
+          print(f'Total: {total:,} rows across {len(tables)} tables')
+          conn.close()
+          "
+
       # ====== ANALYSIS PHASE ======
+
+      - name: Run Coulomb stress analysis
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/coulomb_analysis.py --min-mag 5.0
+
+      - name: Run ETAS analysis
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/etas_analysis.py --min-mag 5.0
+
+      - name: Run cluster analysis (Zaliapin-Ben-Zion)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/cluster_analysis.py --min-mag 5.0
+
+      - name: Run Phase 2 validation (isolation + delay + correlation + prospective)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/validate_phase2.py
+
+      - name: Run LURR analysis (tidal stress response)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/lurr_analysis.py
+
+      - name: Run Natural Time analysis (criticality detection)
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/natural_time_analysis.py
+
+      - name: Run Earthquake Nowcasting
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/nowcast_analysis.py
+
+      - name: Run ULF magnetic anomaly analysis
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/ulf_analysis.py || echo "ULF analysis skipped (insufficient data)"
+
+      - name: Run cosmic ray anomaly analysis
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/cosmic_ray_analysis.py || echo "Cosmic ray analysis skipped (insufficient data)"
 
       - name: Run MODIS LST thermal anomaly analysis
         env:
@@ -600,8 +662,6 @@ jobs:
           python3 scripts/ml_prediction.py || echo "ML prediction failed (non-fatal)"
 
       # ====== CRITICAL RESULTS CHECKPOINT ======
-      # Save ML results + feature matrix immediately after ML prediction.
-      # Feature matrix is now exported inside ml_prediction.py (no separate step).
 
       - name: Notify Discord — ML complete
         if: always()
