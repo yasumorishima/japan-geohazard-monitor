@@ -166,7 +166,9 @@ def main():
         kstnm = read_sac_station_name(str(sac_path))
         basename = Path(sac_path).stem
         parts = basename.split(".")
-        suffix = parts[3][-1] if len(parts) > 3 else "?"
+        # Handle both 4-part (N.STA.LOC.CHA) and 3-part (N.STA.CHA) formats
+        channel = parts[3] if len(parts) > 3 else parts[-1] if parts else ""
+        suffix = channel[-1].upper() if channel else "?"
         channel_names.setdefault(suffix, set()).add(kcmpnm)
 
     print(f"       SAC header channel names by suffix:")
@@ -181,10 +183,11 @@ def main():
     for sac_path in sac_files:
         basename = Path(sac_path).stem
         parts = basename.split(".")
-        if len(parts) < 4:
+        if len(parts) < 3:
             continue
         station_id = parts[1]
-        channel = parts[3]
+        # Handle both 4-part (N.STA.LOC.CHA) and 3-part (N.STA.CHA) formats
+        channel = parts[3] if len(parts) > 3 else parts[-1]
         suffix = channel[-1].upper()
         if suffix in ("Z", "X", "Y"):
             station_files.setdefault(station_id, {})[suffix] = str(sac_path)
@@ -346,7 +349,7 @@ def main():
                     kcmpnm = read_sac_channel_name(str(sf))
                     basename = Path(sf).stem
                     parts = basename.split(".")
-                    file_channel = parts[3] if len(parts) > 3 else "?"
+                    file_channel = parts[3] if len(parts) > 3 else parts[-1] if parts else "?"
                     channels[file_channel] = kcmpnm
 
                 survey_results[code] = {

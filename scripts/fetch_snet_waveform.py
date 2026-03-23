@@ -509,9 +509,10 @@ def _fetch_day(
             for sac_path in sac_files:
                 basename = Path(sac_path).stem
                 parts = basename.split(".")
-                if len(parts) < 4:
+                if len(parts) < 3:
                     continue
                 station_id = parts[1]
+                # Handle both 4-part (N.STA.LOC.CHA) and 3-part (N.STA.CHA) formats
                 channel = parts[3] if len(parts) > 3 else parts[-1]
 
                 # Classify component by suffix
