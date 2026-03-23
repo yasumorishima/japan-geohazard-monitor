@@ -188,9 +188,10 @@ def _fetch_snet_data(user: str, password: str, target_date: datetime) -> list[di
 
             logger.info("Decoding WIN32 file: %s", win32_file)
 
-            # Decode WIN32 → SAC files
+            # Decode WIN32 → SAC files (HinetPy v0.10+: use win32.extract_sac)
             try:
-                sac_files = client.decode(win32_file, ch_table, outdir=work_dir)
+                from HinetPy import win32 as hinetwin32
+                sac_files = hinetwin32.extract_sac(win32_file, ch_table, outdir=work_dir)
             except Exception as exc:
                 logger.warning("Failed to decode WIN32 data: %s", exc)
                 continue

@@ -120,13 +120,19 @@ def main():
             print(f"       Station object type: {type(sample_st)}")
             if hasattr(sample_st, "__dict__"):
                 print(f"       Attributes: {list(sample_st.__dict__.keys())}")
-            elif isinstance(sample_st, (list, tuple)):
-                print(f"       Tuple/list length: {len(sample_st)}, values: {sample_st}")
-            else:
-                print(f"       Repr: {repr(sample_st)}")
-            # Show first 3 stations raw
-            for i, s in enumerate(stations[:3]):
-                print(f"       Raw station[{i}]: {repr(s)}")
+            # Show first 5 stations with all attributes
+            none_lat_count = 0
+            for i, s in enumerate(stations[:5]):
+                lat = getattr(s, "latitude", "N/A")
+                lon = getattr(s, "longitude", "N/A")
+                code = getattr(s, "code", "N/A")
+                name = getattr(s, "name", "N/A")
+                elev = getattr(s, "elevation", "N/A")
+                print(f"       [{i}] code={code} name={name} lat={lat} lon={lon} elev={elev}")
+            for s in stations:
+                if getattr(s, "latitude", None) is None:
+                    none_lat_count += 1
+            print(f"       Stations with lat=None: {none_lat_count}/{n_stations}")
 
         for st in stations:
             # Try multiple attribute patterns
@@ -208,7 +214,8 @@ def main():
         ch_table_lines = Path(ch_table).read_text().strip().split("\n")
 
     try:
-        sac_files = client.decode(win32_file, ch_table, outdir=work_dir)
+        from HinetPy import win32
+        sac_files = win32.extract_sac(win32_file, ch_table, outdir=work_dir)
         if not sac_files:
             fail(5, "WIN32 decode: 0 SAC files")
             sys.exit(1)
