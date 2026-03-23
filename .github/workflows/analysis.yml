@@ -377,15 +377,22 @@ jobs:
             echo "${{ github.workspace }}/win32tools/bin" >> $GITHUB_PATH
           fi
 
-      - name: Fetch S-net seafloor pressure (NIED credentials required)
+      - name: Fetch S-net waveform features (Phase 18)
         continue-on-error: true
-        timeout-minutes: 15
+        timeout-minutes: 120
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           HINET_USER: ${{ secrets.HINET_USER }}
           HINET_PASS: ${{ secrets.HINET_PASS }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
-          python3 scripts/fetch_snet_pressure.py || echo "S-net pressure fetch failed (non-fatal)"
+          pip install HinetPy 2>/dev/null || true
+          python3 scripts/fetch_snet_waveform.py || echo "S-net waveform fetch failed (non-fatal)"
+          # Copy coverage report to results for artifact
+          if [ -f results/snet_coverage.json ]; then
+            mkdir -p results/midrun
+            cp results/snet_coverage.json results/midrun/
+          fi
 
       # ====== DATA PRESERVATION CHECKPOINT ======
       # All fetch steps complete. Validate + diagnose + save DB.

@@ -68,6 +68,7 @@ EXPECTED_TABLES = {
     "dart_pressure":     {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": None},  # rolling recent
     "ioc_sea_level":     {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": None},  # rolling recent
     "snet_pressure":     {"min_rows": 0,     "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
+    "snet_waveform":     {"min_rows": 0,     "time_col": "date_str",    "critical": False, "expected_range": FULL_RANGE},
 }
 
 
@@ -316,7 +317,8 @@ def _gap_reason(table: str) -> str:
         "lightning": "Blitzortung archive restricted",
         "insar_deformation": "LiCSAR: no Japan frames returned",
         "satellite_em": "CSES: registration required",
-        "snet_pressure": "NIED: approval pending",
+        "snet_pressure": "NIED: replaced by snet_waveform (Phase 18)",
+        "snet_waveform": "NIED: S-net waveform features (Phase 18, backfilling)",
         "collector_status": "Analysis-derived (RPi5 only)",
     }
     return reasons.get(table, "Unknown")

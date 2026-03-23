@@ -41,12 +41,22 @@ jobs:
           mkdir -p data results
           python3 scripts/test_snet_pipeline.py 2>&1 | tee results/snet_test.txt
 
+      - name: Waveform feature extraction test (Phase 18)
+        env:
+          HINET_USER: ${{ secrets.HINET_USER }}
+          HINET_PASS: ${{ secrets.HINET_PASS }}
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/test_snet_waveform.py 2>&1 | tee results/snet_waveform_test.txt
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: snet-test-${{ github.run_id }}
-          path: results/snet_test.txt
+          path: |
+            results/snet_test.txt
+            results/snet_waveform_test.txt
           retention-days: 30
 
       - name: Notify Discord

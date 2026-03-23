@@ -166,8 +166,14 @@ FEATURE_NAMES = [
     "dart_pressure_rate",     # pressure rate of change (m/day)
     # AH. IOC sea level (Phase 13) — additional coastal stations
     "ioc_sealevel_anomaly",   # IOC sea level deviation from 30-day mean (σ)
-    # AI. S-net seafloor pressure (Phase 13) — Aoi et al. 2020
-    "snet_pressure_anomaly",  # S-net water pressure deviation from baseline (σ)
+    # AI. S-net waveform features (Phase 18) — Aoi et al. 2020
+    "snet_rms_anomaly",            # overall seismic noise level vs 30-day baseline (σ)
+    "snet_hv_ratio_anomaly",       # H/V spectral ratio change (σ)
+    "snet_lf_power_anomaly",       # low-freq (0.1–1 Hz) power anomaly — slow-slip proxy (σ)
+    "snet_hf_power_anomaly",       # high-freq (1–10 Hz) power anomaly — microseismicity (σ)
+    "snet_spectral_slope_anomaly", # spectral slope change (σ)
+    "snet_spatial_gradient",       # along-trench RMS gradient (unitless)
+    "snet_segment_max_anomaly",    # max per-segment RMS anomaly (σ)
 ]
 
 N_FEATURES = len(FEATURE_NAMES)
@@ -201,7 +207,12 @@ OPTIONAL_FEATURE_GROUPS = {
     # Phase 13 — Seafloor/ocean bottom
     "dart_pressure": ["dart_pressure_anomaly", "dart_pressure_rate"],
     "ioc_sealevel": ["ioc_sealevel_anomaly"],
-    "snet_pressure": ["snet_pressure_anomaly"],
+    "snet_waveform": [
+        "snet_rms_anomaly", "snet_hv_ratio_anomaly",
+        "snet_lf_power_anomaly", "snet_hf_power_anomaly",
+        "snet_spectral_slope_anomaly", "snet_spatial_gradient",
+        "snet_segment_max_anomaly",
+    ],
 }
 
 # Backward compatibility alias
@@ -264,7 +275,7 @@ class FeatureExtractor:
                  particle_flux_data: dict = None,
                  dart_pressure_data: dict = None,
                  ioc_sealevel_data: dict = None,
-                 snet_pressure_data: dict = None):
+                 snet_waveform_data: dict = None):
         """
         Args:
             events: list of dicts with keys: time, mag, lat, lon, depth, t_days
@@ -312,7 +323,7 @@ class FeatureExtractor:
         self.particle_flux_data = particle_flux_data or {}
         self.dart_pressure_data = dart_pressure_data or {}
         self.ioc_sealevel_data = ioc_sealevel_data or {}
-        self.snet_pressure_data = snet_pressure_data or {}
+        self.snet_waveform_data = snet_waveform_data or {}
 
         # Pre-compute cell → zone mapping + zone → cells index
         self.cell_zone = {}
@@ -1026,12 +1037,22 @@ class FeatureExtractor:
         ioc_std = ioc.get("level_std_30d", 1.0) or 1.0
         ioc_sealevel_anomaly = (ioc_val - ioc_mean) / max(ioc_std, 0.001) if ioc_val != 0 else 0.0
 
-        # --- AI. S-net seafloor pressure (Phase 13) ---
-        sn = self.snet_pressure_data.get(date_str, {})
-        sn_val = sn.get("pressure_hpa", 0.0) or 0.0
-        sn_mean = sn.get("pressure_mean_30d", 0.0) or 0.0
-        sn_std = sn.get("pressure_std_30d", 1.0) or 1.0
-        snet_pressure_anomaly = (sn_val - sn_mean) / max(sn_std, 0.001) if sn_val > 0 else 0.0
+        # --- AI. S-net waveform features (Phase 18) ---
+        sw = self.snet_waveform_data.get(date_str, {})
+        # Each key: value, mean_30d, std_30d (computed by loader)
+        def _snet_anomaly(key):
+            val = sw.get(key, 0.0) or 0.0
+            mean = sw.get(f"{key}_mean_30d", 0.0) or 0.0
+            std = sw.get(f"{key}_std_30d", 1.0) or 1.0
+            return (val - mean) / max(std, 0.001) if val != 0 else 0.0
+
+        snet_rms_anomaly = _snet_anomaly("rms_combined")
+        snet_hv_ratio_anomaly = _snet_anomaly("hv_ratio")
+        snet_lf_power_anomaly = _snet_anomaly("lf_power")
+        snet_hf_power_anomaly = _snet_anomaly("hf_power")
+        snet_spectral_slope_anomaly = _snet_anomaly("spectral_slope")
+        snet_spatial_gradient = sw.get("spatial_gradient", 0.0) or 0.0
+        snet_segment_max_anomaly = sw.get("segment_max_anomaly", 0.0) or 0.0
 
         # Assemble feature vector
         return [
@@ -1134,8 +1155,14 @@ class FeatureExtractor:
             dart_pressure_rate,
             # AH. IOC sea level (Phase 13)
             ioc_sealevel_anomaly,
-            # AI. S-net seafloor pressure (Phase 13)
-            snet_pressure_anomaly,
+            # AI. S-net waveform features (Phase 18)
+            snet_rms_anomaly,
+            snet_hv_ratio_anomaly,
+            snet_lf_power_anomaly,
+            snet_hf_power_anomaly,
+            snet_spectral_slope_anomaly,
+            snet_spatial_gradient,
+            snet_segment_max_anomaly,
         ]
 
     def extract_dict(self, cell_lat, cell_lon, t_now_days) -> dict:
