@@ -160,8 +160,8 @@ ssh yasu@<RPi5-tailscale-ip> "cd ~/japan-geohazard-monitor && sudo git pull && s
 - **Analysis Phase 15h/15i** ✅ SO2 continuous fetch (408K rows) + coordinate snap fix. Non-zero rates improved (SO2 2.0%) but AUC unchanged (Test 0.7485). Root cause: spatial feature non-zero rates still low (cloud 8.2%, SO2 2.0%, soil 1.1%)
 - **Analysis Phase 16** ⚠️ Continuous spatial data fetch (SO2/cloud/ocean_color). Timed out at 6h — fetch completed (SO2 2.3M, cloud 547K, ocean 89K) but ML not reached. DB checkpoint (610MB) preserved
 - **Analysis Phase 18** ✅ S-net seafloor waveform features: NIED Hi-net approved, 0120A acceleration (150 stations, 100Hz). 7 features (RMS/H-V ratio/band power/spectral slope anomalies + spatial gradient + segment max). **75 → 84 features**. Test confirmed: 150/150 stations, 447/450 SAC files parsed
-- **Analysis Phase 19** ✅ S-net multi-sensor expansion: 0120 (broadband velocity) + 0120C (high-gain acceleration) added alongside 0120A. **VLF spectral analysis with 200s FFT windows** (0.005 Hz resolution) for tremor/SSE detection in 0.01-0.1 Hz band. 8 new features: VLF power/H-V anomalies, velocity RMS, VLF/HF ratio, accel-velocity coherence, VLF spatial gradient, high-gain SNR, velocity spectral slope. Multi-code quota management (190 request cap). DB schema: sensor_type column + VLF columns with migration. **84 → 92 features (185 total incl. dynamic selection)**
-- **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 420min timeout). **Data preservation**: DB checkpoint after fetch phase + ML results checkpoint (feature_matrix + predictions) + final DB upload, all `if: always()`. Earthdata auth pre-validation skips 4 sources on credential failure. Data validation report (31 tables checked) saved to artifacts. **DB corruption prevention**: All 100 DB connections use `safe_connect()` with `PRAGMA synchronous=FULL` + `busy_timeout=10000` (centralized in `scripts/db_connect.py`). 28-item preflight test suite (`scripts/test_db_checkpoint.py`) runs before every fetch: WAL checkpoint completeness, concurrent writer safety, save/restore cycle, file size sanity, crash recovery. 4-step verified WAL flush before artifact upload (checkpoint completion + integrity + WAL size + page count). Analyze job validates restored DB with file size and page count integrity checks
+- **Analysis Phase 19** 🔄 S-net multi-sensor expansion: 0120 (broadband velocity) + 0120C (high-gain acceleration) added alongside 0120A. **VLF spectral analysis with 200s FFT windows** (0.005 Hz resolution) for tremor/SSE detection in 0.01-0.1 Hz band. 8 new features: VLF power/H-V anomalies, velocity RMS, VLF/HF ratio, accel-velocity coherence, VLF spatial gradient, high-gain SNR, velocity spectral slope. Multi-code quota management (190 request cap). DB schema: sensor_type column + VLF columns with migration. **84 → 92 features (185 total incl. dynamic selection)**
+- **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 400min timeout). **Data preservation**: DB checkpoint after fetch phase + ML results checkpoint (feature_matrix + predictions) + final DB upload. Earthdata auth pre-validation skips 4 sources on credential failure. Data validation report (31 tables checked) saved to artifacts. **DB corruption prevention**: All 100 DB connections use `safe_connect()` with `PRAGMA synchronous=FULL` + `busy_timeout=10000` (centralized in `scripts/db_connect.py`). 28-item preflight test suite (`scripts/test_db_checkpoint.py`) runs before every fetch. 4-step verified WAL flush before artifact upload (checkpoint + integrity + WAL size + page count) — **upload blocked when verification fails** (`flush_ok` output guard). Restore step properly deletes corrupted checkpoints (`set +e` fix for `bash -e` shell). Dedicated test workflow (`test-db-integrity.yml`) validates corruption detection and cleanup. Root cause of 4 consecutive DB corruption failures identified and fixed (2026-03-24): `bash -e` terminated shell before cleanup code, propagating corrupted artifacts indefinitely
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
 
 ## Analysis Results (2011-2026, 29K M3+ earthquakes, 4M TEC, 44K Kp, 31K GNSS-TEC, 1.3M ULF, 92 features with dynamic selection)
@@ -503,7 +503,7 @@ gh workflow run "Earthquake Correlation Analysis" \
 | `csep_format.py` | CSEP XML forecast generation: probability → GR-based rate per cell/magnitude/time bin |
 | `stacking.py` | Ensemble stacking: level-0 registration (HistGBT + RF + LR × 3 targets + 5 physics = up to 14 features), logistic/isotonic meta-learner, walk-forward stacking with temporal leak prevention |
 
-Results saved as JSON artifacts (90-day retention). Runs every Monday 12:00 JST or on demand (360-min timeout). **Data preservation**: DB checkpoint artifact uploaded after all fetch steps + final DB upload, both with `if: always()` to survive timeout/cancellation. `validate_data.py` checks all 30 tables twice per run.
+Results saved as JSON artifacts (90-day retention). Runs every Monday 12:00 JST or on demand (400-min timeout). **Data preservation**: DB checkpoint uploaded only after verified WAL flush passes (`flush_ok` guard). `validate_data.py` checks all 30 tables twice per run.
 
 ### Phase 5 ML Results (AUC 0.73, AdaBoost baseline)
 
@@ -927,13 +927,14 @@ Feature matrix exported to BigQuery (`geohazard.feature_matrix`: 216,711 rows, 1
 | **Phase 15i** | ✅ Complete | 座標スナップ修正OK、SO2 0%→2%。但しAUC変化なし（非ゼロ率低すぎ）。根本原因: イベントベースfetch + 月次/年次データの日次lookup不整合 |
 | **Phase 16** | ⏱️ Timeout | SO2/cloud連続日次fetch成功（SO2 2.3M行、cloud 547K行）、但し6h制限でMLに未到達。DB checkpoint保存済み |
 | **Phase 17** | ❌ Cancelled | CI 2ジョブ分割 + ギャップ診断。手動キャンセル |
-| **Phase 18** | 🔬 Testing | **S-net波形特徴量**: 1→7特徴量（RMS/HV比/帯域パワー/スペクトル傾斜/空間勾配/セグメント最大anomaly）。78→84特徴量。0120/B/Cチャンネル調査中 |
+| **Phase 18** | ✅ Complete | **S-net波形特徴量**: 1→7特徴量（RMS/HV比/帯域パワー/スペクトル傾斜/空間勾配/セグメント最大anomaly）。75→84特徴量 |
 | **BQ Integration** | ✅ Active | CI完了後にfeature_matrix + AUC + 非ゼロ率を自動ロード。座標不一致バグはBQ集計クエリで発見 |
 | **ConvLSTM** | 🟢 Colab-ready | Spatiotemporal neural network. Script + feature_matrix.json deployed to Drive + BigQuery |
 | **SeismoGNN** | 🟢 Colab-ready | Graph Attention Network with fault-network topology. Script deployed to Drive |
 | **Transformer** | 📋 Next | SafeNet-style multi-window features (7/14/30/90/365d) + attention (SafeNet, Sci. Reports 2025) |
 | **PINN** | 📋 Next | Physics-Informed NN with Rate-State friction loss (Nature Comms 2023) |
-| **S-net** | 🔬 Testing | NIED承認済。圧力チャンネル全コードで不在→**波形特徴量(Phase 18)**に転換。0120Aは加速度(A1X/Y/Z 100Hz)。0120/B/C(速度?)は未調査→テスト中 |
+| **Phase 19** | 🔄 Running | S-netマルチセンサー拡張（0120速度+0120C高感度+0120A加速度）。VLFスペクトル解析。84→92特徴量。DB破損修正後の初回実行中 |
+| **S-net** | ✅ Active | NIED承認済。圧力チャンネル不在→**波形特徴量**に転換。0120A(加速度)確認済み、0120(速度)+0120C(高感度)をPhase 19で追加 |
 | **INTERMAGNET backfill** | 🔄 In progress | 500 days/station/run (step timeout 60min). Full 15-year coverage accumulates over weekly runs |
 
 ### GCP BigQuery Data Platform
@@ -962,7 +963,7 @@ GCP プロジェクト `data-platform-490901` の `geohazard` データセット
 | Data | Blocker |
 |---|---|
 | Groundwater levels | 国交省水文水質DB prohibits programmatic access |
-| S-net / DONET seafloor pressure | NIED registration submitted (2026-03-19), awaiting approval |
+| S-net / DONET seafloor pressure | NIED approved (2026-03-23). Pressure channels absent in all 4 codes — using waveform features instead (Phase 18/19) |
 | InSAR deformation | Code ready, LiCSAR JASMIN has Japan frame definitions but no processed interferograms (disabled 2026-03-20) |
 | Blitzortung lightning | Archive access restricted (403). Using ISS LIS (NASA GHRC, 2017-2023) as alternative |
 | CSES satellite EM | Registration required at CSES data center |
