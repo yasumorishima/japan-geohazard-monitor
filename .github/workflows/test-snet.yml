@@ -21,6 +21,9 @@ jobs:
       - name: Install dependencies
         run: pip install HinetPy numpy aiosqlite aiohttp
 
+      - name: DB checkpoint preflight test
+        run: python3 scripts/test_db_checkpoint.py
+
       - name: Install win32tools (catwin32 + win2sac_32)
         env:
           HINET_USER: ${{ secrets.HINET_USER }}
