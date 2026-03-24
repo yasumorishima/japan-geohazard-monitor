@@ -66,6 +66,9 @@ jobs:
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
               echo "Restored DB from run $PREV_RUN ($DB_SIZE) — running integrity check..."
+              # NOTE: bash -e kills the script on non-zero exit, so we must
+              # capture the exit code explicitly to reach the cleanup block.
+              set +e
               python3 -c "
           import sqlite3, sys
           conn = sqlite3.connect('data/geohazard.db')
@@ -81,9 +84,12 @@ jobs:
           conn.close()
           print('✅ DB integrity check passed')
           "
-              if [ $? -ne 0 ]; then
+              INTEGRITY_RC=$?
+              set -e
+              if [ $INTEGRITY_RC -ne 0 ]; then
                 echo "⚠️ Corrupted checkpoint — deleting and starting fresh"
-                rm -f data/geohazard.db
+                rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                echo "🗑️ Deleted corrupted DB ($DB_SIZE)"
               fi
             else
               echo "⚠️ No DB file in checkpoint artifact"
@@ -574,6 +580,9 @@ jobs:
             echo "flush_ok=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # NOTE: bash -e kills the script on non-zero exit, so we must
+          # capture the exit code explicitly to set flush_ok correctly.
+          set +e
           python3 -c "
           import sqlite3, sys, os
 
@@ -621,15 +630,17 @@ jobs:
           else:
               print(f'✅ Verified WAL flush OK — DB {actual:,} bytes, {page_count} pages')
           "
-          if [ $? -eq 0 ]; then
+          FLUSH_RC=$?
+          set -e
+          if [ $FLUSH_RC -eq 0 ]; then
             echo "flush_ok=true" >> "$GITHUB_OUTPUT"
           else
             echo "flush_ok=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::WAL flush verification failed — uploading DB anyway for debugging"
+            echo "::error::WAL flush verification failed — DB will NOT be uploaded"
           fi
 
       - name: Upload database checkpoint (post-fetch)
-        if: always()
+        if: always() && steps.wal_flush.outputs.flush_ok == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: database-checkpoint-${{ github.run_id }}

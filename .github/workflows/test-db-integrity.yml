@@ -1,0 +1,284 @@
+name: Test DB Integrity Guard
+
+on:
+  workflow_dispatch:
+    inputs:
+      memo:
+        description: 'What are you testing?'
+        required: true
+
+jobs:
+  test-bash-e-bug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install aiosqlite
+
+      # ====== TEST 1: bash -e restore bug (the root cause) ======
+      # Reproduces the exact failure: python sys.exit(1) inside bash -e
+      # should still reach the cleanup block.
+      - name: "Test 1: Corrupted DB is deleted on integrity failure"
+        run: |
+          mkdir -p data
+          # Create a deliberately corrupted DB (truncated file)
+          python3 -c "
+          import sqlite3
+          conn = sqlite3.connect('data/geohazard.db')
+          conn.execute('CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)')
+          for i in range(10000):
+              conn.execute('INSERT INTO test VALUES (?, ?)', (i, 'x' * 1000))
+          conn.commit()
+          conn.close()
+          "
+          ORIG_SIZE=$(stat -c%s data/geohazard.db)
+          echo "Original DB size: $ORIG_SIZE bytes"
+          # Truncate to corrupt it
+          truncate -s $((ORIG_SIZE / 2)) data/geohazard.db
+          echo "Truncated to: $(stat -c%s data/geohazard.db) bytes"
+
+          # Run the EXACT same logic as analysis.yml restore step
+          set +e
+          python3 -c "
+          import sqlite3, sys
+          conn = sqlite3.connect('data/geohazard.db')
+          result = conn.execute('PRAGMA integrity_check').fetchone()[0]
+          if result != 'ok':
+              print(f'❌ DB integrity check FAILED: {result}')
+              conn.close()
+              sys.exit(1)
+          conn.close()
+          print('✅ DB integrity check passed')
+          "
+          INTEGRITY_RC=$?
+          set -e
+          if [ $INTEGRITY_RC -ne 0 ]; then
+            echo "⚠️ Corrupted checkpoint — deleting and starting fresh"
+            rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+            echo "🗑️ Deleted corrupted DB"
+          fi
+
+          # VERIFY: DB must not exist
+          if [ -f data/geohazard.db ]; then
+            echo "::error::BUG: Corrupted DB was NOT deleted!"
+            exit 1
+          fi
+          echo "✅ Test 1 passed: corrupted DB was properly deleted"
+
+      # ====== TEST 2: bash -e WAL flush bug ======
+      # flush_ok output must be set even when Python exits non-zero.
+      - name: "Test 2: WAL flush sets output on failure"
+        id: wal_flush_test
+        run: |
+          mkdir -p data
+          # Create a truncated DB
+          python3 -c "
+          import sqlite3
+          conn = sqlite3.connect('data/geohazard.db')
+          conn.execute('CREATE TABLE test (id INTEGER PRIMARY KEY)')
+          conn.commit()
+          conn.close()
+          "
+          truncate -s 100 data/geohazard.db
+
+          set +e
+          python3 -c "
+          import sqlite3, sys, os
+          db_path = 'data/geohazard.db'
+          conn = sqlite3.connect(db_path)
+          errors = []
+          try:
+              result = conn.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
+              busy, log_pages, checkpointed = result
+              if busy != 0:
+                  errors.append(f'WAL checkpoint blocked')
+          except Exception as e:
+              errors.append(f'WAL checkpoint error: {e}')
+          try:
+              integrity = conn.execute('PRAGMA integrity_check').fetchone()[0]
+              if integrity != 'ok':
+                  errors.append(f'integrity_check: {integrity[:200]}')
+          except Exception as e:
+              errors.append(f'integrity error: {e}')
+          conn.close()
+          if errors:
+              print('❌ Verified WAL flush FAILED:')
+              for e in errors:
+                  print(f'  - {e}')
+              sys.exit(1)
+          "
+          FLUSH_RC=$?
+          set -e
+          if [ $FLUSH_RC -eq 0 ]; then
+            echo "flush_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "flush_ok=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "✅ Test 2 passed: flush_ok output was set (flush_ok=$([[ $FLUSH_RC -eq 0 ]] && echo true || echo false))"
+
+      - name: "Test 2b: Verify flush_ok output is accessible"
+        run: |
+          FLUSH_OK="${{ steps.wal_flush_test.outputs.flush_ok }}"
+          echo "flush_ok=$FLUSH_OK"
+          if [ "$FLUSH_OK" != "false" ]; then
+            echo "::error::Expected flush_ok=false but got '$FLUSH_OK'"
+            exit 1
+          fi
+          echo "✅ Test 2b passed: flush_ok=false is correctly readable"
+
+      # ====== TEST 3: Upload guard ======
+      # Simulates the if condition for upload step.
+      - name: "Test 3: Upload blocked when flush_ok=false"
+        if: steps.wal_flush_test.outputs.flush_ok == 'true'
+        run: |
+          echo "::error::BUG: This step should NOT have run (flush_ok was false)"
+          exit 1
+
+      - name: "Test 3b: Confirm upload was correctly skipped"
+        run: |
+          echo "✅ Test 3 passed: upload step was skipped when flush_ok=false"
+
+      # ====== TEST 4: Happy path (clean DB) ======
+      - name: "Test 4: Clean DB passes all checks"
+        id: happy_path
+        run: |
+          rm -f data/geohazard.db*
+          python3 -c "
+          import sqlite3
+          conn = sqlite3.connect('data/geohazard.db')
+          conn.execute('PRAGMA journal_mode=WAL')
+          conn.execute('PRAGMA synchronous=FULL')
+          conn.execute('CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)')
+          for i in range(1000):
+              conn.execute('INSERT INTO test VALUES (?, ?)', (i, 'test data'))
+          conn.commit()
+          conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+          conn.close()
+          "
+
+          # Integrity check
+          set +e
+          python3 -c "
+          import sqlite3, sys
+          conn = sqlite3.connect('data/geohazard.db')
+          result = conn.execute('PRAGMA integrity_check').fetchone()[0]
+          if result != 'ok':
+              print(f'FAILED: {result}')
+              conn.close()
+              sys.exit(1)
+          conn.close()
+          print('OK')
+          "
+          INTEGRITY_RC=$?
+          set -e
+          if [ $INTEGRITY_RC -ne 0 ]; then
+            echo "::error::Clean DB failed integrity check!"
+            exit 1
+          fi
+          if [ ! -f data/geohazard.db ]; then
+            echo "::error::Clean DB was accidentally deleted!"
+            exit 1
+          fi
+
+          # WAL flush
+          set +e
+          python3 -c "
+          import sqlite3, sys, os
+          db_path = 'data/geohazard.db'
+          conn = sqlite3.connect(db_path)
+          result = conn.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
+          busy, log_pages, checkpointed = result
+          integrity = conn.execute('PRAGMA integrity_check').fetchone()[0]
+          conn.close()
+          if integrity != 'ok' or busy != 0:
+              sys.exit(1)
+          print(f'OK: {os.path.getsize(db_path):,} bytes')
+          "
+          FLUSH_RC=$?
+          set -e
+          if [ $FLUSH_RC -eq 0 ]; then
+            echo "flush_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "flush_ok=false" >> "$GITHUB_OUTPUT"
+            echo "::error::Clean DB WAL flush failed!"
+            exit 1
+          fi
+          echo "✅ Test 4 passed: clean DB passes all checks (flush_ok=true)"
+
+      - name: "Test 4b: Upload runs when flush_ok=true"
+        if: steps.happy_path.outputs.flush_ok == 'true'
+        run: |
+          echo "✅ Test 4b passed: upload step runs when flush_ok=true"
+
+      # ====== TEST 5: Artifact round-trip ======
+      - name: "Test 5: Artifact cycle preserves integrity"
+        run: |
+          rm -f data/geohazard.db*
+          python3 -c "
+          import sqlite3, hashlib, os
+          conn = sqlite3.connect('data/geohazard.db')
+          conn.execute('PRAGMA journal_mode=WAL')
+          conn.execute('PRAGMA synchronous=FULL')
+          conn.execute('CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)')
+          for i in range(5000):
+              conn.execute('INSERT INTO test VALUES (?, ?)', (i, 'artifact test'))
+          conn.commit()
+          conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+          conn.close()
+
+          # Hash the DB
+          with open('data/geohazard.db', 'rb') as f:
+              h = hashlib.sha256(f.read()).hexdigest()
+          print(f'Original hash: {h}')
+          print(f'Size: {os.path.getsize(\"data/geohazard.db\"):,} bytes')
+
+          # Verify no WAL file remains
+          wal_path = 'data/geohazard.db-wal'
+          if os.path.exists(wal_path):
+              wal_size = os.path.getsize(wal_path)
+              if wal_size > 0:
+                  print(f'WARNING: WAL file still has {wal_size} bytes')
+              else:
+                  print('WAL file exists but is empty (OK)')
+          else:
+              print('No WAL file (OK)')
+
+          # Simulate artifact cycle: copy DB only (no WAL/SHM)
+          import shutil
+          shutil.copy2('data/geohazard.db', '/tmp/restored.db')
+          with open('/tmp/restored.db', 'rb') as f:
+              h2 = hashlib.sha256(f.read()).hexdigest()
+          print(f'Restored hash: {h2}')
+          assert h == h2, f'Hash mismatch: {h} != {h2}'
+
+          # Verify restored DB integrity
+          conn2 = sqlite3.connect('/tmp/restored.db')
+          result = conn2.execute('PRAGMA integrity_check').fetchone()[0]
+          count = conn2.execute('SELECT COUNT(*) FROM test').fetchone()[0]
+          conn2.close()
+          assert result == 'ok', f'Integrity failed: {result}'
+          assert count == 5000, f'Row count wrong: {count}'
+          print(f'✅ Test 5 passed: artifact cycle preserved {count} rows, integrity OK')
+          "
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### DB Integrity Guard Test Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "All tests verify the bash -e fix for DB corruption loop." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Test | Description |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|------|-------------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 1 | Corrupted DB is deleted (bash -e fix) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 2 | flush_ok output set on failure (bash -e fix) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 3 | Upload blocked when flush_ok=false |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 4 | Clean DB passes all checks |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 5 | Artifact round-trip preserves integrity |" >> "$GITHUB_STEP_SUMMARY"
