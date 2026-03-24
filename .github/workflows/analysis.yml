@@ -23,7 +23,7 @@ jobs:
   # Runs independently with its own 6-hour budget.
   fetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 400
 
     steps:
       - uses: actions/checkout@v4
