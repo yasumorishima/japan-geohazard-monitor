@@ -37,6 +37,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from config import DB_PATH
@@ -131,7 +132,7 @@ def compute_lst_anomaly(event_lst_values, baseline_mean, baseline_std):
 async def run_lst_analysis(min_mag: float = 5.0):
     logger.info("=== MODIS LST Thermal Anomaly Analysis (min_mag=%.1f) ===", min_mag)
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         # Get LST data
         lst_rows = await db.execute_fetchall(
             "SELECT latitude, longitude, lst_kelvin, observed_date, product "

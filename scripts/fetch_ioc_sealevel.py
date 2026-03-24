@@ -39,6 +39,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -71,7 +72,7 @@ REQUEST_DELAY_SEC = 1.0
 
 async def init_ioc_sealevel_table():
     """Create IOC sea level table and indices."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS ioc_sea_level (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -288,7 +289,7 @@ async def main():
     time_stop = now.strftime("%Y-%m-%d %H:%M:%S")
 
     # Check existing data summary
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         existing = await db.execute_fetchall(
             "SELECT station_code, COUNT(*), MAX(observed_at) "
             "FROM ioc_sea_level GROUP BY station_code"
@@ -324,7 +325,7 @@ async def main():
                 continue
 
             # Store in database
-            async with aiosqlite.connect(DB_PATH) as db:
+            async with safe_connect() as db:
                 await db.executemany(
                     """INSERT OR IGNORE INTO ioc_sea_level
                        (station_code, station_name, observed_at,

@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from config import DB_PATH
@@ -402,7 +403,7 @@ async def run_pattern_informatics():
     logger.info("=== Pattern Informatics Analysis ===")
 
     # Load catalogue
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         rows = await db.execute_fetchall(
             "SELECT occurred_at, magnitude, latitude, longitude, depth_km "
             "FROM earthquakes WHERE magnitude >= ? AND magnitude IS NOT NULL "

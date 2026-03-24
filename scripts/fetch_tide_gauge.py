@@ -38,6 +38,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -92,7 +93,7 @@ JAPAN_STATIONS_FALLBACK = [
 
 async def init_tide_table():
     """Create tide gauge table."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS tide_gauge (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -299,7 +300,7 @@ async def main():
     now_iso = now.isoformat()
 
     # Check existing data
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         existing = await db.execute_fetchall(
             "SELECT station_id, COUNT(*), MAX(observed_at) FROM tide_gauge GROUP BY station_id"
         )
@@ -356,7 +357,7 @@ async def main():
                     rows = [r for r in rows if r["observed_at"] > last_obs]
 
                 if rows:
-                    async with aiosqlite.connect(DB_PATH) as db:
+                    async with safe_connect() as db:
                         await db.executemany(
                             """INSERT OR IGNORE INTO tide_gauge
                                (station_id, observed_at, sea_level_mm,
@@ -380,7 +381,7 @@ async def main():
                     )
 
                     if rows:
-                        async with aiosqlite.connect(DB_PATH) as db:
+                        async with safe_connect() as db:
                             await db.executemany(
                                 """INSERT OR IGNORE INTO tide_gauge
                                    (station_id, observed_at, sea_level_mm,

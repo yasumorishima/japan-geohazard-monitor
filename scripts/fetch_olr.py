@@ -34,6 +34,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -67,7 +68,7 @@ FILE_PATTERN = re.compile(
 
 async def init_olr_table():
     """Create OLR table."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS olr (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -271,7 +272,7 @@ async def main():
     current_year = datetime.now(timezone.utc).year
 
     # Check existing data range to determine which years to fetch
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         existing = await db.execute_fetchall(
             "SELECT MIN(observed_at), MAX(observed_at), COUNT(DISTINCT observed_at) FROM olr"
         )
@@ -320,7 +321,7 @@ async def main():
                 continue
 
             # Store in DB
-            async with aiosqlite.connect(DB_PATH) as db:
+            async with safe_connect() as db:
                 await db.executemany(
                     """INSERT OR IGNORE INTO olr
                        (observed_at, cell_lat, cell_lon, olr_wm2, received_at)

@@ -81,7 +81,7 @@ STEP_DAYS = 3
 
 async def load_events(db_path):
     """Load earthquakes and focal mechanisms from database."""
-    async with aiosqlite.connect(db_path) as db:
+    async with safe_connect(db_path) as db:
         eq_rows = await db.execute_fetchall(
             "SELECT occurred_at, magnitude, latitude, longitude, depth_km "
             "FROM earthquakes WHERE magnitude >= 3.0 AND magnitude IS NOT NULL "
@@ -1176,7 +1176,7 @@ async def load_gnss_data(db_path, t0):
     """
     gnss_data = {}
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             rows = await db.execute_fetchall(
                 "SELECT station_id, observed_at, latitude, longitude, "
                 "dx_mm, dy_mm, dz_mm FROM geonet "
@@ -1254,7 +1254,7 @@ async def load_phase9_cosmic_ray(db_path):
 
     # Fallback: compute from DB
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             rows = await db.execute_fetchall(
                 "SELECT observed_at, counts_per_sec FROM cosmic_ray "
                 "WHERE station = 'IRKT' ORDER BY observed_at"
@@ -1289,7 +1289,7 @@ async def load_phase9_lightning(db_path):
     """
     data = {}
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             # Blitzortung lightning (stroke_count, mean_intensity)
             rows = await db.execute_fetchall(
                 "SELECT observed_at, cell_lat, cell_lon, stroke_count, "
@@ -1337,7 +1337,7 @@ async def load_phase9_geomag_spectral(db_path):
     Returns dict: {date_str: {ulf_power, polarization, fractal_dim}}
     """
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             rows = await db.execute_fetchall(
                 "SELECT DATE(observed_at), "
                 "AVG(h_nt), AVG(z_nt), "
@@ -1378,7 +1378,7 @@ async def load_phase9_animal(db_path):
     Returns dict: {(date_str, cell_lat, cell_lon): {speed_anomaly, ...}}
     """
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             count = await db.execute_fetchall(
                 "SELECT COUNT(*) FROM animal_tracking"
             )
@@ -1407,7 +1407,7 @@ async def load_phase10_olr(db_path):
     where cell coords are snapped to the 2° prediction grid via cell_key().
     """
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             rows = await db.execute_fetchall(
                 "SELECT observed_at, cell_lat, cell_lon, olr_wm2 FROM olr ORDER BY observed_at"
             )
@@ -1459,7 +1459,7 @@ async def load_phase10_earth_rotation(db_path):
     Returns dict: {date_str: {lod_ms, x_arcsec, y_arcsec, prev_lod, prev_x, prev_y}}
     """
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             rows = await db.execute_fetchall(
                 "SELECT observed_at, lod_ms, x_arcsec, y_arcsec "
                 "FROM earth_rotation ORDER BY observed_at"
@@ -1495,7 +1495,7 @@ async def load_phase10_solar_wind(db_path):
     Returns dict: {date_str: {bz_min_24h, pressure_max_24h, dst_min_24h}}
     """
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             rows = await db.execute_fetchall(
                 "SELECT DATE(observed_at), MIN(bz_gsm_nt), MAX(pressure_npa), MIN(dst_nt) "
                 "FROM solar_wind "
@@ -1527,7 +1527,7 @@ async def load_phase10_gravity(db_path):
     where cell coords are snapped to the 2° prediction grid via cell_key().
     """
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             rows = await db.execute_fetchall(
                 "SELECT observed_at, cell_lat, cell_lon, lwe_thickness_cm "
                 "FROM gravity_mascon ORDER BY cell_lat, cell_lon, observed_at"
@@ -1593,7 +1593,7 @@ async def load_phase10_so2(db_path):
     into 2° grid cells to match the feature extractor's lookup keys.
     """
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             rows = await db.execute_fetchall(
                 "SELECT observed_at, cell_lat, cell_lon, so2_du FROM so2_column"
             )
@@ -1650,7 +1650,7 @@ async def load_phase10_soil_moisture(db_path):
     to match the feature extractor's lookup keys.
     """
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             rows = await db.execute_fetchall(
                 "SELECT observed_at, cell_lat, cell_lon, sm_m3m3 "
                 "FROM soil_moisture ORDER BY observed_at"
@@ -1720,7 +1720,7 @@ async def load_phase10_soil_moisture(db_path):
 async def load_phase10b_tide_gauge(db_path):
     """Load tide gauge data with nearest-station residual for each date."""
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             rows = await db.execute_fetchall(
                 "SELECT DATE(observed_at), AVG(sea_level_mm) "
                 "FROM tide_gauge GROUP BY DATE(observed_at) ORDER BY DATE(observed_at)"
@@ -1755,7 +1755,7 @@ async def load_phase10b_ocean_color(db_path):
     Cell coords are snapped to the 2° prediction grid via cell_key().
     """
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             rows = await db.execute_fetchall(
                 "SELECT observed_at, cell_lat, cell_lon, chlor_a_mg_m3 "
                 "FROM ocean_color ORDER BY observed_at"
@@ -1830,7 +1830,7 @@ async def load_phase10b_cloud_fraction(db_path):
     to match the feature extractor's lookup keys.
     """
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             rows = await db.execute_fetchall(
                 "SELECT observed_at, cell_lat, cell_lon, cloud_frac "
                 "FROM cloud_fraction ORDER BY observed_at"
@@ -1890,7 +1890,7 @@ async def load_phase10b_nightlight(db_path):
     to match the feature extractor's lookup keys.
     """
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             rows = await db.execute_fetchall(
                 "SELECT observed_at, cell_lat, cell_lon, radiance_nwcm2sr "
                 "FROM nightlight ORDER BY observed_at"
@@ -1957,7 +1957,7 @@ async def load_phase10b_nightlight(db_path):
 async def load_phase10b_insar(db_path):
     """Load InSAR deformation data."""
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             rows = await db.execute_fetchall(
                 "SELECT observed_at, cell_lat, cell_lon, los_velocity_mm_yr "
                 "FROM insar_deformation"
@@ -1994,7 +1994,7 @@ async def load_phase11_goes_xray(db_path):
     Returns dict: {date_str: {xray_long_wm2, xray_short_wm2, flare_class}}
     """
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             rows = await db.execute_fetchall(
                 "SELECT observed_at, xray_long_wm2, xray_short_wm2, flare_class "
                 "FROM goes_xray ORDER BY observed_at"
@@ -2023,7 +2023,7 @@ async def load_phase11_goes_proton(db_path):
     Returns dict: {date_str: {proton_10mev_max, proton_60mev_max}}
     """
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             rows = await db.execute_fetchall(
                 "SELECT observed_at, proton_10mev_max, proton_60mev_max "
                 "FROM goes_proton ORDER BY observed_at"
@@ -2051,7 +2051,7 @@ async def load_phase11_tidal_stress(db_path):
     Returns dict: {date_str: {tidal_shear_pa, tidal_normal_pa, lunar_phase}}
     """
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             rows = await db.execute_fetchall(
                 "SELECT observed_at, tidal_shear_pa, tidal_normal_pa, lunar_phase "
                 "FROM tidal_stress ORDER BY observed_at"
@@ -2080,7 +2080,7 @@ async def load_phase11_particle_flux(db_path):
     Returns dict: {date_str: {electron_2mev_max, electron_800kev_max}}
     """
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             rows = await db.execute_fetchall(
                 "SELECT observed_at, electron_2mev_max, electron_800kev_max "
                 "FROM particle_flux ORDER BY observed_at"
@@ -2108,7 +2108,7 @@ async def load_phase13_dart_pressure(db_path):
     Returns dict: {date_str: {height_m, height_mean_30d, height_std_30d, height_prev_day}}
     """
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             rows = await db.execute_fetchall(
                 "SELECT DATE(observed_at), AVG(water_height_m) "
                 "FROM dart_pressure GROUP BY DATE(observed_at) ORDER BY DATE(observed_at)"
@@ -2144,7 +2144,7 @@ async def load_phase13_ioc_sealevel(db_path):
     Returns dict: {date_str: {level_m, level_mean_30d, level_std_30d}}
     """
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             rows = await db.execute_fetchall(
                 "SELECT DATE(observed_at), AVG(sea_level_m) "
                 "FROM ioc_sea_level GROUP BY DATE(observed_at) ORDER BY DATE(observed_at)"
@@ -2266,7 +2266,7 @@ async def _load_sensor_data(db_path, sensor_type_filter, extra_columns=""):
     extra_select = f", {extra_columns}" if extra_columns else ""
 
     try:
-        async with aiosqlite.connect(db_path) as db:
+        async with safe_connect(db_path) as db:
             tables = await db.execute_fetchall(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='snet_waveform'"
             )

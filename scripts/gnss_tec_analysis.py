@@ -34,6 +34,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from config import DB_PATH
@@ -842,7 +843,7 @@ async def run_gnss_tec_analysis(min_mag: float = 5.0):
     """Run complete GNSS-TEC high-resolution analysis."""
     logger.info("=== GNSS-TEC High-Resolution Analysis (min_mag=%.1f) ===", min_mag)
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         all_events, targets, gnss_by_loc, ionex_by_loc = await load_data(db, min_mag)
 
     logger.info("  Earthquakes: %d total, %d M%.1f+ targets (%d isolated)",

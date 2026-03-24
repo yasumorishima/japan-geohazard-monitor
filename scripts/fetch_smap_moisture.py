@@ -38,6 +38,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -83,7 +84,7 @@ BACKFILL_START_YEAR = 2011
 
 async def init_soil_moisture_table():
     """Create soil moisture table."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS soil_moisture (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -314,7 +315,7 @@ async def store_rows(rows: list[dict], now_iso: str):
     """Insert soil moisture rows into DB."""
     if not rows:
         return 0
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.executemany(
             """INSERT OR IGNORE INTO soil_moisture
                (observed_at, cell_lat, cell_lon, sm_m3m3, received_at)
@@ -332,7 +333,7 @@ async def main():
     now_iso = datetime.now(timezone.utc).isoformat()
 
     # Determine which dates/months we already have
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         existing_rows = await db.execute_fetchall(
             "SELECT DISTINCT observed_at FROM soil_moisture"
         )

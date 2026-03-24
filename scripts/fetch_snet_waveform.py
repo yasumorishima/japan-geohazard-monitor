@@ -51,6 +51,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from config import DB_PATH
@@ -815,7 +816,7 @@ async def main() -> None:
 
     await init_db()
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await ensure_table(db)
         existing = await get_existing_dates(db)
 
@@ -866,7 +867,7 @@ async def main() -> None:
 
     if not dates_to_fetch:
         logger.info("All dates/sensors already covered. Nothing to fetch.")
-        async with aiosqlite.connect(DB_PATH) as db:
+        async with safe_connect() as db:
             report = await get_coverage_report(db)
         _log_coverage_report(report)
         send_discord(
@@ -923,7 +924,7 @@ async def main() -> None:
     inserted = 0
     skipped = 0
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await ensure_table(db)
         for rec in records:
             try:
@@ -963,7 +964,7 @@ async def main() -> None:
         logger.info("  %s: %d records", st, cnt)
 
     # Generate and report coverage
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         report = await get_coverage_report(db)
 
     _log_coverage_report(report)

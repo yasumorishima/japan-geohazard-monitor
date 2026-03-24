@@ -39,6 +39,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -92,7 +93,7 @@ def in_japan_bbox(lat: float, lon: float) -> bool:
 
 async def init_lightning_table():
     """Create lightning stroke table."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS lightning (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -377,7 +378,7 @@ async def store_grid_cells(
         )
         rows.append((date_str, cell_lat, cell_lon, count, mean_intensity, now))
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.executemany(
             """INSERT OR IGNORE INTO lightning
                (observed_at, cell_lat, cell_lon, stroke_count, mean_intensity, received_at)
@@ -396,7 +397,7 @@ async def main():
     now = datetime.now(timezone.utc).isoformat()
 
     # Determine target dates: days around M6+ earthquakes (+-7 days)
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         eq_rows = await db.execute_fetchall(
             "SELECT DISTINCT DATE(occurred_at), latitude, longitude, magnitude "
             "FROM earthquakes "

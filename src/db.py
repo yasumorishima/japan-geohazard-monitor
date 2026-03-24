@@ -13,6 +13,8 @@ async def init_db():
     """Create all tables if they don't exist."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute("PRAGMA synchronous=FULL")
+        await db.execute("PRAGMA busy_timeout=10000")
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS earthquakes (

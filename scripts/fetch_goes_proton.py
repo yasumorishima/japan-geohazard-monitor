@@ -33,6 +33,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -57,7 +58,7 @@ MISSING_PROTON = 900.0
 
 async def init_goes_proton_table():
     """Create goes_proton table."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS goes_proton (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -213,7 +214,7 @@ async def main():
     current_year = datetime.now(timezone.utc).year
 
     # Check existing data
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         existing = await db.execute_fetchall(
             "SELECT MAX(observed_at), COUNT(*) FROM goes_proton"
         )
@@ -260,7 +261,7 @@ async def main():
             daily_rows = aggregate_daily_max(hourly_rows)
 
             # Store in DB
-            async with aiosqlite.connect(DB_PATH) as db:
+            async with safe_connect() as db:
                 await db.executemany(
                     """INSERT OR IGNORE INTO goes_proton
                        (observed_at, proton_10mev_max, proton_60mev_max)
@@ -278,7 +279,7 @@ async def main():
         logger.info("Fetching SWPC 7-day proton flux...")
         swpc_rows = await fetch_swpc_recent(session)
         if swpc_rows:
-            async with aiosqlite.connect(DB_PATH) as db:
+            async with safe_connect() as db:
                 await db.executemany(
                     """INSERT OR REPLACE INTO goes_proton
                        (observed_at, proton_10mev_max, proton_60mev_max)

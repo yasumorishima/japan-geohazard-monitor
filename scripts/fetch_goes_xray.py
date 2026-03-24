@@ -43,6 +43,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -111,7 +112,7 @@ def classify_flare(flux_wm2: float) -> str:
 
 async def init_goes_xray_table():
     """Create GOES X-ray flux table."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS goes_xray (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -436,7 +437,7 @@ async def main():
     await init_goes_xray_table()
 
     # Check existing data
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         existing = await db.execute_fetchall(
             "SELECT MAX(observed_at), MIN(observed_at), COUNT(*) FROM goes_xray"
         )
@@ -463,7 +464,7 @@ async def main():
         lisird_rows = await fetch_lisird(session, lisird_start)
 
         if lisird_rows:
-            async with aiosqlite.connect(DB_PATH) as db:
+            async with safe_connect() as db:
                 await db.executemany(
                     """INSERT OR REPLACE INTO goes_xray
                        (observed_at, xray_long_wm2, xray_short_wm2, flare_class)
@@ -489,7 +490,7 @@ async def main():
             # Aggregate 1-min data to daily max
             daily_rows = aggregate_daily(swpc_rows)
 
-            async with aiosqlite.connect(DB_PATH) as db:
+            async with safe_connect() as db:
                 await db.executemany(
                     """INSERT OR REPLACE INTO goes_xray
                        (observed_at, xray_long_wm2, xray_short_wm2, flare_class)
@@ -505,7 +506,7 @@ async def main():
             logger.info("SWPC: no recent data retrieved")
 
     # Summary
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         final = await db.execute_fetchall(
             "SELECT MIN(observed_at), MAX(observed_at), COUNT(*) FROM goes_xray"
         )

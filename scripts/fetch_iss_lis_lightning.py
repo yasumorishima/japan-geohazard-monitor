@@ -40,6 +40,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -75,7 +76,7 @@ MAX_GRANULES_PER_RUN = 700  # ~1.4s/granule × 700 ≈ 16min (fits in 20min time
 
 async def init_iss_lis_table():
     """Create ISS LIS lightning table (separate from Blitzortung lightning)."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS iss_lis_lightning (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -281,7 +282,7 @@ async def main():
         return
 
     # Check existing data
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         existing = await db.execute_fetchall(
             "SELECT MAX(observed_at), COUNT(*) FROM iss_lis_lightning"
         )
@@ -344,7 +345,7 @@ async def main():
             daily_cells = aggregate_daily_cells(flashes)
 
             if daily_cells:
-                async with aiosqlite.connect(DB_PATH) as db:
+                async with safe_connect() as db:
                     await db.executemany(
                         """INSERT OR IGNORE INTO iss_lis_lightning
                            (observed_at, cell_lat, cell_lon, flash_count,

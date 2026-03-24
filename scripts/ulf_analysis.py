@@ -39,6 +39,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from config import DB_PATH
@@ -171,7 +172,7 @@ def higuchi_fractal_dimension(values: list[float], k_max: int = 10) -> float | N
 async def run_ulf_analysis(min_mag: float = 5.0):
     logger.info("=== ULF Magnetic Anomaly Analysis (min_mag=%.1f) ===", min_mag)
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         # Check ULF data availability
         ulf_count = await db.execute_fetchall(
             "SELECT station, COUNT(*), MIN(observed_at), MAX(observed_at) "
@@ -239,7 +240,7 @@ async def run_ulf_analysis(min_mag: float = 5.0):
         event_results = []
 
         for e in nearby_targets:
-            async with aiosqlite.connect(DB_PATH) as db:
+            async with safe_connect() as db:
                 # Get ULF data ±7 days around earthquake
                 eq_date = e["time"].strftime("%Y-%m-%d")
                 start = (e["time"] - timedelta(days=7)).strftime("%Y-%m-%dT00:00:00")

@@ -35,6 +35,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -55,7 +56,7 @@ TIMEOUT = aiohttp.ClientTimeout(total=300, connect=30)
 
 async def init_movebank_tables():
     """Create animal tracking tables."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS animal_study (
                 study_id INTEGER PRIMARY KEY,
@@ -264,7 +265,7 @@ async def main():
                         "Attempting public access only.")
 
     # Check existing studies
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         existing_studies = set()
         rows = await db.execute_fetchall("SELECT study_id FROM animal_study")
         for r in rows:
@@ -284,7 +285,7 @@ async def main():
                      len(studies))
 
         # Save study metadata
-        async with aiosqlite.connect(DB_PATH) as db:
+        async with safe_connect() as db:
             for s in studies:
                 await db.execute(
                     """INSERT OR REPLACE INTO animal_study
@@ -311,7 +312,7 @@ async def main():
 
             events = await fetch_study_events(session, auth, sid, sname)
             if events:
-                async with aiosqlite.connect(DB_PATH) as db:
+                async with safe_connect() as db:
                     await db.executemany(
                         """INSERT OR IGNORE INTO animal_tracking
                            (study_id, study_name, species, individual_id,

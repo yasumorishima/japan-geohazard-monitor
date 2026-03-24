@@ -43,6 +43,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -493,7 +494,7 @@ def compute_tidal_stress(year: int, month: int, day: int) -> dict:
 
 async def init_tidal_stress_table():
     """Create tidal stress table."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS tidal_stress (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -519,7 +520,7 @@ async def main():
     current_date = datetime.now(timezone.utc).date()
 
     # Check existing data
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         existing = await db.execute_fetchall(
             "SELECT observed_at FROM tidal_stress"
         )
@@ -564,7 +565,7 @@ async def main():
                 result["lunar_phase"],
             ))
 
-        async with aiosqlite.connect(DB_PATH) as db:
+        async with safe_connect() as db:
             await db.executemany(
                 """INSERT OR IGNORE INTO tidal_stress
                    (observed_at, tidal_shear_pa, tidal_normal_pa,

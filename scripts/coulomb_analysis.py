@@ -27,6 +27,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from config import DB_PATH
@@ -250,7 +251,7 @@ async def run_coulomb_analysis(min_mag: float = 5.0) -> dict:
     """Run Coulomb stress transfer analysis."""
     logger.info("=== Coulomb Stress Transfer Analysis (min_mag=%.1f) ===", min_mag)
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         # Load focal mechanisms
         fm_rows = await db.execute_fetchall(
             "SELECT event_id, occurred_at, latitude, longitude, depth_km, "

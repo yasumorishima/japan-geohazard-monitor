@@ -42,6 +42,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -83,7 +84,7 @@ MAX_DAYS_PER_STATION = 500
 
 async def init_satellite_tables():
     """Create satellite_em and geomag_hourly tables."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS satellite_em (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -410,7 +411,7 @@ async def fetch_intermagnet_hourly(session: aiohttp.ClientSession, now: str):
     )
 
     # Get existing date-station pairs to skip
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         existing_rows = await db.execute_fetchall(
             "SELECT DISTINCT DATE(observed_at), station FROM geomag_hourly"
         )
@@ -478,7 +479,7 @@ async def fetch_intermagnet_hourly(session: aiohttp.ClientSession, now: str):
             rows = await fetch_intermagnet_hourly_day(
                 session, station, batch_start, duration_days=actual_duration)
             if rows:
-                async with aiosqlite.connect(DB_PATH) as db:
+                async with safe_connect() as db:
                     await db.executemany(
                         """INSERT OR IGNORE INTO geomag_hourly
                            (station, observed_at, h_nt, d_nt, z_nt, f_nt, received_at)
@@ -529,7 +530,7 @@ async def fetch_cses_satellite(session: aiohttp.ClientSession, now: str):
     today = datetime.now(timezone.utc)
 
     # Check what we already have
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         existing = await db.execute_fetchall(
             "SELECT MAX(observed_at) FROM satellite_em WHERE source = 'CSES'"
         )
@@ -553,7 +554,7 @@ async def fetch_cses_satellite(session: aiohttp.ClientSession, now: str):
 
         rows = await fetch_cses_data(session, current, batch_end)
         if rows:
-            async with aiosqlite.connect(DB_PATH) as db:
+            async with safe_connect() as db:
                 await db.executemany(
                     """INSERT OR IGNORE INTO satellite_em
                        (source, observed_at, latitude, longitude,
@@ -609,7 +610,7 @@ async def main():
     logger.info("=" * 60)
 
     # Report table sizes
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         for table in ["geomag_hourly", "satellite_em"]:
             row = await db.execute_fetchall(f"SELECT COUNT(*) FROM {table}")
             logger.info("  Table %s: %d total rows", table, row[0][0])

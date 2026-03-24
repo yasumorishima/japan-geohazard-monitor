@@ -36,6 +36,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -54,7 +55,7 @@ START_YEAR = 2011
 
 async def init_solar_wind_table():
     """Create solar wind table."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS solar_wind (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -144,7 +145,7 @@ async def main():
     current_year = datetime.now(timezone.utc).year
 
     # Check existing data
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         existing = await db.execute_fetchall(
             "SELECT MAX(observed_at), COUNT(*) FROM solar_wind"
         )
@@ -188,7 +189,7 @@ async def main():
                 continue
 
             # Store in DB
-            async with aiosqlite.connect(DB_PATH) as db:
+            async with safe_connect() as db:
                 await db.executemany(
                     """INSERT OR IGNORE INTO solar_wind
                        (observed_at, bz_gsm_nt, speed_kms, density_cm3,

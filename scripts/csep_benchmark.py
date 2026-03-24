@@ -546,7 +546,7 @@ def main():
     # Load events
     async def load():
         from config import DB_PATH
-        async with aiosqlite.connect(DB_PATH) as db:
+        async with safe_connect() as db:
             rows = await db.execute_fetchall(
                 "SELECT occurred_at, magnitude, latitude, longitude, depth_km "
                 "FROM earthquakes WHERE magnitude >= 3.0 AND magnitude IS NOT NULL "

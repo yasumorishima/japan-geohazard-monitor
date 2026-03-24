@@ -50,6 +50,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -83,7 +84,7 @@ TIMEOUT = aiohttp.ClientTimeout(total=300, connect=60)
 
 async def init_dart_table():
     """Create DART pressure table."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS dart_pressure (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -247,7 +248,7 @@ async def store_records(station_id: str, info: dict,
     if not rows:
         return 0
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.executemany(
             """INSERT OR IGNORE INTO dart_pressure
                (station_id, observed_at, water_height_m, measurement_type,
@@ -265,7 +266,7 @@ async def store_records(station_id: str, info: dict,
 
 async def log_daily_stats():
     """Output aggregated daily statistics per station."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("""
             SELECT
@@ -303,7 +304,7 @@ async def main():
     now = datetime.now(timezone.utc).isoformat()
 
     # Check existing data per station
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         existing = await db.execute_fetchall(
             "SELECT station_id, COUNT(*), MAX(observed_at) "
             "FROM dart_pressure GROUP BY station_id"
@@ -344,7 +345,7 @@ async def main():
             logger.info("  %s total: %d records ingested", station_id, len(all_rows))
 
     # Final summary
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         row = await db.execute_fetchall(
             "SELECT COUNT(*), COUNT(DISTINCT station_id), "
             "MIN(observed_at), MAX(observed_at) FROM dart_pressure"

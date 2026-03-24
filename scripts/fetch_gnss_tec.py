@@ -30,6 +30,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -54,7 +55,7 @@ FETCH_HOURS = [3, 12]
 
 async def init_gnss_tec_table():
     """Create GNSS-TEC table if not exists."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS gnss_tec (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -293,7 +294,7 @@ async def main():
     now = datetime.now(timezone.utc).isoformat()
 
     # Get dates around M6+ earthquakes (±3 days)
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         eq_rows = await db.execute_fetchall(
             "SELECT DISTINCT DATE(occurred_at) FROM earthquakes "
             "WHERE magnitude >= 6.0 ORDER BY occurred_at"
@@ -327,7 +328,7 @@ async def main():
         for i, date in enumerate(dates_to_fetch[:max_dates]):
             rows = await fetch_date(session, date)
             if rows:
-                async with aiosqlite.connect(DB_PATH) as db:
+                async with safe_connect() as db:
                     await db.executemany(
                         """INSERT OR IGNORE INTO gnss_tec
                            (latitude, longitude, tec_tecu, dtec_tecu, epoch, source, received_at)

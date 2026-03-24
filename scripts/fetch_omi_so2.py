@@ -35,6 +35,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -68,7 +69,7 @@ START_YEAR = 2004
 
 async def init_so2_table():
     """Create SO2 column table."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS so2_column (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -303,7 +304,7 @@ async def main():
         return
 
     # Check existing
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         existing = await db.execute_fetchall(
             "SELECT MAX(observed_at), COUNT(DISTINCT observed_at) FROM so2_column"
         )
@@ -314,7 +315,7 @@ async def main():
     # Determine dates to fetch — continuous daily coverage for proper baselines
     # ML anomaly detection requires continuous time series, not just event windows
     existing_dates = set()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         ed_rows = await db.execute_fetchall(
             "SELECT DISTINCT observed_at FROM so2_column"
         )
@@ -351,7 +352,7 @@ async def main():
         for i, date in enumerate(dates_to_fetch):
             rows = await fetch_so2_day(session, date)
             if rows:
-                async with aiosqlite.connect(DB_PATH) as db:
+                async with safe_connect() as db:
                     await db.executemany(
                         """INSERT OR IGNORE INTO so2_column
                            (observed_at, cell_lat, cell_lon, so2_du, received_at)

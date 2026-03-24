@@ -8,6 +8,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -69,7 +70,7 @@ async def main():
             except (ValueError, IndexError):
                 continue
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.executemany(
             """INSERT OR IGNORE INTO geomag_kp
                (time_tag, kp, a_running, station_count, received_at)

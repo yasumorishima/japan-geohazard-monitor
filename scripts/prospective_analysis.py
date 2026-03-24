@@ -44,6 +44,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from config import DB_PATH
@@ -536,7 +537,7 @@ async def generate_ulf_alarms(db_path, stations, threshold_ratio=2.0,
     alarms_t = []
     alarms_loc = []
 
-    async with aiosqlite.connect(db_path) as db:
+    async with safe_connect(db_path) as db:
         for station, loc in stations.items():
             rows = await db.execute_fetchall(
                 "SELECT observed_at, z_nt FROM ulf_magnetic "
@@ -777,7 +778,7 @@ def export_physics_alarms(events, fm_dict, all_times, t0, output_dir):
 async def run_prospective_analysis():
     logger.info("=== Prospective (Forward-Looking) Prediction Analysis ===")
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         eq_rows = await db.execute_fetchall(
             "SELECT occurred_at, magnitude, latitude, longitude, depth_km "
             "FROM earthquakes WHERE magnitude >= 3.0 AND magnitude IS NOT NULL "

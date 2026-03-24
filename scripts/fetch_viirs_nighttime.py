@@ -30,6 +30,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -64,7 +65,7 @@ TIMEOUT = aiohttp.ClientTimeout(total=600, connect=60)
 
 async def init_nightlight_table():
     """Create nightlight table."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS nightlight (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -193,7 +194,7 @@ async def main():
         return
 
     # Check existing
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         existing = await db.execute_fetchall(
             "SELECT DISTINCT substr(observed_at, 1, 4) FROM nightlight"
         )
@@ -285,7 +286,7 @@ async def main():
 
             if year_pixels:
                 daily_cells = aggregate_to_cells(year_pixels, year)
-                async with aiosqlite.connect(DB_PATH) as db:
+                async with safe_connect() as db:
                     await db.executemany(
                         """INSERT OR IGNORE INTO nightlight
                            (observed_at, cell_lat, cell_lon, radiance_nwcm2sr, received_at)

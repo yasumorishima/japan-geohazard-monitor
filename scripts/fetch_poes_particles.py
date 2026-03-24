@@ -44,6 +44,7 @@ import tempfile
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -93,7 +94,7 @@ NCEI_MAX_YEAR = 2016  # Use SEISS L2 for 2017+, CSV only for 2011-2016
 
 async def init_particle_flux_table():
     """Create particle flux table."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS particle_flux (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -496,7 +497,7 @@ async def main():
     current_year = now.year
 
     # Check existing data
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         existing = await db.execute_fetchall(
             "SELECT MAX(observed_at), COUNT(*) FROM particle_flux"
         )
@@ -525,7 +526,7 @@ async def main():
         recent_rows = await fetch_swpc_recent(session)
 
         if recent_rows:
-            async with aiosqlite.connect(DB_PATH) as db:
+            async with safe_connect() as db:
                 await db.executemany(
                     """INSERT OR REPLACE INTO particle_flux
                        (observed_at, electron_2mev_max, electron_800kev_max,
@@ -547,7 +548,7 @@ async def main():
 
         # --- Phase 2: Fetch historical data ---
         # Refresh coverage after SWPC insert
-        async with aiosqlite.connect(DB_PATH) as db:
+        async with safe_connect() as db:
             yearly_counts = await db.execute_fetchall(
                 """SELECT substr(observed_at, 1, 4) as year, COUNT(*)
                    FROM particle_flux
@@ -558,7 +559,7 @@ async def main():
         async def _store_rows(rows: list[dict]) -> int:
             if not rows:
                 return 0
-            async with aiosqlite.connect(DB_PATH) as db:
+            async with safe_connect() as db:
                 await db.executemany(
                     """INSERT OR IGNORE INTO particle_flux
                        (observed_at, electron_2mev_max, electron_800kev_max,
@@ -660,7 +661,7 @@ async def main():
                     total_records += res
 
     # Final summary
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         final = await db.execute_fetchall(
             "SELECT MIN(observed_at), MAX(observed_at), COUNT(*) FROM particle_flux"
         )

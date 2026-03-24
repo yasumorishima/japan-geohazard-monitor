@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from config import DB_PATH
@@ -37,7 +38,7 @@ RESULTS_DIR = Path(__file__).parent.parent / "results"
 async def run_nowcast_analysis(min_mag_target: float = 5.0):
     logger.info("=== Earthquake Nowcasting (target M%.1f+) ===", min_mag_target)
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         eq_rows = await db.execute_fetchall(
             "SELECT occurred_at, magnitude, latitude, longitude, depth_km "
             "FROM earthquakes WHERE magnitude >= 3.0 AND magnitude IS NOT NULL "

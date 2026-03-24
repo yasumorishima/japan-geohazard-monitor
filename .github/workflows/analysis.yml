@@ -37,6 +37,13 @@ jobs:
           pip install aiohttp aiosqlite scikit-learn scipy numpy netCDF4
           sudo apt-get install -y ncompress  # For .Z IONEX decompression
 
+      # ====== DB PREFLIGHT TEST ======
+      # Run checkpoint integrity tests BEFORE touching any real data.
+      # Catches SQLite/OS-level issues that caused 3 production DB corruptions.
+      - name: DB checkpoint preflight test
+        run: |
+          python3 scripts/test_db_checkpoint.py
+
       # ====== RESTORE PREVIOUS DB CHECKPOINT ======
       # Incremental fetch: restore previous run's DB so skip-logic kicks in
       # (e.g., fetch_poes_particles.py skips years with >300 records)
@@ -558,17 +565,67 @@ jobs:
           path: results/midrun/
           retention-days: 7
 
-      - name: Flush WAL before checkpoint upload
+      - name: Verified WAL flush before checkpoint upload
+        id: wal_flush
         if: always()
         run: |
-          if [ -f data/geohazard.db ]; then
-            python3 -c "
-          import sqlite3
-          conn = sqlite3.connect('data/geohazard.db')
-          conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+          if [ ! -f data/geohazard.db ]; then
+            echo "No DB file — skipping WAL flush"
+            echo "flush_ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          python3 -c "
+          import sqlite3, sys, os
+
+          db_path = 'data/geohazard.db'
+          conn = sqlite3.connect(db_path)
+          errors = []
+
+          # Step 1: WAL checkpoint
+          result = conn.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
+          busy, log_pages, checkpointed = result
+          print(f'WAL checkpoint: busy={busy}, log={log_pages}, checkpointed={checkpointed}')
+          if busy != 0:
+              errors.append(f'WAL checkpoint blocked (busy={busy})')
+          if log_pages != checkpointed:
+              errors.append(f'Incomplete: {log_pages} logged, {checkpointed} checkpointed')
+
+          # Step 2: Integrity check
+          integrity = conn.execute('PRAGMA integrity_check').fetchone()[0]
+          if integrity != 'ok':
+              errors.append(f'integrity_check: {integrity[:200]}')
+              print(f'::error::DB integrity check FAILED: {integrity[:200]}')
+
+          # Step 3: WAL file must be empty
+          wal_path = db_path + '-wal'
+          if os.path.exists(wal_path):
+              wal_size = os.path.getsize(wal_path)
+              if wal_size > 0:
+                  errors.append(f'WAL not truncated: {wal_size} bytes remain')
+
+          # Step 4: File size must match page count
+          page_size = conn.execute('PRAGMA page_size').fetchone()[0]
+          page_count = conn.execute('PRAGMA page_count').fetchone()[0]
+          expected = page_size * page_count
+          actual = os.path.getsize(db_path)
+          if actual != expected:
+              errors.append(f'Size mismatch: file={actual}, expected={expected}')
+
           conn.close()
-          print('✅ WAL flushed — safe to upload')
-          " || echo "⚠️ WAL flush failed (DB may be corrupted)"
+
+          if errors:
+              print('❌ Verified WAL flush FAILED:')
+              for e in errors:
+                  print(f'  - {e}')
+              sys.exit(1)
+          else:
+              print(f'✅ Verified WAL flush OK — DB {actual:,} bytes, {page_count} pages')
+          "
+          if [ $? -eq 0 ]; then
+            echo "flush_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "flush_ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::WAL flush verification failed — uploading DB anyway for debugging"
           fi
 
       - name: Upload database checkpoint (post-fetch)
@@ -619,15 +676,38 @@ jobs:
           # Remove stale WAL/SHM files
           rm -f data/geohazard.db-wal data/geohazard.db-shm
           DB_SIZE=$(du -h data/geohazard.db | cut -f1)
-          echo "Database restored ($DB_SIZE) — running integrity check..."
+          DB_BYTES=$(stat -c%s data/geohazard.db)
+          echo "Database restored ($DB_SIZE, $DB_BYTES bytes) — running full verification..."
+          # Minimum viable DB check (detect truncated artifact downloads)
+          if [ "$DB_BYTES" -lt 65536 ]; then
+            echo "::error::DB file suspiciously small ($DB_BYTES bytes) — likely corrupted during artifact download"
+            exit 1
+          fi
           python3 -c "
-          import sqlite3, sys
-          conn = sqlite3.connect('data/geohazard.db')
+          import sqlite3, sys, os
+
+          db_path = 'data/geohazard.db'
+          conn = sqlite3.connect(db_path)
+
+          # File size vs page count check (detect truncation at page boundary)
+          page_size = conn.execute('PRAGMA page_size').fetchone()[0]
+          page_count = conn.execute('PRAGMA page_count').fetchone()[0]
+          expected = page_size * page_count
+          actual = os.path.getsize(db_path)
+          if actual != expected:
+              print(f'::error::DB size mismatch: file={actual}, expected={expected} ({page_size}x{page_count})')
+              conn.close()
+              sys.exit(1)
+          print(f'File size OK: {actual:,} bytes = {page_count} pages x {page_size} bytes')
+
+          # Full integrity check
           result = conn.execute('PRAGMA integrity_check').fetchone()[0]
           if result != 'ok':
               print(f'::error::DB integrity check FAILED: {result}')
               conn.close()
               sys.exit(1)
+
+          # Table inventory
           tables = conn.execute(\"SELECT name FROM sqlite_master WHERE type='table'\").fetchall()
           total = 0
           for t in tables:
@@ -636,7 +716,7 @@ jobs:
               print(f'  {t[0]}: {count:,} rows')
           print(f'Total: {total:,} rows across {len(tables)} tables')
           conn.close()
-          print('✅ DB integrity check passed')
+          print('DB verification passed')
           "
 
       # ====== ANALYSIS PHASE ======

@@ -17,6 +17,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -287,7 +288,7 @@ async def main():
     await init_db()
 
     async with aiohttp.ClientSession() as session:
-        async with aiosqlite.connect(DB_PATH) as db:
+        async with safe_connect() as db:
             await backfill_earthquakes(session, db)
             await backfill_tec(session, db)
             await backfill_kp(session, db)

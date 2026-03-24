@@ -28,6 +28,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -49,7 +50,7 @@ TIMEOUT = aiohttp.ClientTimeout(total=120, connect=30)
 
 async def init_cosmic_ray_table():
     """Create cosmic_ray table."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS cosmic_ray (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -174,7 +175,7 @@ async def main():
     now = datetime.now(timezone.utc).isoformat()
 
     # Check existing data
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         existing = await db.execute_fetchall(
             "SELECT station, MIN(observed_at), MAX(observed_at), COUNT(*) "
             "FROM cosmic_ray GROUP BY station"
@@ -218,7 +219,7 @@ async def main():
                     new_rows = [(s, d, c) for s, d, c in rows
                                 if (s, d) not in existing_keys]
                     if new_rows:
-                        async with aiosqlite.connect(DB_PATH) as db:
+                        async with safe_connect() as db:
                             await db.executemany(
                                 """INSERT OR IGNORE INTO cosmic_ray
                                    (station, observed_at, counts_per_sec, received_at)

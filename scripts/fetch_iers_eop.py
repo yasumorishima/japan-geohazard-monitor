@@ -38,6 +38,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -58,7 +59,7 @@ TIMEOUT = aiohttp.ClientTimeout(total=300, connect=60)
 
 async def init_eop_table():
     """Create Earth Orientation Parameters table."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS earth_rotation (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -198,7 +199,7 @@ async def main():
     now = datetime.now(timezone.utc).isoformat()
 
     # Check existing data
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         existing = await db.execute_fetchall(
             "SELECT MAX(observed_at), COUNT(*) FROM earth_rotation"
         )
@@ -247,7 +248,7 @@ async def main():
         return
 
     # Store in DB
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.executemany(
             """INSERT OR IGNORE INTO earth_rotation
                (observed_at, x_arcsec, y_arcsec, dut1_s, lod_ms, received_at)

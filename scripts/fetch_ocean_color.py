@@ -41,6 +41,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -85,7 +86,7 @@ def _build_erddap_url(time_iso: str) -> str:
 
 async def init_ocean_color_table():
     """Create ocean color table."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS ocean_color (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -223,7 +224,7 @@ async def main():
     now_iso = datetime.now(timezone.utc).isoformat()
 
     # Determine which dates we already have in the DB
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         existing_rows = await db.execute_fetchall(
             "SELECT DISTINCT observed_at FROM ocean_color"
         )
@@ -244,7 +245,7 @@ async def main():
         for i, date_str in enumerate(dates_to_fetch):
             rows = await fetch_chlor_date(session, date_str)
             if rows:
-                async with aiosqlite.connect(DB_PATH) as db:
+                async with safe_connect() as db:
                     await db.executemany(
                         """INSERT OR IGNORE INTO ocean_color
                            (observed_at, cell_lat, cell_lon, chlor_a_mg_m3, received_at)

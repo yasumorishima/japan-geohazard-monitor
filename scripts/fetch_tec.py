@@ -17,6 +17,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -207,7 +208,7 @@ async def main():
         all_dates = expand_with_window(anchor_dates, WINDOW_DAYS)
 
         # 3. Check which dates already exist in DB
-        async with aiosqlite.connect(DB_PATH) as db:
+        async with safe_connect() as db:
             existing = await get_existing_tec_dates(db)
 
         new_dates = [d for d in all_dates if d.isoformat() not in existing]
@@ -227,7 +228,7 @@ async def main():
         # Process in batches to show progress and commit periodically
         batch_size = 50
         total = 0
-        async with aiosqlite.connect(DB_PATH) as db:
+        async with safe_connect() as db:
             for batch_start in range(0, len(tasks), batch_size):
                 batch = tasks[batch_start:batch_start + batch_size]
                 results = await asyncio.gather(*batch, return_exceptions=True)

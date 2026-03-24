@@ -33,6 +33,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -57,7 +58,7 @@ INTERMAGNET_API = "https://imag-data.bgs.ac.uk/GIN_V1/GINServices"
 
 async def init_ulf_table():
     """Create ULF magnetic field table."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS ulf_magnetic (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -226,7 +227,7 @@ async def main():
     now = datetime.now(timezone.utc).isoformat()
 
     # Get dates around M6+ earthquakes (±7 days for better temporal coverage)
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         eq_rows = await db.execute_fetchall(
             "SELECT DISTINCT DATE(occurred_at), latitude, longitude, magnitude "
             "FROM earthquakes "
@@ -273,7 +274,7 @@ async def main():
             for i, date in enumerate(batch):
                 rows = await fetch_station_day(session, station, date)
                 if rows:
-                    async with aiosqlite.connect(DB_PATH) as db:
+                    async with safe_connect() as db:
                         await db.executemany(
                             """INSERT OR IGNORE INTO ulf_magnetic
                                (station, observed_at, h_nt, d_nt, z_nt, f_nt, received_at)

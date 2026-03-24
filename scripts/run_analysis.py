@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from config import DB_PATH
@@ -1653,7 +1654,7 @@ async def main():
     RESULTS_DIR.mkdir(exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         # DB stats
         eq_count = (await db.execute_fetchall("SELECT COUNT(*) FROM earthquakes"))[0][0]
         tec_count = (await db.execute_fetchall("SELECT COUNT(*) FROM tec"))[0][0]

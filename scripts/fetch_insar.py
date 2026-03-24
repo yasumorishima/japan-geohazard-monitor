@@ -60,6 +60,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -155,7 +156,7 @@ ALL_JAPAN_FRAMES = JAPAN_FRAMES_DESC + JAPAN_FRAMES_ASC
 
 async def init_insar_table():
     """Create InSAR deformation table."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS insar_deformation (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -550,7 +551,7 @@ async def process_frame(session: aiohttp.ClientSession,
             ))
 
         if records:
-            async with aiosqlite.connect(DB_PATH) as db:
+            async with safe_connect() as db:
                 await db.executemany(
                     """INSERT OR IGNORE INTO insar_deformation
                        (frame_id, observed_at, cell_lat, cell_lon,

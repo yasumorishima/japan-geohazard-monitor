@@ -43,6 +43,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -77,7 +78,7 @@ CHUNK_SIZE = 1024 * 1024  # 1MB chunks
 
 async def init_gravity_table():
     """Create gravity anomaly table."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS gravity_mascon (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -327,7 +328,7 @@ async def main():
         return
 
     # Store in database (batch insert with INSERT OR IGNORE for idempotency)
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         # Insert in batches to avoid huge parameter lists
         BATCH_SIZE = 5000
         total_inserted = 0

@@ -43,6 +43,8 @@ class BaseCollector(ABC):
                 inserted = 0
                 if rows:
                     async with aiosqlite.connect(DB_PATH) as db:
+                        await db.execute("PRAGMA synchronous=FULL")
+                        await db.execute("PRAGMA busy_timeout=10000")
                         inserted = await self.insert_rows(db, rows)
                         await db.execute(
                             "INSERT INTO collector_status (source, status, records_inserted, collected_at) "

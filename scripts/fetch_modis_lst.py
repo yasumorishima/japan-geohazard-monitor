@@ -28,6 +28,7 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
@@ -59,7 +60,7 @@ def is_on_land(lat: float, lon: float) -> bool:
 
 async def init_lst_table():
     """Create LST table if not exists."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS modis_lst (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -149,7 +150,7 @@ async def store_results(results: list[dict], lat: float, lon: float,
     """Store LST results in database."""
     if not results:
         return 0
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         for r in results:
             await db.execute(
                 """INSERT OR IGNORE INTO modis_lst
@@ -190,7 +191,7 @@ async def main():
     # ---------------------------------------------------------------
     # Phase 1: Earthquake epicenters (M5.5+ on land, ±14 days)
     # ---------------------------------------------------------------
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         eq_rows = await db.execute_fetchall(
             "SELECT occurred_at, latitude, longitude, magnitude "
             "FROM earthquakes WHERE magnitude >= 5.5 "

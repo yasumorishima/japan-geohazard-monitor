@@ -31,6 +31,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from config import DB_PATH
@@ -96,7 +97,7 @@ async def run_cosmic_ray_analysis():
     """Main analysis: compute cosmic ray features per date."""
     logger.info("=== Cosmic Ray Anomaly Analysis ===")
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         # Check data availability
         stats = await db.execute_fetchall(
             "SELECT station, COUNT(*), MIN(observed_at), MAX(observed_at) "
@@ -189,7 +190,7 @@ async def run_cosmic_ray_analysis():
         }
 
     # Correlate with earthquakes
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         eq_rows = await db.execute_fetchall(
             "SELECT DATE(occurred_at), magnitude FROM earthquakes "
             "WHERE magnitude >= 5.0 ORDER BY occurred_at"

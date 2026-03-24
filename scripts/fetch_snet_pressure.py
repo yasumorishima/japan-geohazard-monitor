@@ -35,6 +35,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
+from db_connect import safe_connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from config import DB_PATH
@@ -368,7 +369,7 @@ async def main() -> None:
 
     await init_db()
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await ensure_table(db)
 
     # Target: previous day (data has ~2h delay, so yesterday is safe)
@@ -378,7 +379,7 @@ async def main() -> None:
     logger.info("Target date: %s", target_date_str)
 
     # Check if we already have data for this date
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         cursor = await db.execute(
             "SELECT COUNT(*) FROM snet_pressure WHERE observed_at LIKE ?",
             (f"{target_date_str}%",),
@@ -404,7 +405,7 @@ async def main() -> None:
 
     # Store in database
     now = datetime.now(timezone.utc).isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with safe_connect() as db:
         await ensure_table(db)
         inserted = 0
         for rec in records:
