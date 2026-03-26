@@ -929,6 +929,7 @@ Feature matrix exported to BigQuery (`geohazard.feature_matrix`: 216,711 rows, 1
 | **Phase 17** | ❌ Cancelled | CI 2ジョブ分割 + ギャップ診断。手動キャンセル |
 | **Phase 18** | ✅ Complete | **S-net波形特徴量**: 1→7特徴量（RMS/HV比/帯域パワー/スペクトル傾斜/空間勾配/セグメント最大anomaly）。75→84特徴量 |
 | **BQ Integration** | ✅ Active | CI完了後にfeature_matrix + AUC + 非ゼロ率を自動ロード。座標不一致バグはBQ集計クエリで発見 |
+| **Bayesian Horseshoe** | 🧪 Tested | Stage 1 smoke test: **Test AUC 0.8029** (1 fold, 2ch×200+500). Top: xray_flux, geomag_fractal, polar_motion. Needs walk-forward CV validation |
 | **ConvLSTM** | 🟢 Colab-ready | Spatiotemporal neural network. Script + feature_matrix.json deployed to Drive + BigQuery |
 | **SeismoGNN** | 🟢 Colab-ready | Graph Attention Network with fault-network topology. Script deployed to Drive |
 | **Transformer** | 📋 Next | SafeNet-style multi-window features (7/14/30/90/365d) + attention (SafeNet, Sci. Reports 2025) |

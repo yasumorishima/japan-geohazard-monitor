@@ -147,6 +147,45 @@ jobs:
         run: |
           python3 scripts/fetch_cmt.py
 
+      # ====== S-NET (PRIORITY — Phase 19) ======
+      # Moved before slow Earthdata fetchers to ensure S-net always runs
+      # within the 6h budget. Previously placed last, never reached.
+      - name: Install win32tools for S-net (catwin32 + win2sac_32)
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          HINET_USER: ${{ secrets.HINET_USER }}
+          HINET_PASS: ${{ secrets.HINET_PASS }}
+        run: |
+          if [ -z "$HINET_USER" ] || [ -z "$HINET_PASS" ]; then
+            echo "HINET credentials not set, skipping win32tools"
+            exit 0
+          fi
+          pip install HinetPy 2>/dev/null || true
+          python3 -c "from HinetPy import Client; Client('${HINET_USER}', '${HINET_PASS}')._get_win32tools()" || exit 0
+          if [ -f win32tools.tar.gz ]; then
+            tar -xf win32tools.tar.gz && rm win32tools.tar.gz
+            cd win32tools && make && mkdir -p bin && mv catwin32.src/catwin32 win2sac.src/win2sac_32 bin/ && cd ..
+            echo "${{ github.workspace }}/win32tools/bin" >> $GITHUB_PATH
+          fi
+
+      - name: Fetch S-net multi-sensor waveform features (Phase 19)
+        continue-on-error: true
+        timeout-minutes: 150
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          HINET_USER: ${{ secrets.HINET_USER }}
+          HINET_PASS: ${{ secrets.HINET_PASS }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          pip install HinetPy 2>/dev/null || true
+          python3 scripts/fetch_snet_waveform.py || echo "S-net waveform fetch failed (non-fatal)"
+          # Copy coverage report to results for artifact
+          if [ -f results/snet_coverage.json ]; then
+            mkdir -p results/midrun
+            cp results/snet_coverage.json results/midrun/
+          fi
+
       - name: Fetch GNSS-TEC high-resolution data (Nagoya University ISEE)
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
@@ -156,7 +195,7 @@ jobs:
 
       - name: Fetch MODIS LST (thermal anomaly discovery)
         continue-on-error: true
-        timeout-minutes: 90
+        timeout-minutes: 45
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
@@ -203,7 +242,7 @@ jobs:
 
       - name: Fetch INTERMAGNET hourly + CSES satellite EM data
         continue-on-error: true
-        timeout-minutes: 60
+        timeout-minutes: 20
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
@@ -259,7 +298,7 @@ jobs:
 
       - name: Fetch OMI SO2 column data (Earthdata auth)
         continue-on-error: true
-        timeout-minutes: 60
+        timeout-minutes: 30
         if: steps.earthdata_check.outputs.earthdata_ok == 'true'
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
@@ -269,16 +308,15 @@ jobs:
         run: |
           python3 scripts/fetch_omi_so2.py || echo "SO2 fetch failed (non-fatal)"
 
-      - name: Fetch SMAP soil moisture (Earthdata auth optional)
-        continue-on-error: true
-        timeout-minutes: 20
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
-          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
-          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
-        run: |
-          python3 scripts/fetch_smap_moisture.py || echo "SMAP fetch failed (non-fatal)"
+      # SMAP disabled: NOAA ERDDAP permanently blacklists GitHub Actions IPs (403).
+      # DB-restored data is still usable. Re-enable if ERDDAP block is lifted.
+      # - name: Fetch SMAP soil moisture (Earthdata auth optional)
+      #   continue-on-error: true
+      #   timeout-minutes: 20
+      #   env:
+      #     GEOHAZARD_DB_PATH: ./data/geohazard.db
+      #   run: |
+      #     python3 scripts/fetch_smap_moisture.py || echo "SMAP fetch failed (non-fatal)"
 
       # --- Phase 10b: Additional unconventional sources ---
 
@@ -303,7 +341,7 @@ jobs:
 
       - name: Fetch MODIS cloud fraction (Earthdata auth)
         continue-on-error: true
-        timeout-minutes: 60
+        timeout-minutes: 30
         if: steps.earthdata_check.outputs.earthdata_ok == 'true'
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
@@ -382,42 +420,6 @@ jobs:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
           python3 scripts/fetch_ioc_sealevel.py || echo "IOC sea level fetch failed (non-fatal)"
-
-      - name: Install win32tools for S-net (catwin32 + win2sac_32)
-        continue-on-error: true
-        timeout-minutes: 5
-        env:
-          HINET_USER: ${{ secrets.HINET_USER }}
-          HINET_PASS: ${{ secrets.HINET_PASS }}
-        run: |
-          if [ -z "$HINET_USER" ] || [ -z "$HINET_PASS" ]; then
-            echo "HINET credentials not set, skipping win32tools"
-            exit 0
-          fi
-          pip install HinetPy 2>/dev/null || true
-          python3 -c "from HinetPy import Client; Client('${HINET_USER}', '${HINET_PASS}')._get_win32tools()" || exit 0
-          if [ -f win32tools.tar.gz ]; then
-            tar -xf win32tools.tar.gz && rm win32tools.tar.gz
-            cd win32tools && make && mkdir -p bin && mv catwin32.src/catwin32 win2sac.src/win2sac_32 bin/ && cd ..
-            echo "${{ github.workspace }}/win32tools/bin" >> $GITHUB_PATH
-          fi
-
-      - name: Fetch S-net multi-sensor waveform features (Phase 19)
-        continue-on-error: true
-        timeout-minutes: 150
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-          HINET_USER: ${{ secrets.HINET_USER }}
-          HINET_PASS: ${{ secrets.HINET_PASS }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        run: |
-          pip install HinetPy 2>/dev/null || true
-          python3 scripts/fetch_snet_waveform.py || echo "S-net waveform fetch failed (non-fatal)"
-          # Copy coverage report to results for artifact
-          if [ -f results/snet_coverage.json ]; then
-            mkdir -p results/midrun
-            cp results/snet_coverage.json results/midrun/
-          fi
 
       # ====== DATA PRESERVATION CHECKPOINT ======
       # All fetch steps complete. Validate + diagnose + save DB.

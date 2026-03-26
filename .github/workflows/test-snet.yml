@@ -52,6 +52,30 @@ jobs:
         run: |
           python3 scripts/test_snet_waveform.py 2>&1 | tee results/snet_waveform_test.txt
 
+      - name: Smoke test — real fetch_snet_waveform.py (2 requests only)
+        env:
+          HINET_USER: ${{ secrets.HINET_USER }}
+          HINET_PASS: ${{ secrets.HINET_PASS }}
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          SNET_MAX_REQUESTS: "5"
+        run: |
+          mkdir -p data results
+          # Run the ACTUAL production script with 2-request cap
+          python3 scripts/fetch_snet_waveform.py 2>&1 | tee results/snet_smoke_test.txt
+          # Verify records were inserted
+          python3 -c "
+          import sqlite3
+          conn = sqlite3.connect('data/geohazard.db')
+          rows = conn.execute('SELECT COUNT(*) FROM snet_waveform').fetchone()[0]
+          sensors = conn.execute('SELECT sensor_type, COUNT(*) FROM snet_waveform GROUP BY sensor_type').fetchall()
+          print(f'Total rows: {rows}')
+          for s, c in sensors:
+              print(f'  {s}: {c}')
+          assert rows > 0, 'FAIL: No records inserted by production script'
+          print('PASS: Production smoke test OK')
+          conn.close()
+          " 2>&1 | tee -a results/snet_smoke_test.txt
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -60,6 +84,7 @@ jobs:
           path: |
             results/snet_test.txt
             results/snet_waveform_test.txt
+            results/snet_smoke_test.txt
           retention-days: 30
 
       - name: Notify Discord

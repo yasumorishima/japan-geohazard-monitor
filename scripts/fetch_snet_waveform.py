@@ -74,13 +74,14 @@ SNET_SENSORS = {
 # 0120B (low-gain accel) skipped — redundant with 0120A, same physical quantity
 
 # HinetPy constraints (budget: ~200 req/day across 3 sensor codes)
+# Override MAX_REQUESTS_PER_RUN via env var for smoke tests (e.g. SNET_MAX_REQUESTS=2)
 REQUEST_DURATION_MIN = 5       # Max 5 min per request
 SEGMENTS_RECENT = 4            # 4 segments for recent days (every 6h)
 SEGMENTS_BACKFILL = 1          # 1 segment for backfill days (daily average)
 RECENT_DAYS = 7                # Last 7 days get high-resolution sampling
 MAX_BACKFILL_DAYS_PER_RUN = 25 # 25 days × 3 codes = 75 backfill requests
 QUOTA_COOLDOWN_SEC = 2         # Pause between requests to respect quota
-MAX_REQUESTS_PER_RUN = 190     # Hard cap (200 limit - 10 safety margin)
+MAX_REQUESTS_PER_RUN = int(os.environ.get("SNET_MAX_REQUESTS", "190"))
 
 # S-net cable segments for spatial analysis
 SNET_CABLE_SEGMENTS = {
@@ -702,33 +703,94 @@ def _fetch_day(
     return results
 
 
-def _fetch_multiple_days(
+def _safe_connect_sync(db_path: str = None):
+    """Open a sqlite3 connection with the same safety PRAGMAs as db_connect.safe_connect."""
+    import sqlite3
+    path = db_path or os.environ.get("GEOHAZARD_DB_PATH", "/app/data/geohazard.db")
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=FULL")
+    conn.execute("PRAGMA busy_timeout=10000")
+    return conn
+
+
+def _ensure_table_sync(conn) -> None:
+    """Create snet_waveform table (sync version for use in executor thread)."""
+    conn.execute(TABLE_DDL)
+    for idx in INDEX_DDL:
+        conn.execute(idx)
+    # Migration: add columns if upgrading from Phase 18
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(snet_waveform)").fetchall()}
+    for col, ddl in [
+        ("sensor_type", "ALTER TABLE snet_waveform ADD COLUMN sensor_type TEXT NOT NULL DEFAULT '0120A'"),
+        ("vlf_power", "ALTER TABLE snet_waveform ADD COLUMN vlf_power REAL"),
+        ("vlf_hv_ratio", "ALTER TABLE snet_waveform ADD COLUMN vlf_hv_ratio REAL"),
+    ]:
+        if col not in columns:
+            conn.execute(ddl)
+            logger.info("Migration: added column %s", col)
+    conn.commit()
+
+
+def _save_records_sync(conn, records: list[dict], now_str: str) -> tuple[int, int]:
+    """Insert records into snet_waveform. Returns (inserted, skipped)."""
+    inserted = skipped = 0
+    for rec in records:
+        try:
+            conn.execute(
+                """INSERT OR IGNORE INTO snet_waveform
+                   (station_id, date_str, segment_hour, sensor_type,
+                    rms_z, rms_h, hv_ratio, lf_power, hf_power,
+                    spectral_slope, vlf_power, vlf_hv_ratio,
+                    n_samples, latitude, longitude,
+                    cable_segment, received_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    rec["station_id"], rec["date_str"], rec["segment_hour"],
+                    rec["sensor_type"],
+                    rec["rms_z"], rec["rms_h"], rec["hv_ratio"],
+                    rec["lf_power"], rec["hf_power"], rec["spectral_slope"],
+                    rec.get("vlf_power"), rec.get("vlf_hv_ratio"),
+                    rec["n_samples"], rec["latitude"], rec["longitude"],
+                    rec["cable_segment"], now_str,
+                ),
+            )
+            inserted += 1
+        except Exception as exc:
+            logger.warning("Insert failed for %s/%s/%s: %s",
+                           rec["station_id"], rec["date_str"],
+                           rec.get("sensor_type"), exc)
+            skipped += 1
+    conn.commit()
+    return inserted, skipped
+
+
+def _fetch_and_save(
     user: str, password: str,
     dates_to_fetch: list[tuple[datetime, int, str, dict]],
-    station_coords_out: dict,
-) -> list[dict]:
-    """Fetch waveform data for multiple days across sensor codes.
+) -> tuple[int, int]:
+    """Fetch waveform data and save each item to DB immediately.
 
-    Args:
-        dates_to_fetch: list of (date, n_segments, network_code, sensor_config) tuples
-        station_coords_out: dict to populate with station coordinates
+    Runs entirely in one thread (HinetPy Client + sqlite3).
+    Each item is committed right after fetch so data survives timeout kills.
 
-    Returns list of all per-station feature records.
+    Returns (total_inserted, total_skipped).
     """
     try:
         from HinetPy import Client
     except ImportError:
         logger.error("HinetPy not installed")
-        return []
+        return 0, 0
 
     try:
         client = Client(user, password)
         logger.info("Authenticated to NIED Hi-net")
     except Exception as exc:
         logger.error("Authentication failed: %s", exc)
-        return []
+        return 0, 0
 
-    # Fetch station metadata once (use 0120A which is the primary code)
+    # Fetch station metadata once
+    station_coords = {}
     try:
         stations = client.get_station_list("0120A")
         if stations:
@@ -737,63 +799,72 @@ def _fetch_multiple_days(
                 lat = getattr(st, "latitude", None)
                 lon = getattr(st, "longitude", None)
                 if sid and lat is not None and lon is not None:
-                    station_coords_out[str(sid)] = (float(lat), float(lon))
-            logger.info("Station metadata: %d stations", len(station_coords_out))
+                    station_coords[str(sid)] = (float(lat), float(lon))
+            logger.info("Station metadata: %d stations", len(station_coords))
     except Exception as exc:
         logger.warning("Station metadata fetch failed: %s", exc)
 
-    all_results = []
+    conn = _safe_connect_sync()
+    _ensure_table_sync(conn)
+    now_str = datetime.now(timezone.utc).isoformat()
+
+    total_inserted = 0
+    total_skipped = 0
     total_items = len(dates_to_fetch)
     request_count = 0
 
-    for i, (target_date, n_segments, network_code, sensor_config) in enumerate(dates_to_fetch):
-        date_str = target_date.strftime("%Y-%m-%d")
+    try:
+        for i, (target_date, n_segments, network_code, sensor_config) in enumerate(dates_to_fetch):
+            date_str = target_date.strftime("%Y-%m-%d")
 
-        # Quota check: each day/code combo uses n_segments requests
-        if request_count + n_segments > MAX_REQUESTS_PER_RUN:
-            logger.warning(
-                "Quota limit approaching (%d/%d). Stopping after %d items.",
-                request_count, MAX_REQUESTS_PER_RUN, i,
-            )
-            send_discord(
-                "⚠️ S-net Quota Limit Reached",
-                f"Stopped at {request_count} requests ({i}/{total_items} items)",
-                color=16776960,
-            )
-            break
+            # Quota check
+            if request_count + n_segments > MAX_REQUESTS_PER_RUN:
+                logger.warning(
+                    "Quota limit approaching (%d/%d). Stopping after %d items.",
+                    request_count, MAX_REQUESTS_PER_RUN, i,
+                )
+                send_discord(
+                    "⚠️ S-net Quota Limit Reached",
+                    f"Stopped at {request_count} requests ({i}/{total_items} items)",
+                    color=16776960,
+                )
+                break
 
-        logger.info(
-            "=== Item %d/%d: %s [%s] (%d segments) ===",
-            i + 1, total_items, date_str, network_code, n_segments,
-        )
-
-        day_results = _fetch_day(
-            client, station_coords_out, target_date, n_segments,
-            network_code=network_code, sensor_config=sensor_config,
-        )
-        all_results.extend(day_results)
-        request_count += n_segments
-
-        # Progress notification every 20 items or at end
-        if (i + 1) % 20 == 0 or i + 1 == total_items:
-            n_stations = len(set(r["station_id"] for r in day_results)) if day_results else 0
-            sensor_counts = {}
-            for r in all_results:
-                st = r.get("sensor_type", "accel")
-                sensor_counts[st] = sensor_counts.get(st, 0) + 1
-            sensor_text = ", ".join(f"{k}: {v:,}" for k, v in sorted(sensor_counts.items()))
-            send_discord(
-                "🌊 S-net Multi-Sensor Fetch Progress",
-                f"Item {i + 1}/{total_items}: {date_str} [{network_code}]",
-                fields=[
-                    {"name": "Requests used", "value": f"{request_count}/{MAX_REQUESTS_PER_RUN}", "inline": True},
-                    {"name": "Total records", "value": f"{len(all_results):,}", "inline": True},
-                    {"name": "By sensor", "value": sensor_text or "—", "inline": False},
-                ],
-                color=3447003,
+            logger.info(
+                "=== Item %d/%d: %s [%s] (%d segments) ===",
+                i + 1, total_items, date_str, network_code, n_segments,
             )
 
-    return all_results
+            day_records = _fetch_day(
+                client, station_coords, target_date, n_segments,
+                network_code=network_code, sensor_config=sensor_config,
+            )
+            request_count += n_segments
+
+            # Save immediately — survives timeout kills
+            if day_records:
+                ins, skip = _save_records_sync(conn, day_records, now_str)
+                total_inserted += ins
+                total_skipped += skip
+                logger.info("  Saved %d records for %s [%s]", ins, date_str, network_code)
+
+            # Progress notification every 20 items or at end
+            if (i + 1) % 20 == 0 or i + 1 == total_items:
+                send_discord(
+                    "🌊 S-net Multi-Sensor Fetch Progress",
+                    f"Item {i + 1}/{total_items}: {date_str} [{network_code}]",
+                    fields=[
+                        {"name": "Requests used", "value": f"{request_count}/{MAX_REQUESTS_PER_RUN}", "inline": True},
+                        {"name": "Inserted so far", "value": f"{total_inserted:,}", "inline": True},
+                    ],
+                    color=3447003,
+                )
+
+            time.sleep(QUOTA_COOLDOWN_SEC)
+    finally:
+        conn.close()
+
+    return total_inserted, total_skipped
 
 
 # ---------------------------------------------------------------------------
@@ -902,14 +973,17 @@ async def main() -> None:
         ],
     )
 
-    # Run synchronous HinetPy fetch in thread executor
-    station_coords = {}
-    loop = asyncio.get_event_loop()
-    records = await loop.run_in_executor(
-        None, _fetch_multiple_days, user, password, dates_to_fetch, station_coords,
-    )
+    # Incremental fetch + immediate DB save.
+    # All HinetPy + DB work runs synchronously in an executor thread.
+    # Each item's records are committed immediately so data survives timeout kills.
 
-    if not records:
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None, _fetch_and_save, user, password, dates_to_fetch,
+    )
+    inserted, skipped = result
+
+    if inserted == 0:
         logger.warning("No waveform records retrieved")
         send_discord(
             "⚠️ S-net Waveform — No Data",
@@ -919,49 +993,7 @@ async def main() -> None:
         )
         return
 
-    # Store in database
-    now_str = datetime.now(timezone.utc).isoformat()
-    inserted = 0
-    skipped = 0
-
-    async with safe_connect() as db:
-        await ensure_table(db)
-        for rec in records:
-            try:
-                await db.execute(
-                    """INSERT OR IGNORE INTO snet_waveform
-                       (station_id, date_str, segment_hour, sensor_type,
-                        rms_z, rms_h, hv_ratio, lf_power, hf_power,
-                        spectral_slope, vlf_power, vlf_hv_ratio,
-                        n_samples, latitude, longitude,
-                        cable_segment, received_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        rec["station_id"], rec["date_str"], rec["segment_hour"],
-                        rec["sensor_type"],
-                        rec["rms_z"], rec["rms_h"], rec["hv_ratio"],
-                        rec["lf_power"], rec["hf_power"], rec["spectral_slope"],
-                        rec.get("vlf_power"), rec.get("vlf_hv_ratio"),
-                        rec["n_samples"], rec["latitude"], rec["longitude"],
-                        rec["cable_segment"], now_str,
-                    ),
-                )
-                inserted += 1
-            except Exception as exc:
-                logger.warning("Insert failed for %s/%s/%s: %s",
-                               rec["station_id"], rec["date_str"], rec.get("sensor_type"), exc)
-                skipped += 1
-        await db.commit()
-
     logger.info("Inserted %d records (%d skipped/duplicate)", inserted, skipped)
-
-    # Per-sensor insert counts
-    sensor_inserted = {}
-    for rec in records:
-        st = rec.get("sensor_type", "accel")
-        sensor_inserted[st] = sensor_inserted.get(st, 0) + 1
-    for st, cnt in sorted(sensor_inserted.items()):
-        logger.info("  %s: %d records", st, cnt)
 
     # Generate and report coverage
     async with safe_connect() as db:
