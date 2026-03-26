@@ -58,6 +58,7 @@ jobs:
           HINET_PASS: ${{ secrets.HINET_PASS }}
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           SNET_MAX_REQUESTS: "5"
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
           mkdir -p data results
           # Run the ACTUAL production script with 2-request cap

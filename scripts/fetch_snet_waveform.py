@@ -126,7 +126,10 @@ def send_discord(title: str, description: str, fields: list[dict] = None,
         payload = json.dumps({"embeds": [embed]}).encode()
         req = urllib.request.Request(
             webhook_url, data=payload,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "GeohazardMonitor/1.0",
+            },
             method="POST",
         )
         urllib.request.urlopen(req, timeout=10)
