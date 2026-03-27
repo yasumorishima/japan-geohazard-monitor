@@ -79,9 +79,9 @@ REQUEST_DURATION_MIN = 5       # Max 5 min per request
 SEGMENTS_RECENT = 4            # 4 segments for recent days (every 6h)
 SEGMENTS_BACKFILL = 1          # 1 segment for backfill days (daily average)
 RECENT_DAYS = 7                # Last 7 days get high-resolution sampling
-MAX_BACKFILL_DAYS_PER_RUN = 25 # 25 days × 3 codes = 75 backfill requests
+MAX_BACKFILL_DAYS_PER_RUN = 5  # 5 days × 3 codes = 15 backfill requests (reduced to fit 6h job limit)
 QUOTA_COOLDOWN_SEC = 2         # Pause between requests to respect quota
-MAX_REQUESTS_PER_RUN = int(os.environ.get("SNET_MAX_REQUESTS", "190"))
+MAX_REQUESTS_PER_RUN = int(os.environ.get("SNET_MAX_REQUESTS", "120"))
 
 # S-net cable segments for spatial analysis
 SNET_CABLE_SEGMENTS = {

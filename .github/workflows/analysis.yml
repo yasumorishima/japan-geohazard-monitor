@@ -23,7 +23,7 @@ jobs:
   # Runs independently with its own 6-hour budget.
   fetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 400
+    timeout-minutes: 330  # Must be < GitHub's 360min hard limit so if: always() steps can save DB
 
     steps:
       - uses: actions/checkout@v4
@@ -545,7 +545,7 @@ jobs:
           echo "::notice::Fetch phase: $SUMMARY"
           # Discord notification
           if [ -n "$DISCORD_WEBHOOK_URL" ]; then
-            curl -s -X POST "$DISCORD_WEBHOOK_URL" \
+            curl -sS -w "\nHTTP %{http_code}\n" -X POST "$DISCORD_WEBHOOK_URL" \
               -H "Content-Type: application/json" \
               -d "{
                 \"embeds\": [{
@@ -657,7 +657,7 @@ jobs:
   # Separate 6-hour budget ensures ML always has time to complete.
   analyze:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 330  # Must be < GitHub's 360min hard limit so if: always() steps can save results
     needs: fetch
     if: always() && needs.fetch.result != 'cancelled'
 
@@ -838,7 +838,7 @@ jobs:
           echo "::notice::ML phase: $AUC"
           # Discord notification
           if [ -n "$DISCORD_WEBHOOK_URL" ]; then
-            curl -s -X POST "$DISCORD_WEBHOOK_URL" \
+            curl -sS -w "\nHTTP %{http_code}\n" -X POST "$DISCORD_WEBHOOK_URL" \
               -H "Content-Type: application/json" \
               -d "{
                 \"embeds\": [{
@@ -960,7 +960,7 @@ jobs:
             TITLE="❌ Geohazard Analysis Failed"
             COLOR=15158332
           fi
-          curl -s -X POST "$DISCORD_WEBHOOK_URL" \
+          curl -sS -w "\nHTTP %{http_code}\n" -X POST "$DISCORD_WEBHOOK_URL" \
             -H "Content-Type: application/json" \
             -d "{
               \"embeds\": [{

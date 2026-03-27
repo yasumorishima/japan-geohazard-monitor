@@ -106,7 +106,7 @@ jobs:
           if [ -z "$COUNTS" ]; then
             COUNTS=$(tail -20 results/snet_test.txt 2>/dev/null | grep -E "OK|FAIL|WARN" | head -1 || echo "Check artifact")
           fi
-          curl -s -X POST "$DISCORD_WEBHOOK_URL" \
+          curl -sS -w "\nHTTP %{http_code}\n" -X POST "$DISCORD_WEBHOOK_URL" \
             -H "Content-Type: application/json" \
             -d "{
               \"embeds\": [{
