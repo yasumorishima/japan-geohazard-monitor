@@ -113,26 +113,26 @@ EXPECTED_FS = 100.0
 
 def send_discord(title: str, description: str, fields: list[dict] = None,
                  color: int = 3447003) -> None:
-    """Send a Discord embed notification. Non-blocking, fail-silent."""
+    """Send a Discord embed notification via curl. Non-blocking, fail-silent."""
     webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "")
     if not webhook_url:
         return
     try:
-        import urllib.request
+        import subprocess
         embed = {"title": title, "description": description, "color": color}
         if fields:
             embed["fields"] = fields
         embed["footer"] = {"text": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}
-        payload = json.dumps({"embeds": [embed]}).encode()
-        req = urllib.request.Request(
-            webhook_url, data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "User-Agent": "GeohazardMonitor/1.0",
-            },
-            method="POST",
+        payload = json.dumps({"embeds": [embed]})
+        result = subprocess.run(
+            ["curl", "-sS", "-w", "\nHTTP %{http_code}\n",
+             "-X", "POST", webhook_url,
+             "-H", "Content-Type: application/json",
+             "-d", payload],
+            capture_output=True, text=True, timeout=15,
         )
-        urllib.request.urlopen(req, timeout=10)
+        if "HTTP 2" not in result.stdout and "HTTP 2" not in result.stderr:
+            logger.warning("Discord curl: %s %s", result.stdout.strip(), result.stderr.strip())
     except Exception as exc:
         logger.warning("Discord notification failed: %s", exc)
 
