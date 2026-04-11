@@ -50,9 +50,22 @@ SNET_PRESSURE_CODE = "0120A"
 # Duration per request in minutes (HinetPy limit: max 5 min for high-rate data)
 REQUEST_DURATION_MIN = 5
 
-# Number of 5-min segments to fetch per day (288 = full day at 5-min intervals)
-# Start conservative: 6 segments = 30 min of data spread across the day
-SEGMENTS_PER_DAY = 6
+# Segment counts per fetched day. Recent days get more segments for robust
+# rolling statistics; backfill days get fewer to stretch the daily quota.
+SEGMENTS_RECENT = 6
+SEGMENTS_BACKFILL = 2
+
+# How many most-recent days are always re-checked (even if some records exist).
+RECENT_DAYS = 7
+
+# NIED Hi-net enforces a per-account daily download quota (~200 req/day).
+# Budget this run conservatively so that both recent refresh and backfill fit
+# in the same day without tripping the quota. Overridable for smoke tests.
+MAX_REQUESTS_PER_RUN = int(os.environ.get("SNET_PRESSURE_MAX_REQUESTS", "120"))
+
+# S-net first station installation: 2016-05 (final segment commissioned FY2016).
+# No seafloor pressure data physically exists before this date.
+SNET_EARLIEST_DATE = datetime(2016, 5, 1)
 
 # S-net station approximate locations along the Japan Trench
 # Stations are named N.Snnnn where nnnn is the station number (0101-0653)
@@ -103,11 +116,22 @@ def _check_credentials() -> tuple[str, str] | None:
     return user, password
 
 
-def _fetch_snet_data(user: str, password: str, target_date: datetime) -> list[dict]:
+def _fetch_snet_data(
+    user: str,
+    password: str,
+    target_date: datetime,
+    n_segments: int,
+) -> list[dict]:
     """Synchronous function to fetch S-net data via HinetPy.
 
     HinetPy is synchronous (uses requests internally), so this runs in a
     thread executor from the async context.
+
+    Args:
+        user, password: NIED Hi-net credentials.
+        target_date: naive datetime (UTC) for the day to fetch.
+        n_segments: number of 5-minute segments to spread across the day.
+            Each segment consumes one HinetPy request from the daily quota.
 
     Returns a list of dicts with keys:
         station_id, observed_at, pressure_mean_hpa, pressure_std_hpa,
@@ -153,9 +177,13 @@ def _fetch_snet_data(user: str, password: str, target_date: datetime) -> list[di
     except Exception as exc:
         logger.warning("Could not fetch station metadata: %s", exc)
 
-    # Spread segments across the day: every 4 hours
-    segment_hours = [h for h in range(0, 24, 24 // max(SEGMENTS_PER_DAY, 1))]
-    segment_hours = segment_hours[:SEGMENTS_PER_DAY]
+    # Spread `n_segments` evenly across the 24-hour day so each segment
+    # samples a different local-time window (dawn / midday / dusk / night).
+    if n_segments <= 0:
+        segment_hours: list[int] = []
+    else:
+        step = max(24 // n_segments, 1)
+        segment_hours = [h for h in range(0, 24, step)][:n_segments]
 
     for hour in segment_hours:
         start = target_date.replace(hour=hour, minute=0, second=0, microsecond=0)
@@ -352,62 +380,13 @@ def _read_sac_data(filepath: str) -> "np.ndarray | None":
         return None
 
 
-async def main() -> None:
-    """Fetch S-net pressure data and store daily aggregated stats."""
-    credentials = _check_credentials()
-    if credentials is None:
-        logger.warning(
-            "HINET_USER and/or HINET_PASS environment variables not set. "
-            "S-net data requires NIED Hi-net registration "
-            "(https://hinetwww11.bosai.go.jp/nied/registration/). "
-            "Exiting gracefully."
-        )
-        return
-
-    user, password = credentials
-    logger.info("NIED Hi-net credentials found, starting S-net pressure data fetch")
-
-    await init_db()
-
-    async with safe_connect() as db:
-        await ensure_table(db)
-
-    # Target: previous day (data has ~2h delay, so yesterday is safe)
-    # HinetPy requires naive (timezone-unaware) datetime objects
-    target_date = datetime.utcnow() - timedelta(days=1)
-    target_date_str = target_date.strftime("%Y-%m-%d")
-    logger.info("Target date: %s", target_date_str)
-
-    # Check if we already have data for this date
-    async with safe_connect() as db:
-        cursor = await db.execute(
-            "SELECT COUNT(*) FROM snet_pressure WHERE observed_at LIKE ?",
-            (f"{target_date_str}%",),
-        )
-        row = await cursor.fetchone()
-        existing_count = row[0] if row else 0
-
-    if existing_count > 0:
-        logger.info(
-            "Already have %d records for %s, skipping fetch",
-            existing_count,
-            target_date_str,
-        )
-        return
-
-    # Run synchronous HinetPy fetch in thread executor
-    loop = asyncio.get_event_loop()
-    records = await loop.run_in_executor(None, _fetch_snet_data, user, password, target_date)
-
+async def _store_records(records: list[dict], target_date_str: str) -> int:
+    """Insert one day's records into snet_pressure. Returns inserted row count."""
     if not records:
-        logger.warning("No S-net pressure records retrieved for %s", target_date_str)
-        return
-
-    # Store in database
+        return 0
     now = datetime.now(timezone.utc).isoformat()
+    inserted = 0
     async with safe_connect() as db:
-        await ensure_table(db)
-        inserted = 0
         for rec in records:
             try:
                 await db.execute(
@@ -428,14 +407,163 @@ async def main() -> None:
                 )
                 inserted += 1
             except Exception as exc:
-                logger.warning("Failed to insert record for %s: %s", rec["station_id"], exc)
+                logger.warning(
+                    "Failed to insert record for %s on %s: %s",
+                    rec.get("station_id", "?"), target_date_str, exc,
+                )
         await db.commit()
-        logger.info(
-            "Inserted %d / %d S-net pressure records for %s",
-            inserted,
-            len(records),
-            target_date_str,
+    return inserted
+
+
+async def _load_existing_dates() -> set[str]:
+    """Return the set of YYYY-MM-DD strings already present in snet_pressure."""
+    async with safe_connect() as db:
+        cursor = await db.execute(
+            "SELECT DISTINCT substr(observed_at, 1, 10) FROM snet_pressure"
         )
+        rows = await cursor.fetchall()
+    return {r[0] for r in rows if r and r[0]}
+
+
+def _plan_target_dates(
+    existing: set[str],
+    today: datetime,
+) -> tuple[list[datetime], list[datetime]]:
+    """Return (recent_dates, backfill_dates) to attempt this run.
+
+    Recent: the last RECENT_DAYS days excluding today (data has ~2h delay,
+    so yesterday is the freshest reliable day). Always re-checked so we
+    catch late-arriving or partial data.
+
+    Backfill: all dates from SNET_EARLIEST_DATE up to (today - RECENT_DAYS),
+    oldest-first, excluding any date already in the DB. Oldest-first builds
+    a contiguous block forward from 2016-05 which aligns with the
+    'continuous 2011-today' coverage goal.
+    """
+    today_midnight = today.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    recent_dates: list[datetime] = []
+    for i in range(1, RECENT_DAYS + 1):
+        d = today_midnight - timedelta(days=i)
+        recent_dates.append(d)
+
+    backfill_boundary = today_midnight - timedelta(days=RECENT_DAYS + 1)
+    backfill_dates: list[datetime] = []
+    cursor = SNET_EARLIEST_DATE
+    while cursor <= backfill_boundary:
+        if cursor.strftime("%Y-%m-%d") not in existing:
+            backfill_dates.append(cursor)
+        cursor += timedelta(days=1)
+
+    return recent_dates, backfill_dates
+
+
+async def main() -> None:
+    """Fetch S-net pressure data with recent-refresh + oldest-first backfill."""
+    credentials = _check_credentials()
+    if credentials is None:
+        logger.warning(
+            "HINET_USER and/or HINET_PASS environment variables not set. "
+            "S-net data requires NIED Hi-net registration "
+            "(https://hinetwww11.bosai.go.jp/nied/registration/). "
+            "Exiting gracefully."
+        )
+        return
+
+    user, password = credentials
+    logger.info("NIED Hi-net credentials found, starting S-net pressure data fetch")
+
+    await init_db()
+    async with safe_connect() as db:
+        await ensure_table(db)
+
+    existing = await _load_existing_dates()
+    logger.info("snet_pressure: %d existing dates in DB", len(existing))
+
+    today = datetime.utcnow()
+    recent_dates, backfill_dates = _plan_target_dates(existing, today)
+
+    logger.info(
+        "Plan: %d recent days (re-refresh) + %d backfill days available (from %s)",
+        len(recent_dates),
+        len(backfill_dates),
+        SNET_EARLIEST_DATE.strftime("%Y-%m-%d"),
+    )
+    logger.info(
+        "Budget: %d requests this run (recent=%d seg/day, backfill=%d seg/day)",
+        MAX_REQUESTS_PER_RUN, SEGMENTS_RECENT, SEGMENTS_BACKFILL,
+    )
+
+    loop = asyncio.get_event_loop()
+    requests_used = 0
+    total_inserted = 0
+    days_fetched = 0
+    days_empty = 0
+
+    async def fetch_one(d: datetime, n_segments: int) -> None:
+        nonlocal requests_used, total_inserted, days_fetched, days_empty
+        date_str = d.strftime("%Y-%m-%d")
+        # Skip recent days that already have enough data. We still re-check
+        # if the count is suspiciously low (<50 rows) since partial days are
+        # common when HinetPy decoding fails on a subset of channels.
+        async with safe_connect() as db:
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM snet_pressure WHERE observed_at LIKE ?",
+                (f"{date_str}%",),
+            )
+            row = await cursor.fetchone()
+            have = row[0] if row else 0
+        if have >= 50:
+            logger.info("%s: already %d rows, skipping", date_str, have)
+            return
+
+        logger.info(
+            "Fetching %s (%d segments, budget %d/%d used)",
+            date_str, n_segments, requests_used, MAX_REQUESTS_PER_RUN,
+        )
+        records = await loop.run_in_executor(
+            None, _fetch_snet_data, user, password, d, n_segments
+        )
+        # Each segment attempted consumes one quota slot even if it failed.
+        requests_used += n_segments
+        if not records:
+            logger.warning("%s: no records retrieved", date_str)
+            days_empty += 1
+            return
+        inserted = await _store_records(records, date_str)
+        total_inserted += inserted
+        days_fetched += 1
+        logger.info("%s: inserted %d rows", date_str, inserted)
+
+    # Recent days first — always refresh the freshest week.
+    for d in recent_dates:
+        if requests_used + SEGMENTS_RECENT > MAX_REQUESTS_PER_RUN:
+            logger.info("Budget exhausted before recent refresh complete")
+            break
+        await fetch_one(d, SEGMENTS_RECENT)
+
+    # Backfill oldest-first with remaining budget.
+    for d in backfill_dates:
+        if requests_used + SEGMENTS_BACKFILL > MAX_REQUESTS_PER_RUN:
+            logger.info("Budget exhausted during backfill")
+            break
+        await fetch_one(d, SEGMENTS_BACKFILL)
+
+    # Coverage summary
+    existing_after = await _load_existing_dates()
+    total_available = (today - SNET_EARLIEST_DATE).days
+    covered = sum(1 for d in existing_after if d >= SNET_EARLIEST_DATE.strftime("%Y-%m-%d"))
+    coverage_pct = round(100.0 * covered / total_available, 1) if total_available > 0 else 0.0
+
+    logger.info(
+        "S-net pressure run complete: "
+        "%d rows inserted across %d days (%d empty), %d/%d requests used. "
+        "Coverage: %d/%d days (%.1f%%) since %s",
+        total_inserted, days_fetched, days_empty,
+        requests_used, MAX_REQUESTS_PER_RUN,
+        covered, total_available, coverage_pct,
+        SNET_EARLIEST_DATE.strftime("%Y-%m-%d"),
+    )
 
 
 if __name__ == "__main__":

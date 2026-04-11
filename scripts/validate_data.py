@@ -34,9 +34,10 @@ EXPECTED_TABLES = {
     "tec":               {"min_rows": 100,   "time_col": "observed_at", "critical": True,  "expected_range": FULL_RANGE},
     "geomag_kp":         {"min_rows": 100,   "time_col": "observed_at", "critical": True,  "expected_range": FULL_RANGE},
     "focal_mechanisms":  {"min_rows": 50,    "time_col": "observed_at", "critical": True,  "expected_range": FULL_RANGE},
-    # Analysis-derived (no time_col, just check existence)
-    "collector_status":  {"min_rows": 0,     "time_col": None,          "critical": False, "expected_range": None},
     # Phase 5-7: ULF, LST, cosmic ray, GNSS-TEC
+    # (collector_status removed: legacy table populated only by the old
+    #  src/collectors/base.py architecture. Current fetcher-based workflow
+    #  never writes to it, so validating it just generates false EMPTYs.)
     "ulf_magnetic":      {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
     "modis_lst":         {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": None},  # event-based
     "cosmic_ray":        {"min_rows": 100,   "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},

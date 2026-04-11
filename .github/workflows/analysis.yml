@@ -187,6 +187,17 @@ jobs:
             cp results/snet_coverage.json results/midrun/
           fi
 
+      - name: Fetch S-net seafloor pressure data (HinetPy)
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          HINET_USER: ${{ secrets.HINET_USER }}
+          HINET_PASS: ${{ secrets.HINET_PASS }}
+        run: |
+          pip install HinetPy 2>/dev/null || true
+          python3 scripts/fetch_snet_pressure.py || echo "S-net pressure fetch failed (non-fatal)"
+
       - name: Fetch GNSS-TEC high-resolution data (Nagoya University ISEE)
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
