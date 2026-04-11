@@ -565,81 +565,266 @@ jobs:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         continue-on-error: true
 
-      - name: Upload midrun report (fetch)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: midrun-fetch-${{ github.run_id }}
-          path: results/midrun/
-          retention-days: 7
-
-      - name: Verified WAL flush before checkpoint upload
+      - name: Snapshot DB via backup API for checkpoint upload
         id: wal_flush
         if: always()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
+          mkdir -p results/midrun
+          SNAPSHOT_LOG=results/midrun/snapshot.log
+          : > "$SNAPSHOT_LOG"
+
+          log() { echo "$@" | tee -a "$SNAPSHOT_LOG"; }
+
           if [ ! -f data/geohazard.db ]; then
-            echo "No DB file — skipping WAL flush"
+            log "::error::No DB file at data/geohazard.db — nothing to snapshot"
             echo "flush_ok=false" >> "$GITHUB_OUTPUT"
+            echo "flush_reason=no-db-file" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # NOTE: bash -e kills the script on non-zero exit, so we must
-          # capture the exit code explicitly to set flush_ok correctly.
+
+          log "=== Pre-snapshot diagnostics ==="
+          log "--- ps: python-related processes still alive ---"
+          ps -eo pid,ppid,etime,stat,cmd | grep -E '[pP]ython' 2>&1 | tee -a "$SNAPSHOT_LOG" || log "(none)"
+          log "--- lsof on data/geohazard.db ---"
+          lsof data/geohazard.db 2>&1 | tee -a "$SNAPSHOT_LOG" || log "(lsof found nothing or not installed)"
+          log "--- WAL/SHM/DB sizes before snapshot ---"
+          ls -la data/geohazard.db* 2>&1 | tee -a "$SNAPSHOT_LOG" || true
+          log "--- Disk free ---"
+          df -h /tmp . 2>&1 | tee -a "$SNAPSHOT_LOG" || true
+
+          # Kill any orphan workers touching the DB (defense in depth). This
+          # step runs as bash; the python snapshot below launches fresh. We
+          # match scripts/* to catch both fetch_ and backfill_ and any analysis
+          # script that may have leaked into a background thread.
+          log "--- Killing any orphan scripts/* processes ---"
+          pkill -9 -f 'scripts/fetch_' 2>&1 | tee -a "$SNAPSHOT_LOG" || true
+          pkill -9 -f 'scripts/backfill_' 2>&1 | tee -a "$SNAPSHOT_LOG" || true
+          pkill -9 -f 'scripts/' 2>&1 | tee -a "$SNAPSHOT_LOG" || true
+          sleep 1
+          log "--- After pkill: python processes still alive ---"
+          ps -eo pid,ppid,etime,stat,cmd | grep -E '[pP]ython' 2>&1 | tee -a "$SNAPSHOT_LOG" || log "(none)"
+
+          # Take pre-snapshot row counts on the live DB so we can verify
+          # the backup captured everything.
+          log "=== Pre-snapshot row counts (source) ==="
+          python3 -c "
+          import sqlite3, json, pathlib
+          src = sqlite3.connect('data/geohazard.db', timeout=60.0)
+          src.execute('PRAGMA busy_timeout = 60000')
+          tables = [r[0] for r in src.execute(\"SELECT name FROM sqlite_master WHERE type='table' ORDER BY name\").fetchall()]
+          counts = {}
+          for t in tables:
+              try:
+                  counts[t] = src.execute(f'SELECT COUNT(*) FROM [{t}]').fetchone()[0]
+              except Exception as e:
+                  counts[t] = f'ERROR: {e}'
+          src.close()
+          pathlib.Path('/tmp/src_counts.json').write_text(json.dumps(counts, indent=2, default=str))
+          width = max(len(t) for t in tables) if tables else 0
+          for t in tables:
+              c = counts[t]
+              print(f'  {t:<{width}s} = {c:>15}' if isinstance(c, int) else f'  {t:<{width}s} = {c}')
+          print(f'  TOTAL tables: {len(tables)}')
+          " 2>&1 | tee -a "$SNAPSHOT_LOG"
+
+          # Use SQLite's backup API to make a consistent hot copy of the live
+          # DB. Works even if another connection holds the WAL because the
+          # backup API reads the committed state page-by-page under a shared
+          # lock and writes a fresh destination file with no WAL dependency.
+          log "=== Running backup API snapshot ==="
           set +e
           python3 -c "
-          import sqlite3, sys, os
+          import sqlite3, sys, os, shutil, json, pathlib, time
 
-          db_path = 'data/geohazard.db'
-          conn = sqlite3.connect(db_path)
-          errors = []
+          src_path = 'data/geohazard.db'
+          dst_path = '/tmp/geohazard_clean.db'
 
-          # Step 1: WAL checkpoint
-          result = conn.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
-          busy, log_pages, checkpointed = result
-          print(f'WAL checkpoint: busy={busy}, log={log_pages}, checkpointed={checkpointed}')
-          if busy != 0:
-              errors.append(f'WAL checkpoint blocked (busy={busy})')
-          if log_pages != checkpointed:
-              errors.append(f'Incomplete: {log_pages} logged, {checkpointed} checkpointed')
+          for p in (dst_path, dst_path + '-wal', dst_path + '-shm', dst_path + '-journal'):
+              if os.path.exists(p):
+                  os.remove(p)
 
-          # Step 2: Integrity check
-          integrity = conn.execute('PRAGMA integrity_check').fetchone()[0]
+          t0 = time.time()
+          src = sqlite3.connect(src_path, timeout=120.0)
+          src.execute('PRAGMA busy_timeout = 120000')
+          try:
+              busy, log_pages, ckpt = src.execute('PRAGMA wal_checkpoint(PASSIVE)').fetchone()
+              print(f'Passive checkpoint: busy={busy}, log={log_pages}, checkpointed={ckpt}')
+          except sqlite3.OperationalError as e:
+              print(f'Passive checkpoint skipped: {e}')
+
+          dst = sqlite3.connect(dst_path)
+          pages_copied = [0]
+          def progress(status, remaining, total):
+              pages_copied[0] = total - remaining
+              if total > 0 and (remaining == 0 or pages_copied[0] % 50000 == 0):
+                  pct = 100.0 * pages_copied[0] / total
+                  print(f'  backup progress: {pages_copied[0]:,}/{total:,} pages ({pct:.1f}%)')
+          src.backup(dst, pages=10000, progress=progress)
+          dst.close()
+          src.close()
+          elapsed = time.time() - t0
+          print(f'Backup finished in {elapsed:.1f}s')
+
+          # Verify the clean copy
+          verify = sqlite3.connect(dst_path)
+          integrity = verify.execute('PRAGMA integrity_check').fetchone()[0]
           if integrity != 'ok':
-              errors.append(f'integrity_check: {integrity[:200]}')
-              print(f'::error::DB integrity check FAILED: {integrity[:200]}')
+              print(f'::error::Clean copy integrity FAILED: {integrity[:200]}')
+              verify.close()
+              sys.exit(2)
 
-          # Step 3: WAL file must be empty
-          wal_path = db_path + '-wal'
-          if os.path.exists(wal_path):
-              wal_size = os.path.getsize(wal_path)
-              if wal_size > 0:
-                  errors.append(f'WAL not truncated: {wal_size} bytes remain')
-
-          # Step 4: File size must match page count
-          page_size = conn.execute('PRAGMA page_size').fetchone()[0]
-          page_count = conn.execute('PRAGMA page_count').fetchone()[0]
+          page_size = verify.execute('PRAGMA page_size').fetchone()[0]
+          page_count = verify.execute('PRAGMA page_count').fetchone()[0]
           expected = page_size * page_count
-          actual = os.path.getsize(db_path)
+          actual = os.path.getsize(dst_path)
           if actual != expected:
-              errors.append(f'Size mismatch: file={actual}, expected={expected}')
+              print(f'::error::Clean copy size mismatch: file={actual}, expected={expected}')
+              verify.close()
+              sys.exit(3)
 
-          conn.close()
+          tables = [r[0] for r in verify.execute(\"SELECT name FROM sqlite_master WHERE type='table' ORDER BY name\").fetchall()]
+          if len(tables) < 5:
+              print(f'::error::Clean copy has only {len(tables)} tables — suspicious')
+              verify.close()
+              sys.exit(4)
 
-          if errors:
-              print('❌ Verified WAL flush FAILED:')
-              for e in errors:
-                  print(f'  - {e}')
-              sys.exit(1)
-          else:
-              print(f'✅ Verified WAL flush OK — DB {actual:,} bytes, {page_count} pages')
-          "
-          FLUSH_RC=$?
+          # Row-count parity check against source
+          dst_counts = {}
+          for t in tables:
+              try:
+                  dst_counts[t] = verify.execute(f'SELECT COUNT(*) FROM [{t}]').fetchone()[0]
+              except Exception as e:
+                  dst_counts[t] = f'ERROR: {e}'
+          verify.close()
+
+          src_counts = json.loads(pathlib.Path('/tmp/src_counts.json').read_text())
+          mismatches = []
+          for t in tables:
+              s = src_counts.get(t)
+              d = dst_counts.get(t)
+              if isinstance(s, int) and isinstance(d, int) and s != d:
+                  mismatches.append((t, s, d))
+          if mismatches:
+              print(f'::warning::Row count mismatch between source and clean copy:')
+              for t, s, d in mismatches:
+                  print(f'  {t}: source={s} clean={d} diff={d-s}')
+              # A strict failure would be if clean copy has FEWER rows than source
+              losses = [(t, s, d) for t, s, d in mismatches if d < s]
+              if losses:
+                  print(f'::error::Clean copy LOST rows vs source:')
+                  for t, s, d in losses:
+                      print(f'  {t}: lost {s - d} rows')
+                  sys.exit(5)
+
+          print(f'✅ Clean copy OK — {actual:,} bytes, {page_count} pages, {len(tables)} tables')
+          pathlib.Path('/tmp/dst_counts.json').write_text(json.dumps(dst_counts, indent=2, default=str))
+
+          # Replace the source file with the clean copy
+          for stale in (src_path + '-wal', src_path + '-shm', src_path + '-journal'):
+              if os.path.exists(stale):
+                  os.remove(stale)
+          shutil.move(dst_path, src_path)
+          print(f'✅ Replaced {src_path} with clean snapshot')
+          " 2>&1 | tee -a "$SNAPSHOT_LOG"
+          FLUSH_RC=${PIPESTATUS[0]}
           set -e
+
+          log "=== Snapshot exit code: $FLUSH_RC ==="
+          log "--- Final data/geohazard.db* listing ---"
+          ls -la data/geohazard.db* 2>&1 | tee -a "$SNAPSHOT_LOG" || true
+
           if [ $FLUSH_RC -eq 0 ]; then
             echo "flush_ok=true" >> "$GITHUB_OUTPUT"
+            echo "flush_reason=ok" >> "$GITHUB_OUTPUT"
+            log "✅ Snapshot step SUCCESS"
           else
             echo "flush_ok=false" >> "$GITHUB_OUTPUT"
-            echo "::error::WAL flush verification failed — DB will NOT be uploaded"
+            case $FLUSH_RC in
+              2) REASON="integrity-check-failed" ;;
+              3) REASON="size-mismatch" ;;
+              4) REASON="too-few-tables" ;;
+              5) REASON="row-count-loss" ;;
+              *) REASON="unknown-rc-$FLUSH_RC" ;;
+            esac
+            echo "flush_reason=$REASON" >> "$GITHUB_OUTPUT"
+            log "::error::Snapshot step FAILED (rc=$FLUSH_RC, reason=$REASON) — DB will NOT be uploaded"
           fi
+
+          # Discord notification — fires on both success and failure.
+          # Uses a quoted heredoc so bash does NOT interpolate anything
+          # into the python source. All params come via environment vars
+          # so special characters in log tails can't break the syntax.
+          if [ -n "$DISCORD_WEBHOOK_URL" ]; then
+            if [ $FLUSH_RC -eq 0 ]; then
+              export SNAPSHOT_TITLE="💾 DB Snapshot OK"
+              export SNAPSHOT_COLOR=3066993
+              export SNAPSHOT_DESC="Clean backup written to data/geohazard.db — uploading checkpoint next."
+              export SNAPSHOT_REASON="ok"
+            else
+              export SNAPSHOT_TITLE="🛑 DB Snapshot FAILED"
+              export SNAPSHOT_COLOR=15158332
+              export SNAPSHOT_DESC="Snapshot step failed (rc=$FLUSH_RC). Checkpoint upload skipped — analyze job will have no DB."
+              export SNAPSHOT_REASON="$REASON"
+            fi
+            export SNAPSHOT_LOG_PATH="$SNAPSHOT_LOG"
+            export RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            python3 <<'PYEOF' || true
+          import json, os, urllib.request, pathlib
+
+          url = os.environ['DISCORD_WEBHOOK_URL']
+          title = os.environ['SNAPSHOT_TITLE']
+          color = int(os.environ['SNAPSHOT_COLOR'])
+          desc = os.environ['SNAPSHOT_DESC']
+          reason = os.environ['SNAPSHOT_REASON']
+          run_url = os.environ['RUN_URL']
+          log_path = os.environ['SNAPSHOT_LOG_PATH']
+
+          # Last 40 lines of the snapshot log for context
+          try:
+              lines = pathlib.Path(log_path).read_text().splitlines()
+              tail = '\n'.join(lines[-40:])
+          except Exception as e:
+              tail = f'(could not read log: {e})'
+          tail_block = f'```\n{tail}\n```'
+          # Discord field value max is 1024 chars
+          if len(tail_block) > 1024:
+              tail_block = tail_block[:1015] + '\n```'
+
+          payload = {
+              'embeds': [{
+                  'title': title,
+                  'description': desc,
+                  'color': color,
+                  'fields': [
+                      {'name': 'Reason', 'value': reason, 'inline': True},
+                      {'name': 'Run', 'value': f'[Actions]({run_url})', 'inline': True},
+                      {'name': 'Tail of snapshot.log', 'value': tail_block, 'inline': False},
+                  ],
+                  'footer': {'text': 'DB Snapshot'},
+              }]
+          }
+          body = json.dumps(payload).encode()
+          req = urllib.request.Request(
+              url,
+              data=body,
+              headers={
+                  'Content-Type': 'application/json',
+                  'User-Agent': 'geohazard-snapshot/1.0',
+              },
+          )
+          try:
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  print(f'Discord HTTP {r.status}')
+          except Exception as e:
+              print(f'Discord notify error: {e}')
+          PYEOF
+          fi
+
+          # Exit 0 so if: always() on the upload step can still evaluate
+          # flush_ok correctly — the upload will be skipped by its own guard.
+          exit 0
 
       - name: Upload database checkpoint (post-fetch)
         if: always() && steps.wal_flush.outputs.flush_ok == 'true'
@@ -651,6 +836,16 @@ jobs:
             results/data_validation.json
             results/data_gaps.json
           retention-days: 90
+
+      # Uploaded after the snapshot step so results/midrun/snapshot.log
+      # (written by the snapshot step above) is included in the artifact.
+      - name: Upload midrun report (fetch)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: midrun-fetch-${{ github.run_id }}
+          path: results/midrun/
+          retention-days: 7
 
   # ====== JOB 2: ANALYZE ======
   # Restores DB from fetch job, runs all analysis + ML.
@@ -677,6 +872,15 @@ jobs:
         with:
           name: database-checkpoint-${{ github.run_id }}
           path: .
+
+      # Needed by the final Discord notification step to read
+      # results/midrun/snapshot.log and surface snapshot step status.
+      - name: Restore midrun report from fetch job
+        uses: actions/download-artifact@v4
+        with:
+          name: midrun-fetch-${{ github.run_id }}
+          path: results/midrun/
+        continue-on-error: true
 
       - name: Verify restored database
         env:
@@ -947,32 +1151,119 @@ jobs:
 
       - name: Notify Discord
         if: always()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FETCH_RESULT: ${{ needs.fetch.result }}
         run: |
           if [ -z "$DISCORD_WEBHOOK_URL" ]; then
             echo "DISCORD_WEBHOOK_URL not set, skipping"
             exit 0
           fi
-          STATUS="${{ job.status }}"
-          if [ "$STATUS" = "success" ]; then
-            TITLE="🌍 Geohazard Analysis Complete"
-            COLOR=3066993
-          else
-            TITLE="❌ Geohazard Analysis Failed"
-            COLOR=15158332
-          fi
-          curl -sS -w "\nHTTP %{http_code}\n" -X POST "$DISCORD_WEBHOOK_URL" \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"embeds\": [{
-                \"title\": \"$TITLE\",
-                \"color\": $COLOR,
-                \"fields\": [
-                  {\"name\": \"Status\", \"value\": \"$STATUS\", \"inline\": true},
-                  {\"name\": \"Log\", \"value\": \"[Actions](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\", \"inline\": true}
-                ],
-                \"footer\": {\"text\": \"Earthquake Correlation Analysis\"}
+          # Rich final notification — includes data validation summary, problem
+          # tables, low-coverage tables, and links. Uses a quoted heredoc so
+          # nothing is bash-interpolated into the python source; everything
+          # comes via environment variables or file reads.
+          python3 <<'PYEOF' || true
+          import json, os, pathlib, urllib.request
+
+          webhook = os.environ['DISCORD_WEBHOOK_URL']
+          job_status = os.environ.get('JOB_STATUS', 'unknown')
+          fetch_result = os.environ.get('FETCH_RESULT', 'unknown')
+          run_url = os.environ['RUN_URL']
+
+          if job_status == 'success':
+              title = '🌍 Geohazard Analysis Complete'
+              color = 3066993
+          else:
+              title = '❌ Geohazard Analysis Failed'
+              color = 15158332
+
+          # Parse data_validation.json (written by validate_data.py in fetch
+          # job and restored via the DB artifact in analyze job).
+          validation_path = pathlib.Path('results/data_validation.json')
+          summary_line = '(data_validation.json not found)'
+          problem_lines: list[str] = []
+          low_cov_lines: list[str] = []
+          total_rows = 0
+          if validation_path.exists():
+              try:
+                  d = json.loads(validation_path.read_text())
+                  ok = d.get('ok', 0)
+                  low = d.get('low', 0)
+                  empty = d.get('empty', 0)
+                  missing = d.get('missing', 0)
+                  total_tables = d.get('total_tables', '?')
+                  summary_line = f'{ok} OK / {low} LOW / {empty} EMPTY / {missing} MISSING (of {total_tables})'
+                  tables = d.get('tables', {})
+                  for name, info in sorted(tables.items()):
+                      status = info.get('status', '?')
+                      rows = info.get('rows', 0)
+                      cov = info.get('coverage_pct')
+                      if isinstance(rows, int):
+                          total_rows += rows
+                      if status in ('EMPTY', 'MISSING'):
+                          problem_lines.append(f'{status:7s} {name}')
+                      elif status == 'LOW':
+                          cov_str = f' cov={cov}%' if cov is not None else ''
+                          problem_lines.append(f'{status:7s} {name} ({rows:,} rows{cov_str})')
+                      if status == 'OK' and isinstance(cov, (int, float)) and cov < 70:
+                          low_cov_lines.append(f'{name}: {rows:,} rows, cov={cov}%')
+              except Exception as e:
+                  summary_line = f'(failed to parse validation: {e})'
+
+          # Parse snapshot reason from midrun log (if present)
+          snapshot_log = pathlib.Path('results/midrun/snapshot.log')
+          snapshot_line = ''
+          if snapshot_log.exists():
+              for line in snapshot_log.read_text().splitlines():
+                  if 'Snapshot step SUCCESS' in line or 'Snapshot step FAILED' in line:
+                      snapshot_line = line.strip()
+                      break
+          if not snapshot_line:
+              snapshot_line = '(no snapshot.log found)'
+
+          def fit(block: str, limit: int = 1024) -> str:
+              if len(block) <= limit:
+                  return block
+              return block[: limit - 4] + '\n...'
+
+          problems_block = '\n'.join(problem_lines) if problem_lines else 'none'
+          low_cov_block = '\n'.join(low_cov_lines) if low_cov_lines else 'none'
+
+          fields = [
+              {'name': 'Job status', 'value': job_status, 'inline': True},
+              {'name': 'Fetch result', 'value': fetch_result, 'inline': True},
+              {'name': 'Total rows', 'value': f'{total_rows:,}', 'inline': True},
+              {'name': 'Data validation', 'value': summary_line, 'inline': False},
+              {'name': 'Problem tables', 'value': fit(f'```\n{problems_block}\n```'), 'inline': False},
+              {'name': 'Low coverage (<70%)', 'value': fit(f'```\n{low_cov_block}\n```'), 'inline': False},
+              {'name': 'Snapshot step', 'value': fit(snapshot_line, 1024), 'inline': False},
+              {'name': 'Run', 'value': f'[Actions]({run_url})', 'inline': False},
+          ]
+
+          payload = {
+              'embeds': [{
+                  'title': title,
+                  'color': color,
+                  'fields': fields,
+                  'footer': {'text': 'Earthquake Correlation Analysis'},
               }]
-            }"
-        env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          }
+          body = json.dumps(payload).encode()
+          req = urllib.request.Request(
+              webhook,
+              data=body,
+              headers={
+                  'Content-Type': 'application/json',
+                  'User-Agent': 'geohazard-final-notify/1.0',
+              },
+          )
+          try:
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  print(f'Discord HTTP {r.status}')
+          except Exception as e:
+              print(f'Discord notify error: {e}')
+          PYEOF
         continue-on-error: true
