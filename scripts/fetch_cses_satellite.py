@@ -226,6 +226,18 @@ async def fetch_intermagnet_hourly_day(session: aiohttp.ClientSession,
            f"&samplesPerDay=1440&dataStartDate={start}&dataDuration={duration_days}"
            f"&publicationState=best-avail&format=iaga2002")
 
+    # Emit diagnostic details for the first few empty/odd responses per station
+    # so we can tell whether the failure is HTTP, empty body, or parse miss.
+    diag_flag = f"_diag_intermag_{station}"
+    diag_count = getattr(fetch_intermagnet_hourly_day, diag_flag, 0)
+
+    def _maybe_diag(msg: str) -> None:
+        nonlocal diag_count
+        if diag_count < 3:
+            logger.warning("INTERMAGNET %s %s: %s", station, start, msg)
+            diag_count += 1
+            setattr(fetch_intermagnet_hourly_day, diag_flag, diag_count)
+
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             async with session.get(url, timeout=TIMEOUT) as resp:
@@ -235,23 +247,34 @@ async def fetch_intermagnet_hourly_day(session: aiohttp.ClientSession,
                         rows = parse_iaga2002_minute(text, station)
                         if rows:
                             return rows
+                        _maybe_diag(
+                            f"parse returned 0 rows. len(text)={len(text)}. "
+                            f"preview={text[:300]!r}"
+                        )
+                        return []
+                    else:
+                        _maybe_diag(
+                            f"200 OK but no DATE header. len(text)={len(text)}. "
+                            f"preview={text[:300]!r}"
+                        )
+                        return []
                 elif resp.status == 204:
+                    _maybe_diag("HTTP 204 — upstream reports no data")
                     return []  # No data available
                 elif resp.status == 404:
+                    _maybe_diag("HTTP 404 — station/date not available")
                     return []  # Station/date not available
                 else:
                     if attempt == MAX_RETRIES:
-                        logger.warning(
-                            "INTERMAGNET hourly %s %s: HTTP %d after %d attempts",
-                            station, date.strftime("%Y-%m-%d"), resp.status, attempt,
+                        body = await resp.text()
+                        _maybe_diag(
+                            f"HTTP {resp.status} after {attempt} attempts. "
+                            f"body preview={body[:300]!r}"
                         )
                         return []
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             if attempt == MAX_RETRIES:
-                logger.warning(
-                    "INTERMAGNET hourly %s %s: %s after %d attempts",
-                    station, date.strftime("%Y-%m-%d"), type(e).__name__, attempt,
-                )
+                _maybe_diag(f"{type(e).__name__}: {e}")
                 return []
             await asyncio.sleep(2 ** attempt)
 

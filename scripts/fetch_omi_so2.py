@@ -134,7 +134,29 @@ async def _resolve_so2_filename(session: aiohttp.ClientSession, year: int, date_
     match = re.search(rf'({re.escape(pattern_str)}[^"<\s]*\.he5)', text)
     if match:
         return match.group(1)
-    logger.info("SO2 %s: no filename match for pattern %s", date_str, pattern_str)
+
+    # Diagnostic — when the regex misses, dump enough info to see why.
+    # Emitted at most once per year to keep logs reasonable.
+    flag = f"_diag_resolve_{year}"
+    if not getattr(_resolve_so2_filename, flag, False):
+        setattr(_resolve_so2_filename, flag, True)
+        he5_count = text.count(".he5")
+        # Find any OMSO2G file in this year to see the actual naming convention
+        any_match = re.search(r'(OMI-Aura_L2G-OMSO2G_\d+m\d+[^"<\s]*\.he5)', text)
+        sample = any_match.group(1) if any_match else "(none)"
+        # Find a prefix match (same year + month) to see if only the day mismatches
+        mm = date_str[5:7]
+        month_match = re.search(
+            rf'(OMI-Aura_L2G-OMSO2G_{year}m{mm}\d+[^"<\s]*\.he5)', text,
+        )
+        month_sample = month_match.group(1) if month_match else "(none)"
+        logger.warning(
+            "SO2 %s: no match for pattern=%s. contents.html has %d .he5 files. "
+            "any OMSO2G sample=%s. same-year-month sample=%s. len(text)=%d",
+            date_str, pattern_str, he5_count, sample, month_sample, len(text),
+        )
+    else:
+        logger.info("SO2 %s: no filename match for pattern %s", date_str, pattern_str)
     return None
 
 

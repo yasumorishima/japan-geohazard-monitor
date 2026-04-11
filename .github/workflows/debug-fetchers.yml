@@ -1,0 +1,120 @@
+name: Debug Problem Fetchers
+
+# Targeted debug workflow for the three continuous-strategy fetchers that
+# silently stopped populating their tables partway through (Phase 1 Step 2).
+# Runs each fetcher in isolation with the diagnostic logging that the
+# main fetchers now emit, and uploads raw stdout/stderr as an artifact so
+# root causes can be identified from real upstream responses.
+#
+# Targets:
+#   - fetch_omi_so2.py         → so2_column (stopped 2014-03)
+#   - fetch_cloud_fraction.py  → cloud_fraction (stopped 2012-01)
+#   - fetch_cses_satellite.py  → geomag_hourly (stopped 2013-09)
+#
+# Manual dispatch only — does NOT run on schedule.
+
+on:
+  workflow_dispatch:
+    inputs:
+      memo:
+        description: 'Why this debug run (required)'
+        required: true
+        type: string
+      target:
+        description: 'Which fetcher to run'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - so2_column
+          - cloud_fraction
+          - geomag_hourly
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install aiohttp aiosqlite numpy scipy netCDF4
+
+      - name: Initialise empty database
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          mkdir -p data results
+          python3 -c "
+          import asyncio, sys
+          sys.path.insert(0, 'src')
+          from db import init_db
+          asyncio.run(init_db())
+          print('DB initialised at ./data/geohazard.db')
+          "
+
+      - name: Run fetch_omi_so2.py (debug)
+        if: inputs.target == 'all' || inputs.target == 'so2_column'
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+        run: |
+          set -o pipefail
+          python3 -u scripts/fetch_omi_so2.py 2>&1 | tee results/debug_so2.log
+          echo "exit=$?"
+
+      - name: Run fetch_cloud_fraction.py (debug)
+        if: inputs.target == 'all' || inputs.target == 'cloud_fraction'
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+        run: |
+          set -o pipefail
+          python3 -u scripts/fetch_cloud_fraction.py 2>&1 | tee results/debug_cloud.log
+          echo "exit=$?"
+
+      - name: Run fetch_cses_satellite.py (debug, geomag_hourly phase only)
+        if: inputs.target == 'all' || inputs.target == 'geomag_hourly'
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          set -o pipefail
+          python3 -u scripts/fetch_cses_satellite.py 2>&1 | tee results/debug_cses.log
+          echo "exit=$?"
+
+      - name: Post-run DB snapshot
+        if: always()
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 -u scripts/validate_data.py 2>&1 | tee results/debug_validation.log
+
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-fetchers-${{ github.run_id }}
+          path: |
+            results/debug_so2.log
+            results/debug_cloud.log
+            results/debug_cses.log
+            results/debug_validation.log
+            results/data_validation.json
+          retention-days: 14

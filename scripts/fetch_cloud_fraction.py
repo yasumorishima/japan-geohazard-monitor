@@ -87,22 +87,50 @@ async def init_cloud_table():
 async def _resolve_filename(session: aiohttp.ClientSession, year: int, doy: int) -> str | None:
     """Resolve MOD08_D3 filename from LAADS DAAC directory listing."""
     dir_url = f"https://ladsweb.modaps.eosdis.nasa.gov/archive/allData/61/MOD08_D3/{year}/{doy:03d}.json"
+    # Emit one diagnostic line per (year, doy) miss, up to 3 per year.
+    flag = f"_diag_resolve_{year}"
+    diag_count = getattr(_resolve_filename, flag, 0)
     try:
         headers = {"Authorization": f"Bearer {EARTHDATA_TOKEN}"} if EARTHDATA_TOKEN else {}
         async with session.get(dir_url, headers=headers, timeout=TIMEOUT) as resp:
             if resp.status != 200:
+                if diag_count < 3:
+                    body_preview = (await resp.text())[:300] if resp.status != 404 else "(404)"
+                    logger.warning(
+                        "Cloud resolve %d/%03d: HTTP %d. token=%s. body=%r",
+                        year, doy, resp.status,
+                        "present" if EARTHDATA_TOKEN else "MISSING", body_preview,
+                    )
+                    setattr(_resolve_filename, flag, diag_count + 1)
                 return None
             data = await resp.json(content_type=None)
             # LAADS returns {"content": [file objects]}
             items = data.get("content", data) if isinstance(data, dict) else data
+            listed_names: list[str] = []
             for item in items:
                 if not isinstance(item, dict):
                     continue
                 name = item.get("name", "")
                 if name.startswith("MOD08_D3") and name.endswith(".hdf"):
                     return name
-    except Exception:
-        pass
+                if name:
+                    listed_names.append(name)
+            # Reached here = no MOD08_D3 .hdf file present in the listing.
+            if diag_count < 3:
+                sample = listed_names[:5] if listed_names else ["(empty listing)"]
+                logger.warning(
+                    "Cloud resolve %d/%03d: MOD08_D3 .hdf not present. "
+                    "listing has %d non-matching items. sample=%s",
+                    year, doy, len(listed_names), sample,
+                )
+                setattr(_resolve_filename, flag, diag_count + 1)
+    except Exception as exc:
+        if diag_count < 3:
+            logger.warning(
+                "Cloud resolve %d/%03d: exception %s: %s",
+                year, doy, type(exc).__name__, exc,
+            )
+            setattr(_resolve_filename, flag, diag_count + 1)
     return None
 
 
