@@ -1,8 +1,6 @@
 name: Earthquake Correlation Analysis
 
 on:
-  schedule:
-    - cron: '0 3 * * 1'  # Every Monday 3:00 UTC (12:00 JST)
   workflow_dispatch:
     inputs:
       memo:
