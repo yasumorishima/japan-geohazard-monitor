@@ -1,7 +1,7 @@
 """Upload raw fetcher data from SQLite to BigQuery.
 
-Reads so2_column, cloud_fraction, geomag_hourly from the local SQLite DB
-and uploads to BQ dataset `geohazard` using WRITE_TRUNCATE (full replace).
+Reads ALL data tables from the local SQLite DB and uploads to BQ dataset
+`geohazard` using WRITE_TRUNCATE (full replace).
 Each run uploads the complete SQLite state so BQ always reflects the latest.
 
 Usage (CI):
@@ -54,6 +54,326 @@ TABLES = {
             {"name": "received_at", "type": "STRING"},
         ],
     },
+    "earthquakes": {
+        "query": "SELECT source, event_id, occurred_at, latitude, longitude, depth_km, magnitude, magnitude_type, max_intensity, location_ja, location_en, received_at FROM earthquakes",
+        "schema": [
+            {"name": "source", "type": "STRING"},
+            {"name": "event_id", "type": "STRING"},
+            {"name": "occurred_at", "type": "STRING"},
+            {"name": "latitude", "type": "FLOAT"},
+            {"name": "longitude", "type": "FLOAT"},
+            {"name": "depth_km", "type": "FLOAT"},
+            {"name": "magnitude", "type": "FLOAT"},
+            {"name": "magnitude_type", "type": "STRING"},
+            {"name": "max_intensity", "type": "STRING"},
+            {"name": "location_ja", "type": "STRING"},
+            {"name": "location_en", "type": "STRING"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
+    "tec": {
+        "query": "SELECT latitude, longitude, tec_tecu, epoch, product_type, received_at FROM tec",
+        "schema": [
+            {"name": "latitude", "type": "FLOAT"},
+            {"name": "longitude", "type": "FLOAT"},
+            {"name": "tec_tecu", "type": "FLOAT"},
+            {"name": "epoch", "type": "STRING"},
+            {"name": "product_type", "type": "STRING"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
+    "geomag_kp": {
+        "query": "SELECT time_tag, kp, a_running, station_count, received_at FROM geomag_kp",
+        "schema": [
+            {"name": "time_tag", "type": "STRING"},
+            {"name": "kp", "type": "FLOAT"},
+            {"name": "a_running", "type": "FLOAT"},
+            {"name": "station_count", "type": "INTEGER"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
+    "focal_mechanisms": {
+        "query": "SELECT source, event_id, occurred_at, latitude, longitude, depth_km, magnitude, strike1, dip1, rake1, strike2, dip2, rake2, moment_nm, received_at FROM focal_mechanisms",
+        "schema": [
+            {"name": "source", "type": "STRING"},
+            {"name": "event_id", "type": "STRING"},
+            {"name": "occurred_at", "type": "STRING"},
+            {"name": "latitude", "type": "FLOAT"},
+            {"name": "longitude", "type": "FLOAT"},
+            {"name": "depth_km", "type": "FLOAT"},
+            {"name": "magnitude", "type": "FLOAT"},
+            {"name": "strike1", "type": "FLOAT"},
+            {"name": "dip1", "type": "FLOAT"},
+            {"name": "rake1", "type": "FLOAT"},
+            {"name": "strike2", "type": "FLOAT"},
+            {"name": "dip2", "type": "FLOAT"},
+            {"name": "rake2", "type": "FLOAT"},
+            {"name": "moment_nm", "type": "FLOAT"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
+    "gnss_tec": {
+        "query": "SELECT latitude, longitude, tec_tecu, dtec_tecu, roti, epoch, source, received_at FROM gnss_tec",
+        "schema": [
+            {"name": "latitude", "type": "FLOAT"},
+            {"name": "longitude", "type": "FLOAT"},
+            {"name": "tec_tecu", "type": "FLOAT"},
+            {"name": "dtec_tecu", "type": "FLOAT"},
+            {"name": "roti", "type": "FLOAT"},
+            {"name": "epoch", "type": "STRING"},
+            {"name": "source", "type": "STRING"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
+    "modis_lst": {
+        "query": "SELECT latitude, longitude, lst_kelvin, lst_day_kelvin, lst_night_kelvin, quality, observed_date, product, received_at FROM modis_lst",
+        "schema": [
+            {"name": "latitude", "type": "FLOAT"},
+            {"name": "longitude", "type": "FLOAT"},
+            {"name": "lst_kelvin", "type": "FLOAT"},
+            {"name": "lst_day_kelvin", "type": "FLOAT"},
+            {"name": "lst_night_kelvin", "type": "FLOAT"},
+            {"name": "quality", "type": "STRING"},
+            {"name": "observed_date", "type": "STRING"},
+            {"name": "product", "type": "STRING"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
+    "ulf_magnetic": {
+        "query": "SELECT station, observed_at, h_nt, d_nt, z_nt, f_nt, received_at FROM ulf_magnetic",
+        "schema": [
+            {"name": "station", "type": "STRING"},
+            {"name": "observed_at", "type": "STRING"},
+            {"name": "h_nt", "type": "FLOAT"},
+            {"name": "d_nt", "type": "FLOAT"},
+            {"name": "z_nt", "type": "FLOAT"},
+            {"name": "f_nt", "type": "FLOAT"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
+    "cosmic_ray": {
+        "query": "SELECT station, observed_at, counts_per_sec, received_at FROM cosmic_ray",
+        "schema": [
+            {"name": "station", "type": "STRING"},
+            {"name": "observed_at", "type": "STRING"},
+            {"name": "counts_per_sec", "type": "FLOAT"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
+    "lightning": {
+        "query": "SELECT observed_at, cell_lat, cell_lon, stroke_count, mean_intensity, received_at FROM lightning",
+        "schema": [
+            {"name": "observed_at", "type": "STRING"},
+            {"name": "cell_lat", "type": "FLOAT"},
+            {"name": "cell_lon", "type": "FLOAT"},
+            {"name": "stroke_count", "type": "INTEGER"},
+            {"name": "mean_intensity", "type": "FLOAT"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
+    "iss_lis_lightning": {
+        "query": "SELECT observed_at, cell_lat, cell_lon, flash_count, mean_radiance, received_at FROM iss_lis_lightning",
+        "schema": [
+            {"name": "observed_at", "type": "STRING"},
+            {"name": "cell_lat", "type": "FLOAT"},
+            {"name": "cell_lon", "type": "FLOAT"},
+            {"name": "flash_count", "type": "INTEGER"},
+            {"name": "mean_radiance", "type": "FLOAT"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
+    "olr": {
+        "query": "SELECT observed_at, cell_lat, cell_lon, olr_wm2, received_at FROM olr",
+        "schema": [
+            {"name": "observed_at", "type": "STRING"},
+            {"name": "cell_lat", "type": "FLOAT"},
+            {"name": "cell_lon", "type": "FLOAT"},
+            {"name": "olr_wm2", "type": "FLOAT"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
+    "earth_rotation": {
+        "query": "SELECT observed_at, x_arcsec, y_arcsec, dut1_s, lod_ms, received_at FROM earth_rotation",
+        "schema": [
+            {"name": "observed_at", "type": "STRING"},
+            {"name": "x_arcsec", "type": "FLOAT"},
+            {"name": "y_arcsec", "type": "FLOAT"},
+            {"name": "dut1_s", "type": "FLOAT"},
+            {"name": "lod_ms", "type": "FLOAT"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
+    "solar_wind": {
+        "query": "SELECT observed_at, bz_gsm_nt, speed_kms, density_cm3, pressure_npa, dst_nt, received_at FROM solar_wind",
+        "schema": [
+            {"name": "observed_at", "type": "STRING"},
+            {"name": "bz_gsm_nt", "type": "FLOAT"},
+            {"name": "speed_kms", "type": "FLOAT"},
+            {"name": "density_cm3", "type": "FLOAT"},
+            {"name": "pressure_npa", "type": "FLOAT"},
+            {"name": "dst_nt", "type": "FLOAT"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
+    "gravity_mascon": {
+        "query": "SELECT observed_at, cell_lat, cell_lon, lwe_thickness_cm, received_at FROM gravity_mascon",
+        "schema": [
+            {"name": "observed_at", "type": "STRING"},
+            {"name": "cell_lat", "type": "FLOAT"},
+            {"name": "cell_lon", "type": "FLOAT"},
+            {"name": "lwe_thickness_cm", "type": "FLOAT"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
+    "soil_moisture": {
+        "query": "SELECT observed_at, cell_lat, cell_lon, sm_m3m3, received_at FROM soil_moisture",
+        "schema": [
+            {"name": "observed_at", "type": "STRING"},
+            {"name": "cell_lat", "type": "FLOAT"},
+            {"name": "cell_lon", "type": "FLOAT"},
+            {"name": "sm_m3m3", "type": "FLOAT"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
+    "tide_gauge": {
+        "query": "SELECT station_id, observed_at, sea_level_mm, latitude, longitude, received_at FROM tide_gauge",
+        "schema": [
+            {"name": "station_id", "type": "STRING"},
+            {"name": "observed_at", "type": "STRING"},
+            {"name": "sea_level_mm", "type": "FLOAT"},
+            {"name": "latitude", "type": "FLOAT"},
+            {"name": "longitude", "type": "FLOAT"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
+    "ocean_color": {
+        "query": "SELECT observed_at, cell_lat, cell_lon, chlor_a_mg_m3, received_at FROM ocean_color",
+        "schema": [
+            {"name": "observed_at", "type": "STRING"},
+            {"name": "cell_lat", "type": "FLOAT"},
+            {"name": "cell_lon", "type": "FLOAT"},
+            {"name": "chlor_a_mg_m3", "type": "FLOAT"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
+    "nightlight": {
+        "query": "SELECT observed_at, cell_lat, cell_lon, radiance_nwcm2sr, received_at FROM nightlight",
+        "schema": [
+            {"name": "observed_at", "type": "STRING"},
+            {"name": "cell_lat", "type": "FLOAT"},
+            {"name": "cell_lon", "type": "FLOAT"},
+            {"name": "radiance_nwcm2sr", "type": "FLOAT"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
+    "goes_xray": {
+        "query": "SELECT observed_at, xray_long_wm2, xray_short_wm2, flare_class FROM goes_xray",
+        "schema": [
+            {"name": "observed_at", "type": "STRING"},
+            {"name": "xray_long_wm2", "type": "FLOAT"},
+            {"name": "xray_short_wm2", "type": "FLOAT"},
+            {"name": "flare_class", "type": "STRING"},
+        ],
+    },
+    "goes_proton": {
+        "query": "SELECT observed_at, proton_10mev_max, proton_60mev_max FROM goes_proton",
+        "schema": [
+            {"name": "observed_at", "type": "STRING"},
+            {"name": "proton_10mev_max", "type": "FLOAT"},
+            {"name": "proton_60mev_max", "type": "FLOAT"},
+        ],
+    },
+    "tidal_stress": {
+        "query": "SELECT observed_at, tidal_shear_pa, tidal_normal_pa, lunar_distance_km, lunar_phase FROM tidal_stress",
+        "schema": [
+            {"name": "observed_at", "type": "STRING"},
+            {"name": "tidal_shear_pa", "type": "FLOAT"},
+            {"name": "tidal_normal_pa", "type": "FLOAT"},
+            {"name": "lunar_distance_km", "type": "FLOAT"},
+            {"name": "lunar_phase", "type": "FLOAT"},
+        ],
+    },
+    "particle_flux": {
+        "query": "SELECT observed_at, electron_2mev_max, electron_800kev_max FROM particle_flux",
+        "schema": [
+            {"name": "observed_at", "type": "STRING"},
+            {"name": "electron_2mev_max", "type": "FLOAT"},
+            {"name": "electron_800kev_max", "type": "FLOAT"},
+        ],
+    },
+    "dart_pressure": {
+        "query": "SELECT station_id, observed_at, water_height_m, measurement_type, latitude, longitude, received_at FROM dart_pressure",
+        "schema": [
+            {"name": "station_id", "type": "STRING"},
+            {"name": "observed_at", "type": "STRING"},
+            {"name": "water_height_m", "type": "FLOAT"},
+            {"name": "measurement_type", "type": "STRING"},
+            {"name": "latitude", "type": "FLOAT"},
+            {"name": "longitude", "type": "FLOAT"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
+    "ioc_sea_level": {
+        "query": "SELECT station_code, station_name, observed_at, sea_level_m, latitude, longitude, received_at FROM ioc_sea_level",
+        "schema": [
+            {"name": "station_code", "type": "STRING"},
+            {"name": "station_name", "type": "STRING"},
+            {"name": "observed_at", "type": "STRING"},
+            {"name": "sea_level_m", "type": "FLOAT"},
+            {"name": "latitude", "type": "FLOAT"},
+            {"name": "longitude", "type": "FLOAT"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
+    "snet_pressure": {
+        "query": "SELECT station_id, observed_at, pressure_mean_hpa, pressure_std_hpa, latitude, longitude, n_samples, received_at FROM snet_pressure",
+        "schema": [
+            {"name": "station_id", "type": "STRING"},
+            {"name": "observed_at", "type": "STRING"},
+            {"name": "pressure_mean_hpa", "type": "FLOAT"},
+            {"name": "pressure_std_hpa", "type": "FLOAT"},
+            {"name": "latitude", "type": "FLOAT"},
+            {"name": "longitude", "type": "FLOAT"},
+            {"name": "n_samples", "type": "INTEGER"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
+    "snet_waveform": {
+        "query": "SELECT station_id, date_str, segment_hour, sensor_type, rms_z, rms_h, hv_ratio, lf_power, hf_power, spectral_slope, vlf_power, vlf_hv_ratio, n_samples, latitude, longitude, cable_segment, received_at FROM snet_waveform",
+        "schema": [
+            {"name": "station_id", "type": "STRING"},
+            {"name": "date_str", "type": "STRING"},
+            {"name": "segment_hour", "type": "INTEGER"},
+            {"name": "sensor_type", "type": "STRING"},
+            {"name": "rms_z", "type": "FLOAT"},
+            {"name": "rms_h", "type": "FLOAT"},
+            {"name": "hv_ratio", "type": "FLOAT"},
+            {"name": "lf_power", "type": "FLOAT"},
+            {"name": "hf_power", "type": "FLOAT"},
+            {"name": "spectral_slope", "type": "FLOAT"},
+            {"name": "vlf_power", "type": "FLOAT"},
+            {"name": "vlf_hv_ratio", "type": "FLOAT"},
+            {"name": "n_samples", "type": "INTEGER"},
+            {"name": "latitude", "type": "FLOAT"},
+            {"name": "longitude", "type": "FLOAT"},
+            {"name": "cable_segment", "type": "STRING"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
+    "satellite_em": {
+        "query": "SELECT source, observed_at, latitude, longitude, elf_power_db, vlf_power_db, electron_density, ion_temperature, received_at FROM satellite_em",
+        "schema": [
+            {"name": "source", "type": "STRING"},
+            {"name": "observed_at", "type": "STRING"},
+            {"name": "latitude", "type": "FLOAT"},
+            {"name": "longitude", "type": "FLOAT"},
+            {"name": "elf_power_db", "type": "FLOAT"},
+            {"name": "vlf_power_db", "type": "FLOAT"},
+            {"name": "electron_density", "type": "FLOAT"},
+            {"name": "ion_temperature", "type": "FLOAT"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
 }
 
 # Minimum row count to proceed with upload. Prevents wiping BQ data
@@ -84,6 +404,15 @@ def main():
         conn = sqlite3.connect(DB_PATH)
 
         for table_name, config in TABLES.items():
+            # Check if table exists in SQLite before querying
+            exists = conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
+                (table_name,)
+            ).fetchone()[0]
+            if not exists:
+                logger.info("%s: table not found in SQLite — skipping", table_name)
+                continue
+
             count = conn.execute(
                 "SELECT COUNT(*) FROM " + table_name  # table names are hardcoded above
             ).fetchone()[0]

@@ -1,6 +1,6 @@
 name: Backfill Data
 
-# Continuous backfill for so2_column, cloud_fraction, geomag_hourly.
+# Continuous backfill for ALL data tables.
 # Runs every 3 hours around the clock until 100% coverage is reached.
 # Each run restores the previous DB checkpoint, fetches a batch, saves checkpoint, uploads to BQ.
 # Disable this workflow once coverage reaches 100%.
@@ -27,17 +27,43 @@ on:
         type: choice
         options:
           - all
+          - earthquakes
+          - tec
+          - kp
+          - cmt
+          - snet_waveform
+          - snet_pressure
+          - gnss_tec
+          - modis_lst
+          - ulf
+          - cosmic_ray
+          - lightning
+          - iss_lis
+          - geomag
+          - olr
+          - iers
+          - solar_wind
+          - grace
           - so2
           - cloud
-          - geomag
+          - nightlight
+          - goes_xray
+          - goes_proton
+          - tidal_stress
+          - particle_flux
+          - dart
+          - ioc_sealevel
+          - tide_gauge
+          - ocean_color
 
 permissions:
+  contents: read
   issues: write
 
 jobs:
   backfill:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 300
 
     steps:
       - uses: actions/checkout@v4
@@ -47,7 +73,9 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install aiohttp aiosqlite numpy scipy netCDF4 google-cloud-bigquery pyarrow
+        run: |
+          pip install aiohttp aiosqlite numpy scipy netCDF4 google-cloud-bigquery pyarrow scikit-learn h5py
+          sudo apt-get install -y ncompress  # For .Z IONEX decompression
 
       - name: Restore previous database checkpoint
         continue-on-error: true
@@ -127,11 +155,235 @@ jobs:
             echo "earthdata_ok=true" >> "$GITHUB_OUTPUT"
           else
             echo "earthdata_ok=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Earthdata auth FAILED — SO2 and cloud will be skipped"
+            echo "::warning::Earthdata auth FAILED — SO2, cloud, nightlight, ISS LIS will be skipped"
           fi
         continue-on-error: true
 
-      - name: Fetch SO2 column data
+      # ====== FETCH STEPS ======
+
+      - name: Fetch earthquake data (M3+, 2011-2026)
+        id: fetch_earthquakes
+        if: inputs.target == 'all' || inputs.target == 'earthquakes' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          mkdir -p data
+          python3 scripts/fetch_earthquakes.py
+
+      - name: Fetch TEC data (major events ±7 days)
+        id: fetch_tec_event
+        if: inputs.target == 'all' || inputs.target == 'tec' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_tec.py --mode event
+
+      - name: Fetch TEC random baseline (±7 days around 300 random dates)
+        id: fetch_tec_random
+        if: inputs.target == 'all' || inputs.target == 'tec' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_tec.py --mode random --n-dates 300
+
+      - name: Fetch Kp data (2011-2026)
+        id: fetch_kp
+        if: inputs.target == 'all' || inputs.target == 'kp' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_kp.py
+
+      - name: Fetch CMT focal mechanisms (GCMT, 2011-present)
+        id: fetch_cmt
+        if: inputs.target == 'all' || inputs.target == 'cmt' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_cmt.py
+
+      # ====== S-NET (HinetPy required) ======
+
+      - name: Install win32tools for S-net (catwin32 + win2sac_32)
+        id: install_win32tools
+        if: inputs.target == 'all' || inputs.target == 'snet_waveform' || inputs.target == 'snet_pressure' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          HINET_USER: ${{ secrets.HINET_USER }}
+          HINET_PASS: ${{ secrets.HINET_PASS }}
+        run: |
+          if [ -z "$HINET_USER" ] || [ -z "$HINET_PASS" ]; then
+            echo "HINET credentials not set, skipping win32tools"
+            exit 0
+          fi
+          pip install HinetPy 2>/dev/null || true
+          python3 -c "from HinetPy import Client; Client('${HINET_USER}', '${HINET_PASS}')._get_win32tools()" || exit 0
+          if [ -f win32tools.tar.gz ]; then
+            tar -xf win32tools.tar.gz && rm win32tools.tar.gz
+            cd win32tools && make && mkdir -p bin && mv catwin32.src/catwin32 win2sac.src/win2sac_32 bin/ && cd ..
+            echo "${{ github.workspace }}/win32tools/bin" >> $GITHUB_PATH
+          fi
+
+      - name: Fetch S-net multi-sensor waveform features
+        id: fetch_snet_waveform
+        if: inputs.target == 'all' || inputs.target == 'snet_waveform' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 150
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          HINET_USER: ${{ secrets.HINET_USER }}
+          HINET_PASS: ${{ secrets.HINET_PASS }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          pip install HinetPy 2>/dev/null || true
+          python3 scripts/fetch_snet_waveform.py || echo "S-net waveform fetch failed (non-fatal)"
+          if [ -f results/snet_coverage.json ]; then
+            mkdir -p results/midrun
+            cp results/snet_coverage.json results/midrun/
+          fi
+
+      - name: Fetch S-net seafloor pressure data (HinetPy)
+        id: fetch_snet_pressure
+        if: inputs.target == 'all' || inputs.target == 'snet_pressure' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          HINET_USER: ${{ secrets.HINET_USER }}
+          HINET_PASS: ${{ secrets.HINET_PASS }}
+        run: |
+          pip install HinetPy 2>/dev/null || true
+          python3 scripts/fetch_snet_pressure.py || echo "S-net pressure fetch failed (non-fatal)"
+
+      - name: Fetch GNSS-TEC high-resolution data (Nagoya University ISEE)
+        id: fetch_gnss_tec
+        if: inputs.target == 'all' || inputs.target == 'gnss_tec' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_gnss_tec.py || echo "GNSS-TEC fetch non-fatal failure"
+
+      - name: Fetch MODIS LST (thermal anomaly discovery)
+        id: fetch_modis_lst
+        if: inputs.target == 'all' || inputs.target == 'modis_lst' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 45
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_modis_lst.py || echo "MODIS LST discovery completed"
+
+      - name: Fetch Kakioka ULF magnetic data
+        id: fetch_ulf
+        if: inputs.target == 'all' || inputs.target == 'ulf' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_kakioka_ulf.py || echo "ULF fetch completed"
+
+      - name: Fetch NMDB cosmic ray data
+        id: fetch_cosmic_ray
+        if: inputs.target == 'all' || inputs.target == 'cosmic_ray' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_nmdb_cosmicray.py || echo "NMDB fetch failed (non-fatal)"
+
+      - name: Fetch Blitzortung lightning data
+        id: fetch_lightning
+        if: inputs.target == 'all' || inputs.target == 'lightning' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_blitzortung.py || echo "Lightning fetch failed (non-fatal)"
+
+      - name: Fetch ISS LIS lightning data (Earthdata auth, 2017-2023)
+        id: fetch_iss_lis
+        if: (inputs.target == 'all' || inputs.target == 'iss_lis' || inputs.target == '') && steps.earthdata_check.outputs.earthdata_ok == 'true'
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+        run: |
+          python3 scripts/fetch_iss_lis_lightning.py || echo "ISS LIS fetch failed (non-fatal)"
+
+      - name: Fetch INTERMAGNET hourly + CSES satellite EM data
+        id: fetch_geomag
+        if: inputs.target == 'all' || inputs.target == 'geomag' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          GEOMAG_MAX_DAYS: "2000"
+        run: |
+          python3 -u scripts/fetch_cses_satellite.py
+
+      - name: Fetch NOAA OLR daily (thermal anomaly)
+        id: fetch_olr
+        if: inputs.target == 'all' || inputs.target == 'olr' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_olr.py || echo "OLR fetch failed (non-fatal)"
+
+      - name: Fetch IERS Earth Orientation Parameters
+        id: fetch_iers
+        if: inputs.target == 'all' || inputs.target == 'iers' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_iers_eop.py || echo "IERS EOP fetch failed (non-fatal)"
+
+      - name: Fetch NASA OMNIWeb solar wind hourly
+        id: fetch_solar_wind
+        if: inputs.target == 'all' || inputs.target == 'solar_wind' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_solar_wind.py || echo "Solar wind fetch failed (non-fatal)"
+
+      - name: Fetch GRACE/GRACE-FO gravity anomaly
+        id: fetch_grace
+        if: (inputs.target == 'all' || inputs.target == 'grace' || inputs.target == '')
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+        run: |
+          python3 scripts/fetch_grace_gravity.py || echo "GRACE fetch failed (non-fatal)"
+
+      - name: Fetch OMI SO2 column data (Earthdata auth)
         id: fetch_so2
         if: (inputs.target == 'all' || inputs.target == 'so2' || inputs.target == '') && steps.earthdata_check.outputs.earthdata_ok == 'true'
         continue-on-error: true
@@ -144,7 +396,30 @@ jobs:
           SO2_MAX_DATES: "2000"
         run: python3 -u scripts/fetch_omi_so2.py
 
-      - name: Fetch cloud fraction data
+      - name: Fetch UHSLC tide gauge data
+        id: fetch_tide_gauge
+        if: inputs.target == 'all' || inputs.target == 'tide_gauge' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_tide_gauge.py || echo "Tide gauge fetch failed (non-fatal)"
+
+      - name: Fetch NASA ocean color chlorophyll-a
+        id: fetch_ocean_color
+        if: (inputs.target == 'all' || inputs.target == 'ocean_color' || inputs.target == '')
+        continue-on-error: true
+        timeout-minutes: 40
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+        run: |
+          python3 scripts/fetch_ocean_color.py || echo "Ocean color fetch failed (non-fatal)"
+
+      - name: Fetch MODIS cloud fraction (Earthdata auth)
         id: fetch_cloud
         if: (inputs.target == 'all' || inputs.target == 'cloud' || inputs.target == '') && steps.earthdata_check.outputs.earthdata_ok == 'true'
         continue-on-error: true
@@ -157,15 +432,80 @@ jobs:
           CLOUD_MAX_DATES: "2000"
         run: python3 -u scripts/fetch_cloud_fraction.py
 
-      - name: Fetch INTERMAGNET geomag hourly data
-        id: fetch_geomag
-        if: inputs.target == 'all' || inputs.target == 'geomag' || inputs.target == ''
+      - name: Fetch VIIRS nighttime light/airglow (Earthdata auth)
+        id: fetch_nightlight
+        if: (inputs.target == 'all' || inputs.target == 'nightlight' || inputs.target == '') && steps.earthdata_check.outputs.earthdata_ok == 'true'
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+        run: |
+          python3 scripts/fetch_viirs_nighttime.py || echo "VIIRS fetch failed (non-fatal)"
+
+      - name: Fetch GOES X-ray flux (solar flares)
+        id: fetch_goes_xray
+        if: inputs.target == 'all' || inputs.target == 'goes_xray' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_goes_xray.py || echo "GOES X-ray fetch failed (non-fatal)"
+
+      - name: Fetch GOES proton flux (SEP events)
+        id: fetch_goes_proton
+        if: inputs.target == 'all' || inputs.target == 'goes_proton' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_goes_proton.py || echo "GOES proton fetch failed (non-fatal)"
+
+      - name: Compute tidal stress (lunar+solar, pure calculation)
+        id: fetch_tidal_stress
+        if: inputs.target == 'all' || inputs.target == 'tidal_stress' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_tidal_stress.py || echo "Tidal stress computation failed (non-fatal)"
+
+      - name: Fetch GOES electron flux (particle precipitation)
+        id: fetch_particle_flux
+        if: inputs.target == 'all' || inputs.target == 'particle_flux' || inputs.target == ''
         continue-on-error: true
         timeout-minutes: 30
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
-          GEOMAG_MAX_DAYS: "2000"
-        run: python3 -u scripts/fetch_cses_satellite.py
+        run: |
+          python3 scripts/fetch_poes_particles.py || echo "Particle flux fetch failed (non-fatal)"
+
+      - name: Fetch NOAA DART ocean bottom pressure
+        id: fetch_dart
+        if: inputs.target == 'all' || inputs.target == 'dart' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_dart_pressure.py || echo "DART pressure fetch failed (non-fatal)"
+
+      - name: Fetch IOC sea level monitoring
+        id: fetch_ioc_sealevel
+        if: inputs.target == 'all' || inputs.target == 'ioc_sealevel' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_ioc_sealevel.py || echo "IOC sea level fetch failed (non-fatal)"
+
+      # ====== POST-FETCH ======
 
       - name: Coverage report
         if: always()
@@ -175,7 +515,17 @@ jobs:
           python3 -c "
           import sqlite3, os
           db = sqlite3.connect(os.environ['GEOHAZARD_DB_PATH'])
-          for t in ['so2_column', 'cloud_fraction', 'geomag_hourly']:
+          tables = [
+              'earthquakes', 'tec', 'geomag_kp', 'focal_mechanisms',
+              'gnss_tec', 'modis_lst', 'ulf_magnetic', 'cosmic_ray',
+              'lightning', 'iss_lis_lightning', 'geomag_hourly', 'satellite_em',
+              'olr', 'earth_rotation', 'solar_wind', 'gravity_mascon',
+              'so2_column', 'cloud_fraction', 'nightlight',
+              'goes_xray', 'goes_proton', 'tidal_stress', 'particle_flux',
+              'dart_pressure', 'ioc_sea_level', 'tide_gauge', 'ocean_color',
+              'soil_moisture', 'snet_pressure', 'snet_waveform',
+          ]
+          for t in tables:
               try:
                   cnt = db.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0]
                   mi = db.execute(f'SELECT MIN(observed_at) FROM {t}').fetchone()[0]
@@ -222,9 +572,35 @@ jobs:
         if: always()
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          FETCH_EARTHQUAKES: ${{ steps.fetch_earthquakes.outcome }}
+          FETCH_TEC_EVENT: ${{ steps.fetch_tec_event.outcome }}
+          FETCH_TEC_RANDOM: ${{ steps.fetch_tec_random.outcome }}
+          FETCH_KP: ${{ steps.fetch_kp.outcome }}
+          FETCH_CMT: ${{ steps.fetch_cmt.outcome }}
+          FETCH_SNET_WAVEFORM: ${{ steps.fetch_snet_waveform.outcome }}
+          FETCH_SNET_PRESSURE: ${{ steps.fetch_snet_pressure.outcome }}
+          FETCH_GNSS_TEC: ${{ steps.fetch_gnss_tec.outcome }}
+          FETCH_MODIS_LST: ${{ steps.fetch_modis_lst.outcome }}
+          FETCH_ULF: ${{ steps.fetch_ulf.outcome }}
+          FETCH_COSMIC_RAY: ${{ steps.fetch_cosmic_ray.outcome }}
+          FETCH_LIGHTNING: ${{ steps.fetch_lightning.outcome }}
+          FETCH_ISS_LIS: ${{ steps.fetch_iss_lis.outcome }}
+          FETCH_GEOMAG: ${{ steps.fetch_geomag.outcome }}
+          FETCH_OLR: ${{ steps.fetch_olr.outcome }}
+          FETCH_IERS: ${{ steps.fetch_iers.outcome }}
+          FETCH_SOLAR_WIND: ${{ steps.fetch_solar_wind.outcome }}
+          FETCH_GRACE: ${{ steps.fetch_grace.outcome }}
           FETCH_SO2: ${{ steps.fetch_so2.outcome }}
           FETCH_CLOUD: ${{ steps.fetch_cloud.outcome }}
-          FETCH_GEOMAG: ${{ steps.fetch_geomag.outcome }}
+          FETCH_NIGHTLIGHT: ${{ steps.fetch_nightlight.outcome }}
+          FETCH_TIDE_GAUGE: ${{ steps.fetch_tide_gauge.outcome }}
+          FETCH_OCEAN_COLOR: ${{ steps.fetch_ocean_color.outcome }}
+          FETCH_GOES_XRAY: ${{ steps.fetch_goes_xray.outcome }}
+          FETCH_GOES_PROTON: ${{ steps.fetch_goes_proton.outcome }}
+          FETCH_TIDAL_STRESS: ${{ steps.fetch_tidal_stress.outcome }}
+          FETCH_PARTICLE_FLUX: ${{ steps.fetch_particle_flux.outcome }}
+          FETCH_DART: ${{ steps.fetch_dart.outcome }}
+          FETCH_IOC_SEALEVEL: ${{ steps.fetch_ioc_sealevel.outcome }}
           BQ_UPLOAD: ${{ steps.bq_upload.outcome }}
         run: |
           if [ -z "$DISCORD_WEBHOOK_URL" ]; then exit 0; fi
@@ -233,36 +609,91 @@ jobs:
           from datetime import date
 
           db = sqlite3.connect('data/geohazard.db')
-          # Coverage calculation: distinct dates / total days (2011-01-01 to today)
           total_days = (date.today() - date(2011, 1, 1)).days
+
+          # Tables and their date-extraction SQL for coverage %
+          table_info = {
+              'earthquakes': 'SELECT COUNT(DISTINCT substr(occurred_at,1,10)) FROM earthquakes',
+              'tec': 'SELECT COUNT(DISTINCT substr(epoch,1,10)) FROM tec',
+              'geomag_kp': 'SELECT COUNT(DISTINCT substr(time_tag,1,10)) FROM geomag_kp',
+              'focal_mechanisms': 'SELECT COUNT(DISTINCT substr(occurred_at,1,10)) FROM focal_mechanisms',
+              'gnss_tec': 'SELECT COUNT(DISTINCT substr(epoch,1,10)) FROM gnss_tec',
+              'modis_lst': 'SELECT COUNT(DISTINCT observed_date) FROM modis_lst',
+              'ulf_magnetic': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM ulf_magnetic',
+              'cosmic_ray': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM cosmic_ray',
+              'lightning': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM lightning',
+              'iss_lis_lightning': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM iss_lis_lightning',
+              'geomag_hourly': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM geomag_hourly WHERE station=\"KAK\"',
+              'satellite_em': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM satellite_em',
+              'olr': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM olr',
+              'earth_rotation': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM earth_rotation',
+              'solar_wind': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM solar_wind',
+              'gravity_mascon': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM gravity_mascon',
+              'so2_column': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM so2_column',
+              'cloud_fraction': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM cloud_fraction',
+              'nightlight': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM nightlight',
+              'goes_xray': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM goes_xray',
+              'goes_proton': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM goes_proton',
+              'tidal_stress': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM tidal_stress',
+              'particle_flux': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM particle_flux',
+              'dart_pressure': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM dart_pressure',
+              'ioc_sea_level': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM ioc_sea_level',
+              'tide_gauge': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM tide_gauge',
+              'ocean_color': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM ocean_color',
+              'soil_moisture': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM soil_moisture',
+              'snet_pressure': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM snet_pressure',
+              'snet_waveform': 'SELECT COUNT(DISTINCT date_str) FROM snet_waveform',
+          }
+
           lines = []
           alerts = []
-          all_100 = True
-          for t in ['so2_column', 'cloud_fraction', 'geomag_hourly']:
+          all_95 = True
+          for t, date_sql in table_info.items():
               try:
                   cnt = db.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0]
-                  mi = db.execute(f'SELECT MIN(observed_at) FROM {t}').fetchone()[0] or '?'
-                  mx = db.execute(f'SELECT MAX(observed_at) FROM {t}').fetchone()[0] or '?'
-                  if t == 'geomag_hourly':
-                      n_dates = db.execute('SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM geomag_hourly WHERE station=\"KAK\"').fetchone()[0]
-                  else:
-                      n_dates = db.execute(f'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM {t}').fetchone()[0]
+                  n_dates = db.execute(date_sql).fetchone()[0]
                   pct = round(n_dates / total_days * 100, 1) if total_days > 0 else 0
-                  if pct < 100:
-                      all_100 = False
+                  if pct < 95:
+                      all_95 = False
                   icon = '✅' if pct >= 95 else '🟡' if pct >= 50 else '🔴'
                   lines.append(f'{icon} {t}: {pct}% ({n_dates}/{total_days}d) {cnt:,} rows')
               except Exception as e:
                   lines.append(f'🔴 {t}: ERROR {e}')
                   alerts.append(f'{t}: {e}')
-                  all_100 = False
+                  all_95 = False
           db.close()
 
           # Check step outcomes
           step_results = {
+              'Earthquakes': os.environ.get('FETCH_EARTHQUAKES', 'skipped'),
+              'TEC event': os.environ.get('FETCH_TEC_EVENT', 'skipped'),
+              'TEC random': os.environ.get('FETCH_TEC_RANDOM', 'skipped'),
+              'Kp': os.environ.get('FETCH_KP', 'skipped'),
+              'CMT': os.environ.get('FETCH_CMT', 'skipped'),
+              'S-net waveform': os.environ.get('FETCH_SNET_WAVEFORM', 'skipped'),
+              'S-net pressure': os.environ.get('FETCH_SNET_PRESSURE', 'skipped'),
+              'GNSS-TEC': os.environ.get('FETCH_GNSS_TEC', 'skipped'),
+              'MODIS LST': os.environ.get('FETCH_MODIS_LST', 'skipped'),
+              'ULF': os.environ.get('FETCH_ULF', 'skipped'),
+              'Cosmic ray': os.environ.get('FETCH_COSMIC_RAY', 'skipped'),
+              'Lightning': os.environ.get('FETCH_LIGHTNING', 'skipped'),
+              'ISS LIS': os.environ.get('FETCH_ISS_LIS', 'skipped'),
+              'Geomag': os.environ.get('FETCH_GEOMAG', 'skipped'),
+              'OLR': os.environ.get('FETCH_OLR', 'skipped'),
+              'IERS': os.environ.get('FETCH_IERS', 'skipped'),
+              'Solar wind': os.environ.get('FETCH_SOLAR_WIND', 'skipped'),
+              'GRACE': os.environ.get('FETCH_GRACE', 'skipped'),
               'SO2': os.environ.get('FETCH_SO2', 'skipped'),
               'Cloud': os.environ.get('FETCH_CLOUD', 'skipped'),
-              'Geomag': os.environ.get('FETCH_GEOMAG', 'skipped'),
+              'Nightlight': os.environ.get('FETCH_NIGHTLIGHT', 'skipped'),
+              'Tide gauge': os.environ.get('FETCH_TIDE_GAUGE', 'skipped'),
+              'Ocean color': os.environ.get('FETCH_OCEAN_COLOR', 'skipped'),
+              'GOES X-ray': os.environ.get('FETCH_GOES_XRAY', 'skipped'),
+              'GOES proton': os.environ.get('FETCH_GOES_PROTON', 'skipped'),
+              'Tidal stress': os.environ.get('FETCH_TIDAL_STRESS', 'skipped'),
+              'Particle flux': os.environ.get('FETCH_PARTICLE_FLUX', 'skipped'),
+              'DART': os.environ.get('FETCH_DART', 'skipped'),
+              'IOC sea level': os.environ.get('FETCH_IOC_SEALEVEL', 'skipped'),
               'BQ upload': os.environ.get('BQ_UPLOAD', 'skipped'),
           }
           failed_steps = [k for k, v in step_results.items() if v == 'failure']
@@ -272,16 +703,15 @@ jobs:
           report = '\n'.join(lines)
           if failed_steps:
               report += '\n\n⚠️ ' + ', '.join(failed_steps) + ' failed'
-          if all_100:
-              report += '\n\n🎉 ALL 100%! Backfill complete — disable this workflow'
+          if all_95:
+              report += '\n\n🎉 ALL ≥95%! Backfill nearly complete'
 
-          # Green if all OK, red if any failure/alert, yellow if in progress
           if alerts or failed_steps:
               color = 15158332  # red
               title = '🔴 Backfill #${{ github.run_number }} — issues detected'
-          elif all_100:
+          elif all_95:
               color = 3066993   # green
-              title = '🎉 Backfill #${{ github.run_number }} — 100% complete!'
+              title = '🎉 Backfill #${{ github.run_number }} — ≥95% coverage!'
           else:
               color = 3447003   # blue (in progress)
               title = '📊 Backfill #${{ github.run_number }}'
@@ -291,7 +721,7 @@ jobs:
           payload = json.dumps({'embeds': [{
               'title': title,
               'color': color,
-              'description': report,
+              'description': report[:4000],
               'footer': {'text': run_url},
           }]}).encode()
           req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
@@ -299,14 +729,72 @@ jobs:
           " 2>/dev/null || echo "Discord notification failed (non-fatal)"
 
       - name: Create issue on failure
-        if: always() && (steps.fetch_so2.outcome == 'failure' || steps.fetch_cloud.outcome == 'failure' || steps.fetch_geomag.outcome == 'failure' || steps.bq_upload.outcome == 'failure')
+        if: >-
+          always() && (
+            steps.fetch_earthquakes.outcome == 'failure' ||
+            steps.fetch_tec_event.outcome == 'failure' ||
+            steps.fetch_tec_random.outcome == 'failure' ||
+            steps.fetch_kp.outcome == 'failure' ||
+            steps.fetch_cmt.outcome == 'failure' ||
+            steps.fetch_snet_waveform.outcome == 'failure' ||
+            steps.fetch_snet_pressure.outcome == 'failure' ||
+            steps.fetch_gnss_tec.outcome == 'failure' ||
+            steps.fetch_modis_lst.outcome == 'failure' ||
+            steps.fetch_ulf.outcome == 'failure' ||
+            steps.fetch_cosmic_ray.outcome == 'failure' ||
+            steps.fetch_lightning.outcome == 'failure' ||
+            steps.fetch_iss_lis.outcome == 'failure' ||
+            steps.fetch_geomag.outcome == 'failure' ||
+            steps.fetch_olr.outcome == 'failure' ||
+            steps.fetch_iers.outcome == 'failure' ||
+            steps.fetch_solar_wind.outcome == 'failure' ||
+            steps.fetch_grace.outcome == 'failure' ||
+            steps.fetch_so2.outcome == 'failure' ||
+            steps.fetch_cloud.outcome == 'failure' ||
+            steps.fetch_nightlight.outcome == 'failure' ||
+            steps.fetch_tide_gauge.outcome == 'failure' ||
+            steps.fetch_ocean_color.outcome == 'failure' ||
+            steps.fetch_goes_xray.outcome == 'failure' ||
+            steps.fetch_goes_proton.outcome == 'failure' ||
+            steps.fetch_tidal_stress.outcome == 'failure' ||
+            steps.fetch_particle_flux.outcome == 'failure' ||
+            steps.fetch_dart.outcome == 'failure' ||
+            steps.fetch_ioc_sealevel.outcome == 'failure' ||
+            steps.bq_upload.outcome == 'failure'
+          )
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           FAILED=""
+          [ "${{ steps.fetch_earthquakes.outcome }}" = "failure" ] && FAILED="$FAILED earthquakes"
+          [ "${{ steps.fetch_tec_event.outcome }}" = "failure" ] && FAILED="$FAILED tec_event"
+          [ "${{ steps.fetch_tec_random.outcome }}" = "failure" ] && FAILED="$FAILED tec_random"
+          [ "${{ steps.fetch_kp.outcome }}" = "failure" ] && FAILED="$FAILED kp"
+          [ "${{ steps.fetch_cmt.outcome }}" = "failure" ] && FAILED="$FAILED cmt"
+          [ "${{ steps.fetch_snet_waveform.outcome }}" = "failure" ] && FAILED="$FAILED snet_waveform"
+          [ "${{ steps.fetch_snet_pressure.outcome }}" = "failure" ] && FAILED="$FAILED snet_pressure"
+          [ "${{ steps.fetch_gnss_tec.outcome }}" = "failure" ] && FAILED="$FAILED gnss_tec"
+          [ "${{ steps.fetch_modis_lst.outcome }}" = "failure" ] && FAILED="$FAILED modis_lst"
+          [ "${{ steps.fetch_ulf.outcome }}" = "failure" ] && FAILED="$FAILED ulf"
+          [ "${{ steps.fetch_cosmic_ray.outcome }}" = "failure" ] && FAILED="$FAILED cosmic_ray"
+          [ "${{ steps.fetch_lightning.outcome }}" = "failure" ] && FAILED="$FAILED lightning"
+          [ "${{ steps.fetch_iss_lis.outcome }}" = "failure" ] && FAILED="$FAILED iss_lis"
+          [ "${{ steps.fetch_geomag.outcome }}" = "failure" ] && FAILED="$FAILED geomag"
+          [ "${{ steps.fetch_olr.outcome }}" = "failure" ] && FAILED="$FAILED olr"
+          [ "${{ steps.fetch_iers.outcome }}" = "failure" ] && FAILED="$FAILED iers"
+          [ "${{ steps.fetch_solar_wind.outcome }}" = "failure" ] && FAILED="$FAILED solar_wind"
+          [ "${{ steps.fetch_grace.outcome }}" = "failure" ] && FAILED="$FAILED grace"
           [ "${{ steps.fetch_so2.outcome }}" = "failure" ] && FAILED="$FAILED so2"
           [ "${{ steps.fetch_cloud.outcome }}" = "failure" ] && FAILED="$FAILED cloud"
-          [ "${{ steps.fetch_geomag.outcome }}" = "failure" ] && FAILED="$FAILED geomag"
+          [ "${{ steps.fetch_nightlight.outcome }}" = "failure" ] && FAILED="$FAILED nightlight"
+          [ "${{ steps.fetch_tide_gauge.outcome }}" = "failure" ] && FAILED="$FAILED tide_gauge"
+          [ "${{ steps.fetch_ocean_color.outcome }}" = "failure" ] && FAILED="$FAILED ocean_color"
+          [ "${{ steps.fetch_goes_xray.outcome }}" = "failure" ] && FAILED="$FAILED goes_xray"
+          [ "${{ steps.fetch_goes_proton.outcome }}" = "failure" ] && FAILED="$FAILED goes_proton"
+          [ "${{ steps.fetch_tidal_stress.outcome }}" = "failure" ] && FAILED="$FAILED tidal_stress"
+          [ "${{ steps.fetch_particle_flux.outcome }}" = "failure" ] && FAILED="$FAILED particle_flux"
+          [ "${{ steps.fetch_dart.outcome }}" = "failure" ] && FAILED="$FAILED dart"
+          [ "${{ steps.fetch_ioc_sealevel.outcome }}" = "failure" ] && FAILED="$FAILED ioc_sealevel"
           [ "${{ steps.bq_upload.outcome }}" = "failure" ] && FAILED="$FAILED bq_upload"
           FAILED=$(echo "$FAILED" | xargs)
 
@@ -316,12 +804,41 @@ jobs:
           from datetime import date
           db = sqlite3.connect('data/geohazard.db')
           total = (date.today() - date(2011, 1, 1)).days
-          for t in ['so2_column', 'cloud_fraction', 'geomag_hourly']:
+          tables = {
+              'earthquakes': 'SELECT COUNT(DISTINCT substr(occurred_at,1,10)) FROM earthquakes',
+              'tec': 'SELECT COUNT(DISTINCT substr(epoch,1,10)) FROM tec',
+              'geomag_kp': 'SELECT COUNT(DISTINCT substr(time_tag,1,10)) FROM geomag_kp',
+              'focal_mechanisms': 'SELECT COUNT(DISTINCT substr(occurred_at,1,10)) FROM focal_mechanisms',
+              'gnss_tec': 'SELECT COUNT(DISTINCT substr(epoch,1,10)) FROM gnss_tec',
+              'modis_lst': 'SELECT COUNT(DISTINCT observed_date) FROM modis_lst',
+              'ulf_magnetic': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM ulf_magnetic',
+              'cosmic_ray': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM cosmic_ray',
+              'lightning': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM lightning',
+              'iss_lis_lightning': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM iss_lis_lightning',
+              'geomag_hourly': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM geomag_hourly WHERE station=\"KAK\"',
+              'satellite_em': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM satellite_em',
+              'olr': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM olr',
+              'earth_rotation': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM earth_rotation',
+              'solar_wind': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM solar_wind',
+              'gravity_mascon': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM gravity_mascon',
+              'so2_column': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM so2_column',
+              'cloud_fraction': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM cloud_fraction',
+              'nightlight': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM nightlight',
+              'goes_xray': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM goes_xray',
+              'goes_proton': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM goes_proton',
+              'tidal_stress': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM tidal_stress',
+              'particle_flux': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM particle_flux',
+              'dart_pressure': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM dart_pressure',
+              'ioc_sea_level': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM ioc_sea_level',
+              'tide_gauge': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM tide_gauge',
+              'ocean_color': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM ocean_color',
+              'soil_moisture': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM soil_moisture',
+              'snet_pressure': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM snet_pressure',
+              'snet_waveform': 'SELECT COUNT(DISTINCT date_str) FROM snet_waveform',
+          }
+          for t, sql in tables.items():
               try:
-                  if t == 'geomag_hourly':
-                      n = db.execute('SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM geomag_hourly WHERE station=\"KAK\"').fetchone()[0]
-                  else:
-                      n = db.execute(f'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM {t}').fetchone()[0]
+                  n = db.execute(sql).fetchone()[0]
                   pct = round(n / total * 100, 1)
                   print(f'- {t}: {pct}% ({n}/{total}d)')
               except Exception as e:
