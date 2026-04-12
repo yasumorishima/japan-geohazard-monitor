@@ -357,7 +357,8 @@ async def main():
     # Split: 2011+ dates first (analysis period), then pre-2011 (baseline building)
     analysis_dates = [dt for dt in target_dates if dt.year >= 2011]
     backfill_dates = [dt for dt in target_dates if dt.year < 2011]
-    dates_to_fetch = (analysis_dates + backfill_dates)[:600]  # 600/run fits 60-min timeout
+    max_dates = int(os.environ.get("SO2_MAX_DATES", "600"))
+    dates_to_fetch = (analysis_dates + backfill_dates)[:max_dates]
 
     if not dates_to_fetch:
         logger.info("All SO2 target dates already fetched")

@@ -1,0 +1,244 @@
+name: Backfill Data
+
+# Continuous backfill for so2_column, cloud_fraction, geomag_hourly.
+# Runs every 3 hours around the clock until 100% coverage is reached.
+# Each run restores the previous DB checkpoint, fetches a batch, saves checkpoint, uploads to BQ.
+# Disable this workflow once coverage reaches 100%.
+
+on:
+  schedule:
+    - cron: '0 0 * * *'    # UTC 00:00 = JST 09:00
+    - cron: '0 3 * * *'    # UTC 03:00 = JST 12:00
+    - cron: '0 6 * * *'    # UTC 06:00 = JST 15:00
+    - cron: '0 9 * * *'    # UTC 09:00 = JST 18:00
+    - cron: '0 12 * * *'   # UTC 12:00 = JST 21:00
+    - cron: '0 15 * * *'   # UTC 15:00 = JST 00:00
+    - cron: '0 18 * * *'   # UTC 18:00 = JST 03:00
+    - cron: '0 21 * * *'   # UTC 21:00 = JST 06:00
+  workflow_dispatch:
+    inputs:
+      memo:
+        description: 'Why this run'
+        required: false
+      target:
+        description: 'Which fetcher (default: all)'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - so2
+          - cloud
+          - geomag
+
+permissions: {}
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install aiohttp aiosqlite numpy scipy netCDF4 google-cloud-bigquery pyarrow
+
+      - name: Restore previous database checkpoint
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p data results
+          # Try backfill checkpoint first, then analysis checkpoint
+          for PREFIX in "backfill-checkpoint-" "database-checkpoint-"; do
+            PREV_RUN=$(gh api repos/${{ github.repository }}/actions/artifacts \
+              --jq "[.artifacts[] | select(.name | startswith(\"${PREFIX}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0].workflow_run.id // empty" 2>/dev/null)
+            if [ -n "$PREV_RUN" ] && [ "$PREV_RUN" != "${{ github.run_id }}" ]; then
+              ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
+              echo "Trying artifact: $ARTIFACT_NAME from run $PREV_RUN"
+              gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+                --name "$ARTIFACT_NAME" \
+                --dir /tmp/db-restore 2>/dev/null || continue
+              # upload-artifact@v4 strips parent dirs: data/geohazard.db → geohazard.db
+              DB_FILE="/tmp/db-restore/geohazard.db"
+              # Also check nested path in case analysis checkpoint uses different structure
+              [ ! -f "$DB_FILE" ] && DB_FILE="/tmp/db-restore/data/geohazard.db"
+              if [ -f "$DB_FILE" ]; then
+                cp "$DB_FILE" data/geohazard.db
+                rm -f data/geohazard.db-wal data/geohazard.db-shm
+                DB_SIZE=$(du -h data/geohazard.db | cut -f1)
+                echo "Restored DB from ${PREFIX}${PREV_RUN} ($DB_SIZE)"
+                # Integrity check
+                python3 -c "
+          import sqlite3, sys
+          conn = sqlite3.connect('data/geohazard.db')
+          r = conn.execute('PRAGMA integrity_check').fetchone()[0]
+          if r != 'ok':
+              print(f'DB integrity FAILED: {r}')
+              conn.close()
+              sys.exit(1)
+          for t in conn.execute(\"SELECT name FROM sqlite_master WHERE type='table'\").fetchall():
+              c = conn.execute(f'SELECT COUNT(*) FROM {t[0]}').fetchone()[0]
+              print(f'  {t[0]}: {c:,} rows')
+          conn.close()
+          print('DB integrity OK')
+          "
+                if [ $? -eq 0 ]; then
+                  echo "checkpoint_restored=true" >> "$GITHUB_OUTPUT"
+                  break
+                else
+                  echo "Corrupted checkpoint — trying next"
+                  rm -f data/geohazard.db
+                  rm -rf /tmp/db-restore
+                fi
+              fi
+            fi
+          done
+
+      - name: Init DB if no checkpoint
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          if [ ! -f data/geohazard.db ]; then
+            echo "No checkpoint — initialising empty DB"
+            python3 -c "
+          import asyncio, sys
+          sys.path.insert(0, 'src')
+          from db import init_db
+          asyncio.run(init_db())
+          print('DB initialised')
+          "
+          fi
+
+      - name: Validate Earthdata credentials
+        id: earthdata_check
+        env:
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+        run: |
+          if python3 scripts/test_earthdata_auth.py; then
+            echo "earthdata_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "earthdata_ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Earthdata auth FAILED — SO2 and cloud will be skipped"
+          fi
+        continue-on-error: true
+
+      - name: Fetch SO2 column data
+        if: (inputs.target == 'all' || inputs.target == 'so2' || inputs.target == '') && steps.earthdata_check.outputs.earthdata_ok == 'true'
+        timeout-minutes: 40
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+          SO2_MAX_DATES: "2000"
+        run: python3 -u scripts/fetch_omi_so2.py
+
+      - name: Fetch cloud fraction data
+        if: (inputs.target == 'all' || inputs.target == 'cloud' || inputs.target == '') && steps.earthdata_check.outputs.earthdata_ok == 'true'
+        timeout-minutes: 40
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+          CLOUD_MAX_DATES: "2000"
+        run: python3 -u scripts/fetch_cloud_fraction.py
+
+      - name: Fetch INTERMAGNET geomag hourly data
+        if: inputs.target == 'all' || inputs.target == 'geomag' || inputs.target == ''
+        timeout-minutes: 30
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          GEOMAG_MAX_DAYS: "2000"
+        run: python3 -u scripts/fetch_cses_satellite.py
+
+      - name: Coverage report
+        if: always()
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 -c "
+          import sqlite3, os
+          db = sqlite3.connect(os.environ['GEOHAZARD_DB_PATH'])
+          for t in ['so2_column', 'cloud_fraction', 'geomag_hourly']:
+              try:
+                  cnt = db.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0]
+                  mi = db.execute(f'SELECT MIN(observed_at) FROM {t}').fetchone()[0]
+                  mx = db.execute(f'SELECT MAX(observed_at) FROM {t}').fetchone()[0]
+                  print(f'{t}: {cnt:,} rows ({mi} → {mx})')
+              except Exception as e:
+                  print(f'{t}: ERROR {e}')
+          db.close()
+          "
+
+      - name: Snapshot DB for checkpoint
+        if: always()
+        run: |
+          python3 -c "
+          import sqlite3
+          src = sqlite3.connect('data/geohazard.db')
+          dst = sqlite3.connect('data/geohazard_snapshot.db')
+          src.backup(dst)
+          dst.close()
+          src.close()
+          print('Snapshot created')
+          "
+          mv data/geohazard_snapshot.db data/geohazard.db
+
+      - name: Upload checkpoint artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backfill-checkpoint-${{ github.run_id }}
+          path: data/geohazard.db
+          retention-days: 30
+
+      - name: Upload to BigQuery
+        if: always()
+        timeout-minutes: 15
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: python3 scripts/load_raw_to_bq.py
+
+      - name: Notify Discord
+        if: always()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then exit 0; fi
+          python3 -c "
+          import sqlite3, json, os, urllib.request
+          db = sqlite3.connect('data/geohazard.db')
+          lines = []
+          for t in ['so2_column', 'cloud_fraction', 'geomag_hourly']:
+              try:
+                  cnt = db.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0]
+                  mi = db.execute(f'SELECT MIN(observed_at) FROM {t}').fetchone()[0] or '?'
+                  mx = db.execute(f'SELECT MAX(observed_at) FROM {t}').fetchone()[0] or '?'
+                  lines.append(f'{t}: {cnt:,} rows ({mi[:10]} -> {mx[:10]})')
+              except Exception as e:
+                  lines.append(f'{t}: ERROR {e}')
+          db.close()
+          report = '\n'.join(lines)
+          url = os.environ.get('DISCORD_WEBHOOK_URL', '')
+          if not url:
+              exit()
+          run_url = 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+          payload = json.dumps({'embeds': [{
+              'title': 'Backfill Run #${{ github.run_number }}',
+              'color': 3447003,
+              'description': report,
+              'footer': {'text': run_url},
+          }]}).encode()
+          req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+          urllib.request.urlopen(req)
+          " 2>/dev/null || echo "Discord notification failed (non-fatal)"

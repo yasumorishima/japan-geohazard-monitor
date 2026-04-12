@@ -36,6 +36,7 @@ References:
 
 import asyncio
 import logging
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -79,7 +80,7 @@ HOURLY_END_YEAR = 2026
 # Each request fetches 7 days of minute data (10,080 rows) → parse + DB insert.
 # Realistic estimate: ~2-3s per request (network + parse) → ~10-15 min total.
 # Weekly cron accumulates coverage over time.
-MAX_DAYS_PER_STATION = 500
+MAX_DAYS_PER_STATION = int(os.environ.get("GEOMAG_MAX_DAYS", "500"))
 
 
 async def init_satellite_tables():

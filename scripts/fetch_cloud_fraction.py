@@ -273,7 +273,8 @@ async def main():
     # Prioritize analysis period (2011+) first, then backfill pre-2011
     analysis_dates = [dt for dt in target_dates if dt.year >= 2011]
     backfill_dates = [dt for dt in target_dates if dt.year < 2011]
-    dates_to_fetch = (analysis_dates + backfill_dates)[:600]
+    max_dates = int(os.environ.get("CLOUD_MAX_DATES", "600"))
+    dates_to_fetch = (analysis_dates + backfill_dates)[:max_dates]
 
     if not dates_to_fetch:
         logger.info("All cloud fraction target dates already fetched")
