@@ -162,7 +162,7 @@ ssh yasu@<RPi5-tailscale-ip> "cd ~/japan-geohazard-monitor && sudo git pull && s
 - **Analysis Phase 18** ✅ S-net seafloor waveform features: NIED Hi-net approved, 0120A acceleration (150 stations, 100Hz). 7 features (RMS/H-V ratio/band power/spectral slope anomalies + spatial gradient + segment max). **75 → 84 features**. Test confirmed: 150/150 stations, 447/450 SAC files parsed
 - **Analysis Phase 19** 🔄 S-net multi-sensor expansion: 0120 (broadband velocity) + 0120C (high-gain acceleration) added alongside 0120A. **VLF spectral analysis with 200s FFT windows** (0.005 Hz resolution) for tremor/SSE detection in 0.01-0.1 Hz band. 8 new features: VLF power/H-V anomalies, velocity RMS, VLF/HF ratio, accel-velocity coherence, VLF spatial gradient, high-gain SNR, velocity spectral slope. Multi-code quota management (190 request cap). DB schema: sensor_type column + VLF columns with migration. **84 → 92 features (185 total incl. dynamic selection)**. Workflow fix: S-net moved to early pipeline position (was unreachable due to 6h timeout), incremental DB save per item (prevents data loss on timeout), SMAP disabled (ERDDAP IP blacklist). Smoke test validated: 149 stations × 4 segments, 596 records committed
 - **CI/CD** ✅ GitHub Actions weekly analysis workflow (fetch → analyze → artifact, 400min timeout). **Step ordering optimized**: S-net (highest priority) runs immediately after core earthquake data; slow Earthdata fetchers follow. SMAP permanently disabled (ERDDAP IP blacklist). S-net uses `SNET_MAX_REQUESTS` env var for smoke testing (test-snet.yml runs production script with 5-request cap). **Data preservation**: DB checkpoint after fetch phase + ML results checkpoint (feature_matrix + predictions) + final DB upload. S-net waveform fetch uses incremental sqlite3 commits per item (survives timeout kills). Earthdata auth pre-validation skips 4 sources on credential failure. Data validation report (30 tables checked — collector_status excluded as legacy) saved to artifacts. **DB corruption prevention**: All 100 DB connections use `safe_connect()` with `PRAGMA synchronous=FULL` + `busy_timeout=10000` (centralized in `scripts/db_connect.py`). 28-item preflight test suite (`scripts/test_db_checkpoint.py`) runs before every fetch. 4-step verified WAL flush before artifact upload (checkpoint + integrity + WAL size + page count) — **upload blocked when verification fails** (`flush_ok` output guard). Restore step properly deletes corrupted checkpoints (`set +e` fix for `bash -e` shell). Dedicated test workflow (`test-db-integrity.yml`) validates corruption detection and cleanup
-- **Data Completeness Initiative** 🔄 (started 2026-04-11) Target: **≥95% coverage across all 30 validated tables from 2011-01-01 to present** — no shortcuts, no "good-enough" exclusions. Phase 0 audit classified every fetcher into four failure modes: (1) wiring gaps (`snet_pressure` never invoked, `soil_moisture` commented out), (2) sparse ±M6+ strategy misuse (`lightning`, `ulf_magnetic`, `gnss_tec`, `modis_lst`, `tec` fetch only around major events instead of continuously), (3) continuous-strategy silent stops (`so2_column` at 2014-03, `cloud_fraction` at 2012-01, `geomag_hourly` at 2013-09), (4) physical constraints requiring alternative sources (`satellite_em`→Swarm for 2011-2017, `iss_lis_lightning`→WWLLN for 2011-2017, `snet_waveform`→F-net/Hi-net/DONET for 2011-2016). **Phase 1 Step 1 ✅**: `fetch_snet_pressure.py` rewritten for continuous backfill (recent 7-day refresh + oldest-first backfill from 2016-05-01, quota-capped at 120 requests/run, advancing ~46 days per run), wired into workflow. Legacy `collector_status` removed from validation. **Phase 1 Step 2 🔄**: Targeted diagnostic logging added to the three silently-stopped fetchers; new `debug-fetchers.yml` workflow for isolated root-cause runs. **Remaining**: Step 3 sparse-strategy rewrites, Step 4 lightning overhaul + WWLLN integration, Step 5 alternative-source fusion, Step 6 soil_moisture via SMOS-CCI/GLDAS, Step 7 `|| echo "non-fatal"` pattern elimination
+- **Data Completeness Initiative** 🔄 (started 2026-04-11) Target: **100% coverage across all 30 validated tables from 2011-01-01 to 2026-04-12** — no shortcuts, no "good-enough" exclusions. Phase 0 audit classified every fetcher into four failure modes: (1) wiring gaps (`snet_pressure` never invoked, `soil_moisture` commented out), (2) sparse ±M6+ strategy misuse (`lightning`, `ulf_magnetic`, `gnss_tec`, `modis_lst`, `tec` fetch only around major events instead of continuously), (3) continuous-strategy silent stops (`so2_column` at 2014-03, `cloud_fraction` at 2012-01, `geomag_hourly` at 2013-09), (4) physical constraints requiring alternative sources (`satellite_em`→Swarm for 2011-2017, `iss_lis_lightning`→WWLLN for 2011-2017, `snet_waveform`→F-net/Hi-net/DONET for 2011-2016). **Phase 1 Step 1 ✅**: `fetch_snet_pressure.py` rewritten for continuous backfill (recent 7-day refresh + oldest-first backfill from 2016-05-01, quota-capped at 120 requests/run, advancing ~46 days per run), wired into workflow. Legacy `collector_status` removed from validation. **Phase 1 Step 2 ✅**: Diagnostic run revealed all 3 "stopped" fetchers (SO2, cloud, geomag) are **fully functional** — not broken, just never given sufficient continuous runtime. Debug run fetched SO2 1.3M rows, cloud 134K rows, geomag 36K rows with zero failures. Root cause: batch size caps + infrequent scheduling. **Phase 1 Step 2b ✅ Backfill automation**: Dedicated `backfill.yml` workflow runs every 3 hours (8 cron schedules, 24/7). Env-configurable batch sizes (`SO2_MAX_DATES=2000`, `CLOUD_MAX_DATES=2000`, `GEOMAG_MAX_DAYS=2000`). Checkpoint restore/save between runs. Auto-uploads to BigQuery (`geohazard.so2_column`, `geohazard.cloud_fraction`, `geohazard.geomag_hourly`). Discord alerts (color-coded: 🔴 failure / 📊 progress / 🎉 100%) + GitHub Issue auto-creation on failure. Coverage % tracked per run. **Remaining**: Step 3 sparse-strategy rewrites, Step 4 lightning overhaul + WWLLN integration, Step 5 alternative-source fusion, Step 6 soil_moisture via SMOS-CCI/GLDAS, Step 7 `|| echo "non-fatal"` pattern elimination
 - **Mobile** ✅ Responsive design (bottom sheet panel, touch-optimized controls)
 
 ## Analysis Results (2011-2026, 29K M3+ earthquakes, 4M TEC, 44K Kp, 31K GNSS-TEC, 1.3M ULF, 92 features with dynamic selection)
@@ -466,6 +466,7 @@ gh workflow run "Earthquake Correlation Analysis" \
 | `fetch_ioc_sealevel.py` | IOC/VLIZ | Sea level monitoring: Japan coastal stations, REST API (no auth, 1 req/min) |
 | `fetch_snet_pressure.py` | NIED Hi-net | S-net seafloor water pressure via HinetPy (NIED credentials required) |
 | `validate_data.py` | Local DB | **Data completeness validation**: checks all 30 tables for existence, row count, date range coverage. Outputs JSON report + human-readable summary. Runs twice per workflow (post-fetch + final) |
+| `load_raw_to_bq.py` | Local DB → BQ | **Raw data BQ loader**: SQLite → BigQuery (`so2_column`, `cloud_fraction`, `geomag_hourly`). Chunked upload (50K rows), WRITE_TRUNCATE + APPEND. Min 1000 rows guard to prevent wiping BQ data on empty DB |
 
 ### Analysis scripts
 
@@ -504,7 +505,7 @@ gh workflow run "Earthquake Correlation Analysis" \
 | `csep_format.py` | CSEP XML forecast generation: probability → GR-based rate per cell/magnitude/time bin |
 | `stacking.py` | Ensemble stacking: level-0 registration (HistGBT + RF + LR × 3 targets + 5 physics = up to 14 features), logistic/isotonic meta-learner, walk-forward stacking with temporal leak prevention |
 
-Results saved as JSON artifacts (90-day retention). Runs every Monday 12:00 JST or on demand (400-min timeout). **Data preservation**: DB checkpoint uploaded only after verified WAL flush passes (`flush_ok` guard). `validate_data.py` checks all 30 tables twice per run.
+Results saved as JSON artifacts (90-day retention). Analysis runs every Monday 12:00 JST or on demand (400-min timeout). **Backfill** runs every 3 hours 24/7 (`backfill.yml`) for SO2/cloud/geomag continuous data ingestion with BQ upload + Discord/Issue alerts. **Data preservation**: DB checkpoint uploaded only after verified WAL flush passes (`flush_ok` guard). `validate_data.py` checks all 30 tables twice per run.
 
 ### Phase 5 ML Results (AUC 0.73, AdaBoost baseline)
 
@@ -937,28 +938,33 @@ Feature matrix exported to BigQuery (`geohazard.feature_matrix`: 216,711 rows, 1
 | **PINN** | 📋 Next | Physics-Informed NN with Rate-State friction loss (Nature Comms 2023) |
 | **Phase 19** | 🔄 Running | S-netマルチセンサー（0120速度+0120C高感度+0120A加速度）+ VLFスペクトル。84→92特徴量。ワークフロー修正: S-net前半移動+incremental save（タイムアウト時データ喪失防止）+SMAP無効化 |
 | **S-net** | ✅ Active | NIED承認済。圧力チャンネル不在→**波形特徴量**に転換。0120A(加速度)確認済み、0120(速度)+0120C(高感度)をPhase 19で追加 |
-| **INTERMAGNET backfill** | 🔄 In progress | 500 days/station/run (step timeout 60min). Full 15-year coverage accumulates over weekly runs |
+| **Data Backfill** | 🔄 Running | `backfill.yml`: 3時間毎cron（8スケジュール、24/7）。SO2/cloud/geomag各2000日/回。チェックポイント累積 + BQ自動ロード。Discord通知 + 失敗時Issue自動作成。100%到達でワークフロー停止 |
 
 ### GCP BigQuery Data Platform
 
-GCP プロジェクト `data-platform-490901` の `geohazard` データセットに feature matrix + メタデータを集約。CI の ML フェーズ完了後に自動ロード。
+GCP プロジェクト `data-platform-490901` の `geohazard` データセットに feature matrix + メタデータ + 生データを集約。
 
 **現在のテーブル・ビュー:**
 
-| テーブル | 行数 | 内容 |
-|---|---|---|
-| `feature_matrix` | 216,711 | 全特徴量データ（Phase毎に上書き） |
-| `feature_matrix_metadata` | 1+ | Phase別AUC・特徴量数の推移（追記） |
-| `feature_nonzero_rates` | — | 特徴量別非ゼロ率（CI初回実行後に自動作成） |
-| `v_auc_history` | view | AUC推移の可視化用 |
-| `v_feature_summary` | view | 空間特徴量の非ゼロ率一覧（バグ検出） |
+| テーブル | 行数 | 内容 | 更新 |
+|---|---|---|---|
+| `feature_matrix` | 216,711 | 全特徴量データ（Phase毎に上書き） | CI ML完了後 |
+| `feature_matrix_metadata` | 1+ | Phase別AUC・特徴量数の推移（追記） | CI ML完了後 |
+| `feature_nonzero_rates` | — | 特徴量別非ゼロ率（CI初回実行後に自動作成） | CI ML完了後 |
+| `so2_column` | 🔄 backfill中 | OMI SO2カラムデータ（2011-2026） | 3時間毎 |
+| `cloud_fraction` | 🔄 backfill中 | MODIS雲量データ（2011-2026） | 3時間毎 |
+| `geomag_hourly` | 🔄 backfill中 | INTERMAGNET地磁気毎時（KAK/MMB/KNY、2011-2026） | 3時間毎 |
+| `v_auc_history` | view | AUC推移の可視化用 | — |
+| `v_feature_summary` | view | 空間特徴量の非ゼロ率一覧（バグ検出） | — |
+
+**生データBQ連携** (2026-04-12〜): `backfill.yml` の各run終了時に `load_raw_to_bq.py` がSQLiteからBQへ自動ロード（WRITE_TRUNCATE + チャンク分割）。1000行未満の場合はスキップしてBQデータを保護。
 
 **BQ活用の成果**: Phase 15h で SO2 408K行取得成功にもかかわらず AUC が変わらなかった原因を、BQ 集計クエリ（`AVG(so2_column_anomaly) = 0.0`）で即座に発見。7つの空間データソースの座標ミスマッチバグ（Phase 15i で修正済み）を特定できた。
 
 **今後の予定:**
+- backfill 100%到達後、残り28テーブルも `load_raw_to_bq.py` に追加
 - Phase 16 完了後、非ゼロ率が gravity/soil/nightlight で 80%+ に改善することを `v_feature_summary` で確認
 - Grafana ダッシュボード（`geohazard` データセット分）を作成予定
-- 将来: 31テーブルの生データも BQ に蓄積し、CI の毎回ゼロフェッチ → 差分追加に切り替え
 
 ### Not yet implemented
 
