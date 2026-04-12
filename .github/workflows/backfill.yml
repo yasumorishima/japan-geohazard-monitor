@@ -31,7 +31,8 @@ on:
           - cloud
           - geomag
 
-permissions: {}
+permissions:
+  issues: write
 
 jobs:
   backfill:
@@ -131,7 +132,9 @@ jobs:
         continue-on-error: true
 
       - name: Fetch SO2 column data
+        id: fetch_so2
         if: (inputs.target == 'all' || inputs.target == 'so2' || inputs.target == '') && steps.earthdata_check.outputs.earthdata_ok == 'true'
+        continue-on-error: true
         timeout-minutes: 40
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
@@ -142,7 +145,9 @@ jobs:
         run: python3 -u scripts/fetch_omi_so2.py
 
       - name: Fetch cloud fraction data
+        id: fetch_cloud
         if: (inputs.target == 'all' || inputs.target == 'cloud' || inputs.target == '') && steps.earthdata_check.outputs.earthdata_ok == 'true'
+        continue-on-error: true
         timeout-minutes: 40
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
@@ -153,7 +158,9 @@ jobs:
         run: python3 -u scripts/fetch_cloud_fraction.py
 
       - name: Fetch INTERMAGNET geomag hourly data
+        id: fetch_geomag
         if: inputs.target == 'all' || inputs.target == 'geomag' || inputs.target == ''
+        continue-on-error: true
         timeout-minutes: 30
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
@@ -202,7 +209,9 @@ jobs:
           retention-days: 30
 
       - name: Upload to BigQuery
+        id: bq_upload
         if: always()
+        continue-on-error: true
         timeout-minutes: 15
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
@@ -213,32 +222,127 @@ jobs:
         if: always()
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          FETCH_SO2: ${{ steps.fetch_so2.outcome }}
+          FETCH_CLOUD: ${{ steps.fetch_cloud.outcome }}
+          FETCH_GEOMAG: ${{ steps.fetch_geomag.outcome }}
+          BQ_UPLOAD: ${{ steps.bq_upload.outcome }}
         run: |
           if [ -z "$DISCORD_WEBHOOK_URL" ]; then exit 0; fi
           python3 -c "
           import sqlite3, json, os, urllib.request
+          from datetime import date
+
           db = sqlite3.connect('data/geohazard.db')
+          # Coverage calculation: distinct dates / total days (2011-01-01 to today)
+          total_days = (date.today() - date(2011, 1, 1)).days
           lines = []
+          alerts = []
+          all_100 = True
           for t in ['so2_column', 'cloud_fraction', 'geomag_hourly']:
               try:
                   cnt = db.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0]
                   mi = db.execute(f'SELECT MIN(observed_at) FROM {t}').fetchone()[0] or '?'
                   mx = db.execute(f'SELECT MAX(observed_at) FROM {t}').fetchone()[0] or '?'
-                  lines.append(f'{t}: {cnt:,} rows ({mi[:10]} -> {mx[:10]})')
+                  if t == 'geomag_hourly':
+                      n_dates = db.execute('SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM geomag_hourly WHERE station=\"KAK\"').fetchone()[0]
+                  else:
+                      n_dates = db.execute(f'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM {t}').fetchone()[0]
+                  pct = round(n_dates / total_days * 100, 1) if total_days > 0 else 0
+                  if pct < 100:
+                      all_100 = False
+                  icon = '✅' if pct >= 95 else '🟡' if pct >= 50 else '🔴'
+                  lines.append(f'{icon} {t}: {pct}% ({n_dates}/{total_days}d) {cnt:,} rows')
               except Exception as e:
-                  lines.append(f'{t}: ERROR {e}')
+                  lines.append(f'🔴 {t}: ERROR {e}')
+                  alerts.append(f'{t}: {e}')
+                  all_100 = False
           db.close()
+
+          # Check step outcomes
+          step_results = {
+              'SO2': os.environ.get('FETCH_SO2', 'skipped'),
+              'Cloud': os.environ.get('FETCH_CLOUD', 'skipped'),
+              'Geomag': os.environ.get('FETCH_GEOMAG', 'skipped'),
+              'BQ upload': os.environ.get('BQ_UPLOAD', 'skipped'),
+          }
+          failed_steps = [k for k, v in step_results.items() if v == 'failure']
+          if failed_steps:
+              alerts.append('FAILED: ' + ', '.join(failed_steps))
+
           report = '\n'.join(lines)
+          if failed_steps:
+              report += '\n\n⚠️ ' + ', '.join(failed_steps) + ' failed'
+          if all_100:
+              report += '\n\n🎉 ALL 100%! Backfill complete — disable this workflow'
+
+          # Green if all OK, red if any failure/alert, yellow if in progress
+          if alerts or failed_steps:
+              color = 15158332  # red
+              title = '🔴 Backfill #${{ github.run_number }} — issues detected'
+          elif all_100:
+              color = 3066993   # green
+              title = '🎉 Backfill #${{ github.run_number }} — 100% complete!'
+          else:
+              color = 3447003   # blue (in progress)
+              title = '📊 Backfill #${{ github.run_number }}'
+
           url = os.environ.get('DISCORD_WEBHOOK_URL', '')
-          if not url:
-              exit()
           run_url = 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
           payload = json.dumps({'embeds': [{
-              'title': 'Backfill Run #${{ github.run_number }}',
-              'color': 3447003,
+              'title': title,
+              'color': color,
               'description': report,
               'footer': {'text': run_url},
           }]}).encode()
           req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
           urllib.request.urlopen(req)
           " 2>/dev/null || echo "Discord notification failed (non-fatal)"
+
+      - name: Create issue on failure
+        if: always() && (steps.fetch_so2.outcome == 'failure' || steps.fetch_cloud.outcome == 'failure' || steps.fetch_geomag.outcome == 'failure' || steps.bq_upload.outcome == 'failure')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          FAILED=""
+          [ "${{ steps.fetch_so2.outcome }}" = "failure" ] && FAILED="$FAILED so2"
+          [ "${{ steps.fetch_cloud.outcome }}" = "failure" ] && FAILED="$FAILED cloud"
+          [ "${{ steps.fetch_geomag.outcome }}" = "failure" ] && FAILED="$FAILED geomag"
+          [ "${{ steps.bq_upload.outcome }}" = "failure" ] && FAILED="$FAILED bq_upload"
+          FAILED=$(echo "$FAILED" | xargs)
+
+          # Get coverage info
+          COVERAGE=$(python3 -c "
+          import sqlite3
+          from datetime import date
+          db = sqlite3.connect('data/geohazard.db')
+          total = (date.today() - date(2011, 1, 1)).days
+          for t in ['so2_column', 'cloud_fraction', 'geomag_hourly']:
+              try:
+                  if t == 'geomag_hourly':
+                      n = db.execute('SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM geomag_hourly WHERE station=\"KAK\"').fetchone()[0]
+                  else:
+                      n = db.execute(f'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM {t}').fetchone()[0]
+                  pct = round(n / total * 100, 1)
+                  print(f'- {t}: {pct}% ({n}/{total}d)')
+              except Exception as e:
+                  print(f'- {t}: ERROR ({e})')
+          db.close()
+          " 2>/dev/null || echo "Coverage unavailable")
+
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "Backfill failure: ${FAILED} (run #${{ github.run_number }})" \
+            --label "bug,backfill" \
+            --body "$(cat <<ISSUE_EOF
+          ## Backfill run #${{ github.run_number }} failed
+
+          **Failed steps:** ${FAILED}
+          **Run:** https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          ### Coverage at failure
+          ${COVERAGE}
+
+          ### Action needed
+          Check the run log for error details and fix the underlying issue.
+          ISSUE_EOF
+          )" 2>/dev/null || echo "Issue creation failed"
