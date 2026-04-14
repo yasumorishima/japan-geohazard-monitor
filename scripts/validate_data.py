@@ -30,18 +30,18 @@ FULL_RANGE = (2011, 2026)
 
 EXPECTED_TABLES = {
     # Core earthquake data
-    "earthquakes":       {"min_rows": 1000,  "time_col": "time",        "critical": True,  "expected_range": FULL_RANGE},
-    "tec":               {"min_rows": 100,   "time_col": "observed_at", "critical": True,  "expected_range": FULL_RANGE},
-    "geomag_kp":         {"min_rows": 100,   "time_col": "observed_at", "critical": True,  "expected_range": FULL_RANGE},
-    "focal_mechanisms":  {"min_rows": 50,    "time_col": "observed_at", "critical": True,  "expected_range": FULL_RANGE},
+    "earthquakes":       {"min_rows": 1000,  "time_col": "occurred_at", "critical": True,  "expected_range": FULL_RANGE},
+    "tec":               {"min_rows": 100,   "time_col": "epoch",       "critical": True,  "expected_range": FULL_RANGE},
+    "geomag_kp":         {"min_rows": 100,   "time_col": "time_tag",    "critical": True,  "expected_range": FULL_RANGE},
+    "focal_mechanisms":  {"min_rows": 50,    "time_col": "occurred_at", "critical": True,  "expected_range": FULL_RANGE},
     # Phase 5-7: ULF, LST, cosmic ray, GNSS-TEC
     # (collector_status removed: legacy table populated only by the old
     #  src/collectors/base.py architecture. Current fetcher-based workflow
     #  never writes to it, so validating it just generates false EMPTYs.)
     "ulf_magnetic":      {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
-    "modis_lst":         {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": None},  # event-based
+    "modis_lst":         {"min_rows": 10,    "time_col": "observed_date", "critical": False, "expected_range": None},  # event-based
     "cosmic_ray":        {"min_rows": 100,   "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
-    "gnss_tec":          {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
+    "gnss_tec":          {"min_rows": 10,    "time_col": "epoch",       "critical": False, "expected_range": FULL_RANGE},
     "lightning":         {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": None},  # event-based
     "iss_lis_lightning": {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": (2017, 2023)},
     # Phase 9: INTERMAGNET, CSES, Movebank

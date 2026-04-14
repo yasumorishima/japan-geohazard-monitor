@@ -52,9 +52,9 @@ SPATIAL_TABLES = {
 
 # Non-spatial time series tables
 TIMESERIES_TABLES = {
-    "earthquakes":     {"time_col": "time",        "expected_range": (2011, 2026)},
-    "tec":             {"time_col": "observed_at", "expected_range": (2011, 2026)},
-    "geomag_kp":       {"time_col": "observed_at", "expected_range": (2011, 2026)},
+    "earthquakes":     {"time_col": "occurred_at", "expected_range": (2011, 2026)},
+    "tec":             {"time_col": "epoch",       "expected_range": (2011, 2026)},
+    "geomag_kp":       {"time_col": "time_tag",    "expected_range": (2011, 2026)},
     "cosmic_ray":      {"time_col": "observed_at", "expected_range": (2011, 2026)},
     "geomag_hourly":   {"time_col": "observed_at", "expected_range": (2011, 2026)},
     "solar_wind":      {"time_col": "observed_at", "expected_range": (2011, 2026)},
