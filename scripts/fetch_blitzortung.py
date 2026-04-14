@@ -172,10 +172,12 @@ def aggregate_strokes_to_grid(
 
 async def fetch_blitzortung_archive_month(
     session: aiohttp.ClientSession, year: int, month: int
-) -> list[dict]:
+) -> list[dict] | None:
     """Fetch monthly stroke archive from Blitzortung.org (gzipped JSON).
 
     Returns list of stroke dicts with keys: lat, lon, time, intensity.
+    Returns None when the response indicates access restriction (HTML
+    block page or 403) — caller should stop trying further months.
     """
     url = BLITZORTUNG_ARCHIVE_URL.format(year=year, month=month)
     logger.info("Trying Blitzortung archive: %s", url)
@@ -191,7 +193,7 @@ async def fetch_blitzortung_archive_month(
                             "Blitzortung archive returned HTML (access restricted) "
                             "for %04d-%02d", year, month,
                         )
-                        return []
+                        return None
 
                     raw = await resp.read()
                     try:
@@ -206,7 +208,7 @@ async def fetch_blitzortung_archive_month(
                             "Blitzortung archive returned HTML body "
                             "for %04d-%02d (access restricted)", year, month,
                         )
-                        return []
+                        return None
 
                     data = json.loads(text)
                     if isinstance(data, list):
@@ -228,10 +230,10 @@ async def fetch_blitzortung_archive_month(
                         return strokes
                 elif resp.status == 403:
                     logger.warning(
-                        "Blitzortung archive returned 403 (access restricted) for %04d-%02d",
+                        "Blitzortung archive returned 403 (access restricted) for %04d-%02d — archive blocked, short-circuiting",
                         year, month,
                     )
-                    return []
+                    return None
                 elif resp.status == 404:
                     logger.info(
                         "Blitzortung archive not available for %04d-%02d (404)",
@@ -448,6 +450,13 @@ async def main():
 
         for year, month in month_keys:
             strokes = await fetch_blitzortung_archive_month(session, year, month)
+            if strokes is None:
+                logger.warning(
+                    "Blitzortung archive is access-restricted — "
+                    "skipping remaining %d months, falling back to Sferics Bonn",
+                    len(month_keys) - month_keys.index((year, month)) - 1,
+                )
+                break
             if strokes:
                 cells = aggregate_strokes_to_grid(strokes)
                 # Filter to only target dates in this month
