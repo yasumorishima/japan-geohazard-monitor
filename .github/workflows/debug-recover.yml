@@ -147,6 +147,18 @@ jobs:
           command -v dbrecover && dbrecover "$DB" -o /tmp/dbrec_out 2>&1 | head -20 || echo "dbrecover not available"
           exit 0
 
+      - name: Strategy 6 — salvage_db.py (production script under test)
+        run: |
+          set +e
+          rm -f /tmp/salvaged_prod.db
+          time python3 scripts/salvage_db.py --src "$DB" --dst /tmp/salvaged_prod.db
+          echo "exit: $?"
+          [ -f /tmp/salvaged_prod.db ] && du -h /tmp/salvaged_prod.db
+          [ -f /tmp/salvaged_prod.db ] && sqlite3 /tmp/salvaged_prod.db "PRAGMA integrity_check;" 2>&1 | head -5
+          echo "--- index count check ---"
+          [ -f /tmp/salvaged_prod.db ] && sqlite3 /tmp/salvaged_prod.db "SELECT type, COUNT(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' GROUP BY type;"
+          exit 0
+
       - name: Summary
         run: |
           echo "=== file sizes ==="
@@ -162,6 +174,7 @@ jobs:
             /tmp/recovered_fc.sql
             /tmp/recovered_gp.sql
             /tmp/salvaged.db
+            /tmp/salvaged_prod.db
             /tmp/vacuumed.db
           retention-days: 30
           if-no-files-found: warn

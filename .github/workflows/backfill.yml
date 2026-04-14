@@ -131,22 +131,24 @@ jobs:
                 echo "Restored from $ARTIFACT_NAME"
                 break
               else
-                echo "  corrupted — attempting .recover salvage"
-                sqlite3 data/geohazard.db ".recover" 2>/dev/null > /tmp/recovered.sql
-                RECOVER_LINES=$(wc -l < /tmp/recovered.sql)
-                if [ "$RECOVER_LINES" -gt 100 ]; then
+                # Ubuntu runners ship sqlite3 without sqlite_dbpage vtab, so
+                # `.recover` fails immediately. Use per-table ATTACH+INSERT
+                # salvage (proven 35/37 tables recovered in debug run
+                # 24421917797). Skips so2_column/cloud_fraction (corruption
+                # origin — let backfill re-fetch those from source).
+                echo "  corrupted — attempting per-table salvage"
+                python3 scripts/salvage_db.py \
+                  --src data/geohazard.db --dst /tmp/salvaged.db
+                if [ $? -eq 0 ] && [ -f /tmp/salvaged.db ]; then
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
-                  sqlite3 data/geohazard.db < /tmp/recovered.sql 2>&1 | tail -5
-                  python3 scripts/check_db_integrity.py data/geohazard.db
-                  if [ $? -eq 0 ]; then
-                    RESTORED="${ARTIFACT_NAME}-recovered"
-                    echo "restored=${ARTIFACT_NAME}-recovered" >> "$GITHUB_OUTPUT"
-                    echo "Salvaged via .recover from $ARTIFACT_NAME"
-                    break
-                  fi
+                  mv /tmp/salvaged.db data/geohazard.db
+                  RESTORED="${ARTIFACT_NAME}-salvaged"
+                  echo "restored=${ARTIFACT_NAME}-salvaged" >> "$GITHUB_OUTPUT"
+                  echo "Salvaged via per-table copy from $ARTIFACT_NAME"
+                  break
                 fi
                 echo "  salvage failed — trying next artifact"
-                rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm /tmp/recovered.sql
+                rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm /tmp/salvaged.db
               fi
             done
           done
