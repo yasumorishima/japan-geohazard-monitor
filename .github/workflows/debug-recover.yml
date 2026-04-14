@@ -1,0 +1,172 @@
+name: Debug SQLite Recovery
+
+# Diagnose why `.recover` salvage finishes in ~3ms against corrupt checkpoints.
+# Downloads ONE specified checkpoint and runs multiple recovery strategies
+# with full stderr/stdout visibility.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Run ID whose backfill-checkpoint to recover (default: most recent)'
+        required: false
+        default: '24393165660'
+      memo:
+        description: 'Why this debug run (logged only)'
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: sqlite3 CLI version
+        run: |
+          which sqlite3
+          sqlite3 --version
+          sqlite3 :memory: "SELECT sqlite_version();"
+
+      - name: Download corrupt artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RID="${{ inputs.run_id }}"
+          case "$RID" in (*[!0-9]*) echo "non-numeric run_id"; exit 1;; esac
+          mkdir -p /tmp/dbg
+          gh run download "$RID" --repo "${{ github.repository }}" \
+            --name "backfill-checkpoint-$RID" --dir /tmp/dbg
+          DB=/tmp/dbg/geohazard.db
+          [ ! -f "$DB" ] && DB=/tmp/dbg/data/geohazard.db
+          ls -la /tmp/dbg/
+          echo "DB=$DB" >> "$GITHUB_ENV"
+          du -h "$DB"
+
+      - name: Integrity check (diagnostic)
+        run: |
+          set +e
+          echo "--- integrity_check (first 20 lines) ---"
+          sqlite3 "$DB" "PRAGMA integrity_check;" 2>&1 | head -20
+          echo "--- quick_check (first 20 lines) ---"
+          sqlite3 "$DB" "PRAGMA quick_check;" 2>&1 | head -20
+          echo "--- page size / page count ---"
+          sqlite3 "$DB" "PRAGMA page_size; PRAGMA page_count;" 2>&1
+          echo "--- sqlite_master table list ---"
+          sqlite3 "$DB" "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;" 2>&1 | head -50
+          exit 0
+
+      - name: Strategy 1 — sqlite3 CLI .recover with full stderr
+        run: |
+          set +e
+          echo "== Running: sqlite3 \$DB \".recover\" > /tmp/recovered.sql =="
+          time sqlite3 "$DB" ".recover" > /tmp/recovered.sql 2> /tmp/recover_stderr.log
+          RC=$?
+          echo "exit code: $RC"
+          echo "--- stderr (first 50 lines) ---"
+          head -50 /tmp/recover_stderr.log
+          echo "--- recovered.sql stats ---"
+          ls -la /tmp/recovered.sql
+          wc -l /tmp/recovered.sql
+          echo "--- first 30 lines ---"
+          head -30 /tmp/recovered.sql
+          echo "--- last 10 lines ---"
+          tail -10 /tmp/recovered.sql
+          exit 0
+
+      - name: Strategy 2 — .recover with --freelist-corrupt / --ghost-pages
+        run: |
+          set +e
+          echo "== help ==" ; sqlite3 "$DB" ".help recover" 2>&1 | head -30
+          echo "== .recover --freelist-corrupt =="
+          time sqlite3 "$DB" ".recover --freelist-corrupt" > /tmp/recovered_fc.sql 2> /tmp/recover_fc.err
+          echo "exit=$?"; wc -l /tmp/recovered_fc.sql; head -5 /tmp/recover_fc.err
+          echo "== .recover --ghost-pages =="
+          time sqlite3 "$DB" ".recover --ghost-pages" > /tmp/recovered_gp.sql 2> /tmp/recover_gp.err
+          echo "exit=$?"; wc -l /tmp/recovered_gp.sql; head -5 /tmp/recover_gp.err
+          exit 0
+
+      - name: Strategy 3 — VACUUM INTO (skips broken pages in some cases)
+        run: |
+          set +e
+          echo "== VACUUM INTO =="
+          rm -f /tmp/vacuumed.db
+          time sqlite3 "$DB" "VACUUM INTO '/tmp/vacuumed.db';" 2>&1 | head -20
+          ls -la /tmp/vacuumed.db 2>&1 || echo "no output file"
+          [ -f /tmp/vacuumed.db ] && sqlite3 /tmp/vacuumed.db "PRAGMA integrity_check;" 2>&1 | head -5
+          exit 0
+
+      - name: Strategy 4 — per-table ATTACH + INSERT salvage
+        run: |
+          set +e
+          echo "== per-table copy to fresh DB =="
+          rm -f /tmp/salvaged.db
+          # Get table list from corrupt DB's sqlite_master (usually accessible even when pages are broken)
+          TABLES=$(sqlite3 "$DB" "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';" 2>/dev/null)
+          echo "tables: $TABLES"
+          SUCCESS=0
+          FAIL=0
+          for T in $TABLES; do
+            echo "--- $T ---"
+            # Get schema
+            SCHEMA=$(sqlite3 "$DB" "SELECT sql FROM sqlite_master WHERE type='table' AND name='$T';" 2>/dev/null)
+            if [ -z "$SCHEMA" ]; then
+              echo "  no schema — skip"
+              FAIL=$((FAIL+1))
+              continue
+            fi
+            # Create in salvaged DB
+            sqlite3 /tmp/salvaged.db "$SCHEMA;" 2>&1 | head -3
+            # Attempt copy with error swallowing (per-row loss allowed)
+            ROWS=$(sqlite3 "$DB" <<SQL 2>&1
+.timeout 5000
+ATTACH '/tmp/salvaged.db' AS new;
+INSERT OR IGNORE INTO new.$T SELECT * FROM main.$T;
+SELECT COUNT(*) FROM new.$T;
+SQL
+)
+            echo "  $T: $ROWS"
+            if echo "$ROWS" | grep -q "malformed\|corrupt\|Error"; then
+              FAIL=$((FAIL+1))
+            else
+              SUCCESS=$((SUCCESS+1))
+            fi
+          done
+          echo "=== salvaged: $SUCCESS tables OK, $FAIL tables failed ==="
+          [ -f /tmp/salvaged.db ] && du -h /tmp/salvaged.db
+          [ -f /tmp/salvaged.db ] && sqlite3 /tmp/salvaged.db "PRAGMA integrity_check;" 2>&1 | head -5
+          exit 0
+
+      - name: Strategy 5 — dbrecover (python) if Strategy 1-4 all produced empty
+        run: |
+          set +e
+          pip install dbrecover 2>&1 | tail -3 || echo "pip install failed, continuing"
+          command -v dbrecover && dbrecover "$DB" -o /tmp/dbrec_out 2>&1 | head -20 || echo "dbrecover not available"
+          exit 0
+
+      - name: Summary
+        run: |
+          echo "=== file sizes ==="
+          ls -la /tmp/recovered.sql /tmp/recovered_fc.sql /tmp/recovered_gp.sql /tmp/vacuumed.db /tmp/salvaged.db 2>&1 || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: recover-debug-${{ github.run_id }}
+          path: |
+            /tmp/recovered.sql
+            /tmp/recover_stderr.log
+            /tmp/recovered_fc.sql
+            /tmp/recovered_gp.sql
+            /tmp/salvaged.db
+            /tmp/vacuumed.db
+          retention-days: 30
+          if-no-files-found: warn
