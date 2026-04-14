@@ -126,13 +126,8 @@ jobs:
             # Create in salvaged DB
             sqlite3 /tmp/salvaged.db "$SCHEMA;" 2>&1 | head -3
             # Attempt copy with error swallowing (per-row loss allowed)
-            ROWS=$(sqlite3 "$DB" <<SQL 2>&1
-.timeout 5000
-ATTACH '/tmp/salvaged.db' AS new;
-INSERT OR IGNORE INTO new.$T SELECT * FROM main.$T;
-SELECT COUNT(*) FROM new.$T;
-SQL
-)
+            SQL_CMD="ATTACH '/tmp/salvaged.db' AS new; INSERT OR IGNORE INTO new.$T SELECT * FROM main.$T; SELECT COUNT(*) FROM new.$T;"
+            ROWS=$(sqlite3 "$DB" "$SQL_CMD" 2>&1)
             echo "  $T: $ROWS"
             if echo "$ROWS" | grep -q "malformed\|corrupt\|Error"; then
               FAIL=$((FAIL+1))
