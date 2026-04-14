@@ -107,6 +107,12 @@ def parse_omni2(text: str, year: int) -> list[dict]:
             # Construct datetime
             dt = datetime(yr, 1, 1, hour, 0, 0, tzinfo=timezone.utc)
             dt += timedelta(days=doy - 1)
+            # OMNI2 year files are allocated for the full year. Unpopulated
+            # future days carry missing-value sentinels, but still occupy
+            # observed_at slots. Skip anything past "now" so future rows
+            # don't contaminate the time range or displace real data later.
+            if dt > datetime.now(timezone.utc):
+                continue
             observed_at = dt.strftime("%Y-%m-%dT%H:%M:%S")
 
             # Parse values with missing value detection
@@ -143,6 +149,18 @@ async def main():
 
     now = datetime.now(timezone.utc).isoformat()
     current_year = datetime.now(timezone.utc).year
+
+    # One-time purge: OMNI2 yearly files ship full-year placeholder slots,
+    # so runs before 2026-04-14 inserted future-dated rows (all-None values
+    # with observed_at through year-end). Delete anything beyond now.
+    async with safe_connect() as db:
+        cur = await db.execute(
+            "DELETE FROM solar_wind WHERE observed_at > ?", (now,)
+        )
+        deleted = cur.rowcount if cur else 0
+        await db.commit()
+    if deleted:
+        logger.warning("Solar wind: purged %d future-dated placeholder rows", deleted)
 
     # Check existing data
     async with safe_connect() as db:

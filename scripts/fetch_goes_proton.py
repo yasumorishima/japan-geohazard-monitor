@@ -104,6 +104,10 @@ def parse_omni2_proton(text: str, year: int) -> list[dict]:
             # Construct datetime
             dt = datetime(yr, 1, 1, hour, 0, 0, tzinfo=timezone.utc)
             dt += timedelta(days=doy - 1)
+            # OMNI2 year files allocate slots for the full year. Skip future
+            # slots so unpopulated placeholders don't widen the date range.
+            if dt > datetime.now(timezone.utc):
+                continue
             observed_at = dt.strftime("%Y-%m-%dT%H:%M:%S")
 
             # Parse proton flux values
@@ -212,6 +216,19 @@ async def main():
     await init_goes_proton_table()
 
     current_year = datetime.now(timezone.utc).year
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # One-time purge: OMNI2 yearly files ship full-year placeholder slots,
+    # so runs before 2026-04-14 inserted future-dated rows. Delete anything
+    # beyond now so the time range stays honest.
+    async with safe_connect() as db:
+        cur = await db.execute(
+            "DELETE FROM goes_proton WHERE observed_at > ?", (now_iso,)
+        )
+        deleted = cur.rowcount if cur else 0
+        await db.commit()
+    if deleted:
+        logger.warning("GOES proton: purged %d future-dated placeholder rows", deleted)
 
     # Check existing data
     async with safe_connect() as db:
