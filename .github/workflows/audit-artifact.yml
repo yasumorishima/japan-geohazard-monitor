@@ -1,0 +1,94 @@
+name: Audit Artifact
+
+# One-off audit of backfill checkpoint artifacts (SQLite DB snapshots).
+# Runs scripts/audit_artifact.py (corruption-surviving per-table probe) +
+# validate_data.py + diagnose_data_gaps.py against each specified run.
+#
+# Invoke via workflow_dispatch. Default audits the latest (likely corrupt)
+# checkpoint and an early known-clean checkpoint for comparison.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_ids:
+        description: 'Comma-separated run IDs to audit (checkpoint artifacts must still exist)'
+        required: false
+        default: '24393165660,24310231429'
+      memo:
+        description: 'Why this audit (logged only)'
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Audit each run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set +e
+          mkdir -p results
+          IFS=',' read -ra RUN_IDS <<< "${{ inputs.run_ids }}"
+          for RAW in "${RUN_IDS[@]}"; do
+            RUN_ID=$(echo "$RAW" | tr -d '[:space:]')
+            [ -z "$RUN_ID" ] && continue
+            case "$RUN_ID" in (*[!0-9]*) echo "Skip non-numeric: $RUN_ID"; continue;; esac
+
+            echo "::group::Audit run $RUN_ID"
+            rm -rf /tmp/audit-dl
+            ARTIFACT_NAME="backfill-checkpoint-$RUN_ID"
+            gh run download "$RUN_ID" --repo "${{ github.repository }}" \
+              --name "$ARTIFACT_NAME" --dir /tmp/audit-dl 2>&1
+            DL_RC=$?
+            if [ $DL_RC -ne 0 ]; then
+              echo "::warning::download failed for run $RUN_ID (rc=$DL_RC)"
+              echo "::endgroup::"
+              continue
+            fi
+
+            DB=/tmp/audit-dl/geohazard.db
+            [ ! -f "$DB" ] && DB=/tmp/audit-dl/data/geohazard.db
+            if [ ! -f "$DB" ]; then
+              echo "::warning::no geohazard.db inside artifact $ARTIFACT_NAME"
+              echo "::endgroup::"
+              continue
+            fi
+
+            SIZE=$(du -h "$DB" | cut -f1)
+            echo "Auditing $DB ($SIZE)"
+
+            # 1) Corruption-surviving probe (our new script)
+            python3 scripts/audit_artifact.py --db "$DB" --label "run$RUN_ID"
+
+            # 2) validate_data.py (uses EXPECTED_TABLES, coverage %, regression check)
+            GEOHAZARD_DB_PATH="$DB" python3 scripts/validate_data.py || echo "validate_data errored (may be expected on corrupt DB)"
+            [ -f results/data_validation.json ] && mv results/data_validation.json "results/validation_run$RUN_ID.json"
+
+            # 3) diagnose_data_gaps.py (per-year heatmap, spatial coverage)
+            GEOHAZARD_DB_PATH="$DB" python3 scripts/diagnose_data_gaps.py --db "$DB" --json --ci || echo "diagnose errored"
+            [ -f results/data_gaps.json ] && mv results/data_gaps.json "results/gaps_run$RUN_ID.json"
+
+            echo "::endgroup::"
+          done
+
+          echo "---"
+          ls -la results/
+          exit 0
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audit-reports-${{ github.run_id }}
+          path: results/
+          retention-days: 90
