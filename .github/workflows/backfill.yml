@@ -78,63 +78,102 @@ jobs:
           sudo apt-get install -y ncompress  # For .Z IONEX decompression
 
       - name: Restore previous database checkpoint
+        id: restore
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+        # bash -e is off for this step so the inner loop can delete corrupt
+        # artifacts and keep trying older ones instead of dying on first failure.
+        shell: bash {0}
         run: |
+          set +e
           mkdir -p data results
-          # Try backfill checkpoint first, then analysis checkpoint
+          RESTORED=""
+          # Try backfill checkpoint first, then analysis checkpoint.
+          # For each prefix, try up to MAX_TRIES most-recent artifacts; accept
+          # the first one that passes PRAGMA integrity_check.
+          # Try up to 30 most-recent artifacts per prefix. Retention is 30 days
+          # at 3h cron → ~240 artifacts can exist, but corruption streaks are
+          # short historically; 30 covers the most-recent week.
+          MAX_TRIES=30
           for PREFIX in "backfill-checkpoint-" "database-checkpoint-"; do
-            PREV_RUN=$(gh api repos/${{ github.repository }}/actions/artifacts \
-              --jq "[.artifacts[] | select(.name | startswith(\"${PREFIX}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0].workflow_run.id // empty" 2>/dev/null)
-            if [ -n "$PREV_RUN" ] && [ "$PREV_RUN" != "${{ github.run_id }}" ]; then
+            [ -n "$RESTORED" ] && break
+            RUN_IDS=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+              --jq "[.artifacts[] | select(.name | startswith(\"${PREFIX}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" 2>/dev/null)
+            for PREV_RUN in $RUN_IDS; do
+              [ -z "$PREV_RUN" ] && continue
+              # Guard against non-numeric noise from gh api error output
+              case "$PREV_RUN" in (*[!0-9]*) continue;; esac
+              [ "$PREV_RUN" = "${{ github.run_id }}" ] && continue
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
-              echo "Trying artifact: $ARTIFACT_NAME from run $PREV_RUN"
+              echo "Trying artifact: $ARTIFACT_NAME"
+              rm -rf /tmp/db-restore
               gh run download "$PREV_RUN" --repo ${{ github.repository }} \
-                --name "$ARTIFACT_NAME" \
-                --dir /tmp/db-restore 2>/dev/null || continue
-              # upload-artifact@v4 strips parent dirs: data/geohazard.db → geohazard.db
-              DB_FILE="/tmp/db-restore/geohazard.db"
-              # Also check nested path in case analysis checkpoint uses different structure
-              [ ! -f "$DB_FILE" ] && DB_FILE="/tmp/db-restore/data/geohazard.db"
-              if [ -f "$DB_FILE" ]; then
-                cp "$DB_FILE" data/geohazard.db
-                rm -f data/geohazard.db-wal data/geohazard.db-shm
-                DB_SIZE=$(du -h data/geohazard.db | cut -f1)
-                echo "Restored DB from ${PREFIX}${PREV_RUN} ($DB_SIZE)"
-                # Integrity check
-                python3 -c "
-          import sqlite3, sys
-          conn = sqlite3.connect('data/geohazard.db')
-          r = conn.execute('PRAGMA integrity_check').fetchone()[0]
-          if r != 'ok':
-              print(f'DB integrity FAILED: {r}')
-              conn.close()
-              sys.exit(1)
-          for t in conn.execute(\"SELECT name FROM sqlite_master WHERE type='table'\").fetchall():
-              c = conn.execute(f'SELECT COUNT(*) FROM {t[0]}').fetchone()[0]
-              print(f'  {t[0]}: {c:,} rows')
-          conn.close()
-          print('DB integrity OK')
-          "
-                if [ $? -eq 0 ]; then
-                  echo "checkpoint_restored=true" >> "$GITHUB_OUTPUT"
-                  break
-                else
-                  echo "Corrupted checkpoint — trying next"
-                  rm -f data/geohazard.db
-                  rm -rf /tmp/db-restore
-                fi
+                --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>/dev/null
+              if [ $? -ne 0 ]; then
+                echo "  download failed — skip"
+                continue
               fi
-            fi
+              DB_FILE="/tmp/db-restore/geohazard.db"
+              [ ! -f "$DB_FILE" ] && DB_FILE="/tmp/db-restore/data/geohazard.db"
+              if [ ! -f "$DB_FILE" ]; then
+                echo "  no geohazard.db in artifact — skip"
+                continue
+              fi
+              cp "$DB_FILE" data/geohazard.db
+              rm -f data/geohazard.db-wal data/geohazard.db-shm
+              DB_SIZE=$(du -h data/geohazard.db | cut -f1)
+              echo "  copied ($DB_SIZE) — checking integrity"
+              python3 scripts/check_db_integrity.py data/geohazard.db
+              if [ $? -eq 0 ]; then
+                RESTORED="${ARTIFACT_NAME}"
+                echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
+                echo "Restored from $ARTIFACT_NAME"
+                break
+              else
+                echo "  corrupted — attempting .recover salvage"
+                sqlite3 data/geohazard.db ".recover" 2>/dev/null > /tmp/recovered.sql
+                RECOVER_LINES=$(wc -l < /tmp/recovered.sql)
+                if [ "$RECOVER_LINES" -gt 100 ]; then
+                  rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                  sqlite3 data/geohazard.db < /tmp/recovered.sql 2>&1 | tail -5
+                  python3 scripts/check_db_integrity.py data/geohazard.db
+                  if [ $? -eq 0 ]; then
+                    RESTORED="${ARTIFACT_NAME}-recovered"
+                    echo "restored=${ARTIFACT_NAME}-recovered" >> "$GITHUB_OUTPUT"
+                    echo "Salvaged via .recover from $ARTIFACT_NAME"
+                    break
+                  fi
+                fi
+                echo "  salvage failed — trying next artifact"
+                rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm /tmp/recovered.sql
+              fi
+            done
           done
+          if [ -z "$RESTORED" ]; then
+            echo "No usable checkpoint found — will init fresh DB"
+          fi
+          exit 0
 
-      - name: Init DB if no checkpoint
+      - name: Init DB if missing or corrupt
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
+        shell: bash {0}
         run: |
+          set +e
+          NEEDS_INIT=0
           if [ ! -f data/geohazard.db ]; then
-            echo "No checkpoint — initialising empty DB"
+            NEEDS_INIT=1
+            echo "No DB file — will init"
+          else
+            python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null
+            if [ $? -ne 0 ]; then
+              echo "Existing DB is corrupt — removing and re-initialising"
+              rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+              NEEDS_INIT=1
+            fi
+          fi
+          if [ "$NEEDS_INIT" = "1" ]; then
             python3 -c "
           import asyncio, sys
           sys.path.insert(0, 'src')
@@ -142,6 +181,10 @@ jobs:
           asyncio.run(init_db())
           print('DB initialised')
           "
+            if [ $? -ne 0 ]; then
+              echo "::error::init_db failed"
+              exit 1
+            fi
           fi
 
       - name: Validate Earthdata credentials
@@ -537,21 +580,38 @@ jobs:
           "
 
       - name: Snapshot DB for checkpoint
+        id: snapshot
         if: always()
         run: |
           python3 -c "
-          import sqlite3
-          src = sqlite3.connect('data/geohazard.db')
-          dst = sqlite3.connect('data/geohazard_snapshot.db')
-          src.backup(dst)
-          dst.close()
-          src.close()
-          print('Snapshot created')
+          import sqlite3, sys
+          try:
+              src = sqlite3.connect('data/geohazard.db')
+              # Merge WAL into main DB so snapshot doesn't depend on sidecar files
+              src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+              # Reject snapshotting a corrupt DB (prevents propagating corruption)
+              r = src.execute('PRAGMA integrity_check').fetchone()[0]
+              if r != 'ok':
+                  print(f'REFUSING to snapshot corrupt DB: {r[:200]}')
+                  src.close()
+                  sys.exit(1)
+              dst = sqlite3.connect('data/geohazard_snapshot.db')
+              src.backup(dst)
+              dst.close()
+              src.close()
+              print('Snapshot created (post-integrity-check)')
+          except Exception as e:
+              print(f'Snapshot failed: {e}')
+              sys.exit(1)
           "
-          mv data/geohazard_snapshot.db data/geohazard.db
+          if [ -f data/geohazard_snapshot.db ]; then
+            mv data/geohazard_snapshot.db data/geohazard.db
+          fi
 
       - name: Upload checkpoint artifact
-        if: always()
+        # Only upload when snapshot succeeded (integrity-checked) — never
+        # propagate a corrupt DB as a new checkpoint.
+        if: steps.snapshot.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: backfill-checkpoint-${{ github.run_id }}
@@ -560,7 +620,9 @@ jobs:
 
       - name: Upload to BigQuery
         id: bq_upload
-        if: always()
+        # Skip when snapshot's integrity check rejected the DB — uploading
+        # from a corrupt DB wastes 15min and spams Discord.
+        if: steps.snapshot.outcome == 'success'
         continue-on-error: true
         timeout-minutes: 15
         env:
