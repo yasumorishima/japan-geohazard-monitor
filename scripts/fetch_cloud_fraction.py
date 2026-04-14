@@ -64,8 +64,40 @@ START_YEAR = 2000
 
 
 async def init_cloud_table():
-    """Create cloud fraction table."""
+    """Create cloud fraction table.
+
+    If the existing cloud_fraction table is unreadable (page-level
+    corruption — root cause of the 2026-04-12 "database disk image is
+    malformed" incident), drop it so the CREATE below repopulates
+    cleanly. BQ retains ~123K rows loaded pre-corruption, so the drop
+    is recoverable.
+    """
+    import sqlite3 as _sqlite3  # narrow exception scope
     async with safe_connect() as db:
+        try:
+            await db.execute("SELECT COUNT(*) FROM cloud_fraction")
+        except _sqlite3.DatabaseError as e:
+            # Only the specific corruption signatures; re-raise anything else
+            # (UNIQUE constraint, locked, schema change, etc.) so real errors
+            # aren't silently swallowed.
+            msg = str(e).lower()
+            if (
+                "malformed" in msg
+                or "database disk image" in msg
+                or "not a database" in msg
+                or "corrupt" in msg
+            ):
+                logger.warning(
+                    "cloud_fraction unreadable (%s) — dropping to recover", e
+                )
+                await db.execute("DROP TABLE IF EXISTS cloud_fraction")
+                await db.commit()
+            else:
+                raise
+        except _sqlite3.OperationalError as e:
+            # "no such table" is the expected path on a fresh DB; swallow.
+            if "no such table" not in str(e).lower():
+                raise
         await db.execute("""
             CREATE TABLE IF NOT EXISTS cloud_fraction (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -241,8 +273,11 @@ def _parse_cloud_ascii(text: str, date_str: str) -> list[dict]:
 
 
 async def main():
-    await init_db()
+    # Drop/recreate cloud_fraction BEFORE init_db so a corrupt cloud_fraction
+    # page can't poison any subsequent CREATE inside init_db. (init_db is
+    # idempotent CREATE IF NOT EXISTS, so running it second is harmless.)
     await init_cloud_table()
+    await init_db()
 
     now = datetime.now(timezone.utc).isoformat()
 
