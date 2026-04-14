@@ -325,7 +325,10 @@ jobs:
         id: fetch_modis_lst
         if: inputs.target == 'all' || inputs.target == 'modis_lst' || inputs.target == ''
         continue-on-error: true
-        timeout-minutes: 45
+        # 605 land events × ~7s/event ≈ 70 min. Earlier 45m timeout cut off
+        # at ~200/605, leaving coverage stuck at 3%. 120m leaves slack for
+        # Phase 2 random-control fetches.
+        timeout-minutes: 120
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
