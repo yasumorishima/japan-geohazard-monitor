@@ -55,17 +55,21 @@ logger = logging.getLogger(__name__)
 # NOAA SWPC GOES X-ray JSON (recent data, 1-min resolution)
 SWPC_XRAY_URL = "https://services.swpc.noaa.gov/json/goes/primary/xrays-{n}-day.json"
 
-# LASP LISIRD GOES-16 XRS 1-minute data (2017-present)
-# The old goes_xrs_flare_daily endpoint was deprecated/removed.
-# We use the 1-minute endpoint and aggregate to daily max.
+# LASP LISIRD GOES-16 XRS 1-minute data (2017-present).
+# Use .jsond (documented-units) instead of .json. .json returns "time" as
+# seconds since J2000 (2000-01-01T12:00 UT); .jsond returns ms since Unix
+# epoch and includes a `units: "milliseconds since 1970-01-01"` metadata
+# block. The old .json endpoint with naive utcfromtimestamp parsing produced
+# dates offset by ~31 years (2011→1980), invalidating all historical goes_xray
+# data loaded before 2026-04-14.
 LISIRD_GOES16_URL = (
     "https://lasp.colorado.edu/lisird/latis/dap/"
-    "noaa_goes16_xrs_1m.json?time>={start}&time<{end}"
+    "noaa_goes16_xrs_1m.jsond?time>={start}&time<{end}"
 )
 # For 2011-2016 (pre-GOES-16), try GOES-15
 LISIRD_GOES15_URL = (
     "https://lasp.colorado.edu/lisird/latis/dap/"
-    "noaa_goes15_xrs_1m.json?time>={start}&time<{end}"
+    "noaa_goes15_xrs_1m.jsond?time>={start}&time<{end}"
 )
 
 # NOAA SWPC flare event list (recent events with classification)
@@ -316,75 +320,95 @@ async def fetch_lisird(session: aiohttp.ClientSession, start_year: int) -> list[
 
 
 def _parse_lisird_1min_response(data: dict) -> list[dict]:
-    """Parse LISIRD GOES XRS 1-minute JSON response.
+    """Parse LISIRD GOES XRS 1-minute .jsond response.
 
-    Expected structure:
-    {"noaa_goes16_xrs_1m": {"samples": [
-        {"time": 7.573392E8, "shortwave": 1.2e-8, "longwave": 5.3e-7, ...}, ...
-    ]}}
+    Verified structure (2026-04-14):
+      {
+        "<dataset_name>": {
+          "metadata": { "time": {"units": "milliseconds since 1970-01-01"}, ... },
+          "parameters": ["time", "shortwave", "longwave", ...],
+          "data": [[t_ms, sw_flux, lw_flux, sw_flag, lw_flag, sw_masked, lw_masked], ...]
+        }
+      }
+
+    Time is milliseconds since 1970-01-01 UTC. Defensive filter rejects any
+    timestamp outside [2010-01-01, now+2d] to guard against silent regressions
+    to the older `.json` endpoint (which returned seconds since J2000 and was
+    the root cause of the 1980-1995 goes_xray contamination — see the
+    2026-04-14 audit, run 24402252536).
     """
     rows = []
 
-    # Find the samples array in the response
-    samples = None
+    inner = None
     for key in data:
-        inner = data[key]
-        if isinstance(inner, dict) and "samples" in inner:
-            samples = inner["samples"]
+        candidate = data[key]
+        if isinstance(candidate, dict) and "data" in candidate and "parameters" in candidate:
+            inner = candidate
             break
-
-    if not samples:
+    if inner is None:
         return []
 
-    if isinstance(samples, dict):
-        # Columnar format: {"time": [...], "longwave": [...], ...}
-        times = samples.get("time", [])
-        longwave = samples.get("longwave", samples.get("longwave_masked", []))
-        shortwave = samples.get("shortwave", samples.get("shortwave_masked", []))
-        if not isinstance(times, list):
-            times = [times]
-            longwave = [longwave] if not isinstance(longwave, list) else longwave
-            shortwave = [shortwave] if not isinstance(shortwave, list) else shortwave
+    params = inner.get("parameters") or []
+    matrix = inner.get("data") or []
+    if not params or not matrix:
+        return []
 
-        for i, t in enumerate(times):
-            try:
-                ts = datetime.utcfromtimestamp(float(t))
-                lw = float(longwave[i]) if i < len(longwave) else None
-                sw = float(shortwave[i]) if i < len(shortwave) else None
-                if lw is not None and (lw < 0 or lw > 0.01):
-                    lw = None
-                if sw is not None and (sw < 0 or sw > 0.01):
-                    sw = None
-                rows.append({
-                    "observed_at": ts.strftime("%Y-%m-%dT%H:%M:%S"),
-                    "xray_long": lw,
-                    "xray_short": sw,
-                })
-            except (ValueError, TypeError, IndexError):
-                continue
-    elif isinstance(samples, list):
-        # Row format: [{"time": ..., "longwave": ..., "shortwave": ...}, ...]
-        for s in samples:
-            try:
-                t = float(s.get("time", 0))
-                ts = datetime.utcfromtimestamp(t)
-                lw = s.get("longwave") or s.get("longwave_masked")
-                sw = s.get("shortwave") or s.get("shortwave_masked")
-                if lw is not None:
-                    lw = float(lw)
-                    if lw < 0 or lw > 0.01:
-                        lw = None
-                if sw is not None:
-                    sw = float(sw)
-                    if sw < 0 or sw > 0.01:
-                        sw = None
-                rows.append({
-                    "observed_at": ts.strftime("%Y-%m-%dT%H:%M:%S"),
-                    "xray_long": lw,
-                    "xray_short": sw,
-                })
-            except (ValueError, TypeError):
-                continue
+    # Resolve column indices
+    try:
+        i_time = params.index("time")
+    except ValueError:
+        return []
+    i_sw = params.index("shortwave") if "shortwave" in params else (
+        params.index("shortwave_masked") if "shortwave_masked" in params else None
+    )
+    i_lw = params.index("longwave") if "longwave" in params else (
+        params.index("longwave_masked") if "longwave_masked" in params else None
+    )
+
+    _MIN_VALID = datetime(2010, 1, 1, tzinfo=timezone.utc)
+    _MAX_VALID = datetime.now(timezone.utc) + timedelta(days=2)
+
+    # Sentinel: missing_value is -9999 per the endpoint's metadata block.
+    _MISSING = -9999.0
+
+    def _parse_ts(raw) -> "datetime | None":
+        try:
+            sec = float(raw) / 1000.0
+        except (TypeError, ValueError):
+            return None
+        try:
+            ts = datetime.fromtimestamp(sec, tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+        if ts < _MIN_VALID or ts > _MAX_VALID:
+            return None
+        return ts
+
+    def _val(row, idx) -> "float | None":
+        if idx is None or idx >= len(row):
+            return None
+        v = row[idx]
+        if v is None:
+            return None
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        if f == _MISSING or f < 0 or f > 0.01:
+            return None
+        return f
+
+    for row in matrix:
+        if not isinstance(row, (list, tuple)) or i_time >= len(row):
+            continue
+        ts = _parse_ts(row[i_time])
+        if ts is None:
+            continue
+        rows.append({
+            "observed_at": ts.strftime("%Y-%m-%dT%H:%M:%S"),
+            "xray_short": _val(row, i_sw),
+            "xray_long": _val(row, i_lw),
+        })
 
     return rows
 
@@ -435,6 +459,22 @@ async def fetch_swpc_flare_events(session: aiohttp.ClientSession) -> list[dict]:
 async def main():
     await init_db()
     await init_goes_xray_table()
+
+    # One-time purge: rows loaded with the old .json endpoint (J2000 seconds
+    # interpreted as Unix seconds) have observed_at in 1980-1995. Delete
+    # anything before 2010-01-01 so the corrected fetch can repopulate
+    # without UNIQUE(observed_at) interference.
+    async with safe_connect() as db:
+        cur = await db.execute(
+            "DELETE FROM goes_xray WHERE observed_at < '2010-01-01'"
+        )
+        deleted = cur.rowcount if cur else 0
+        await db.commit()
+    if deleted:
+        logger.warning(
+            "GOES X-ray: purged %d pre-2010 rows (LISIRD epoch bug legacy)",
+            deleted,
+        )
 
     # Check existing data
     async with safe_connect() as db:
