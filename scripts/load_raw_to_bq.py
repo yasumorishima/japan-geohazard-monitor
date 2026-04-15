@@ -7,10 +7,14 @@ Each run uploads the complete SQLite state so BQ always reflects the latest.
 Usage (CI):
     GCP_SA_KEY=... python3 scripts/load_raw_to_bq.py
 """
+import gzip
+import json
 import logging
+import math
 import os
 import sqlite3
 import sys
+import tempfile
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -381,6 +385,13 @@ TABLES = {
 MIN_ROWS_TO_UPLOAD = 1000
 
 
+def _sanitize(v):
+    # json.dumps emits bare NaN/Infinity tokens which BQ rejects.
+    if isinstance(v, float) and not math.isfinite(v):
+        return None
+    return v
+
+
 def main():
     sa_key = os.environ.get("GCP_SA_KEY")
     if not sa_key:
@@ -403,71 +414,85 @@ def main():
 
         conn = sqlite3.connect(DB_PATH)
 
+        failed_tables = []
         for table_name, config in TABLES.items():
-            # Check if table exists in SQLite before querying
-            exists = conn.execute(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
-                (table_name,)
-            ).fetchone()[0]
-            if not exists:
-                logger.info("%s: table not found in SQLite — skipping", table_name)
+            try:
+                # Check if table exists in SQLite before querying
+                exists = conn.execute(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
+                    (table_name,)
+                ).fetchone()[0]
+                if not exists:
+                    logger.info("%s: table not found in SQLite — skipping", table_name)
+                    continue
+
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM " + table_name  # table names are hardcoded above
+                ).fetchone()[0]
+                if count < MIN_ROWS_TO_UPLOAD:
+                    logger.info("%s: %d rows (< %d minimum) — skipping to protect BQ data",
+                                table_name, count, MIN_ROWS_TO_UPLOAD)
+                    continue
+
+                logger.info("%s: streaming %d rows to gzip NDJSON...", table_name, count)
+
+                bq_table = f"{PROJECT}.{DATASET}.{table_name}"
+                schema = [bigquery.SchemaField(s["name"], s["type"]) for s in config["schema"]]
+
+                job_config = bigquery.LoadJobConfig(
+                    write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+                    schema=schema,
+                    source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                )
+
+                cursor = conn.execute(config["query"])
+                columns = [desc[0] for desc in cursor.description]
+
+                # Stream all rows to a single gzipped NDJSON tempfile, then one BQ load job.
+                # Avoids per-chunk BQ job overhead (2-3s each) which previously
+                # made ulf_magnetic 9.1M rows take 15min+ across 182 jobs.
+                # gzip keeps runner disk usage bounded (~5-10x reduction).
+                tmp_dir = os.path.join(os.path.dirname(DB_PATH), "bq_tmp")
+                os.makedirs(tmp_dir, exist_ok=True)
+                fd, tmp_path = tempfile.mkstemp(suffix=".ndjson.gz", prefix=f"{table_name}_", dir=tmp_dir)
+                os.close(fd)
+                try:
+                    written = 0
+                    with gzip.open(tmp_path, "wt", encoding="utf-8") as f:
+                        while True:
+                            rows = cursor.fetchmany(50000)
+                            if not rows:
+                                break
+                            for row in rows:
+                                obj = {c: _sanitize(v) for c, v in zip(columns, row)}
+                                f.write(json.dumps(obj, ensure_ascii=False, default=str))
+                                f.write("\n")
+                            written += len(rows)
+                            logger.info("  %s: %d/%d rows written to NDJSON", table_name, written, count)
+
+                    tmp_bytes = os.path.getsize(tmp_path)
+                    logger.info("  %s: uploading %d rows (%.1f MB gzip) to BQ in single job...",
+                                table_name, written, tmp_bytes / 1024 / 1024)
+                    with open(tmp_path, "rb") as f:
+                        job = client.load_table_from_file(f, bq_table, job_config=job_config)
+                    job.result()
+
+                    table_info = client.get_table(bq_table)
+                    logger.info("  %s: done — %d rows, %.1f MB in BQ",
+                                 table_name, table_info.num_rows, table_info.num_bytes / 1024 / 1024)
+                finally:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+            except Exception as e:
+                logger.error("%s: upload failed — %s", table_name, e)
+                failed_tables.append(table_name)
                 continue
-
-            count = conn.execute(
-                "SELECT COUNT(*) FROM " + table_name  # table names are hardcoded above
-            ).fetchone()[0]
-            if count < MIN_ROWS_TO_UPLOAD:
-                logger.info("%s: %d rows (< %d minimum) — skipping to protect BQ data",
-                            table_name, count, MIN_ROWS_TO_UPLOAD)
-                continue
-
-            logger.info("%s: loading %d rows to BQ...", table_name, count)
-
-            bq_table = f"{PROJECT}.{DATASET}.{table_name}"
-            schema = [bigquery.SchemaField(s["name"], s["type"]) for s in config["schema"]]
-
-            job_config = bigquery.LoadJobConfig(
-                write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
-                schema=schema,
-                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-            )
-
-            cursor = conn.execute(config["query"])
-            columns = [desc[0] for desc in cursor.description]
-
-            CHUNK_SIZE = 50000
-            total_uploaded = 0
-
-            # First chunk — WRITE_TRUNCATE
-            rows = cursor.fetchmany(CHUNK_SIZE)
-            if rows:
-                json_rows = [dict(zip(columns, row)) for row in rows]
-                job = client.load_table_from_json(json_rows, bq_table, job_config=job_config)
-                job.result()
-                total_uploaded += len(json_rows)
-                logger.info("  %s: %d/%d rows uploaded (truncate)", table_name, total_uploaded, count)
-
-            # Remaining chunks — WRITE_APPEND
-            append_config = bigquery.LoadJobConfig(
-                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                schema=schema,
-                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-            )
-            while True:
-                rows = cursor.fetchmany(CHUNK_SIZE)
-                if not rows:
-                    break
-                json_rows = [dict(zip(columns, row)) for row in rows]
-                job = client.load_table_from_json(json_rows, bq_table, job_config=append_config)
-                job.result()
-                total_uploaded += len(json_rows)
-                logger.info("  %s: %d/%d rows uploaded", table_name, total_uploaded, count)
-
-            table_info = client.get_table(bq_table)
-            logger.info("  %s: done — %d rows, %.1f MB in BQ",
-                         table_name, table_info.num_rows, table_info.num_bytes / 1024 / 1024)
 
         conn.close()
+        if failed_tables:
+            logger.error("BQ upload completed with %d failed tables: %s",
+                         len(failed_tables), ", ".join(failed_tables))
+            sys.exit(1)
         logger.info("All tables uploaded to BQ")
 
     finally:

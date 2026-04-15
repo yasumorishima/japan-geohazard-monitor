@@ -629,7 +629,7 @@ jobs:
         # from a corrupt DB wastes 15min and spams Discord.
         if: steps.snapshot.outcome == 'success'
         continue-on-error: true
-        timeout-minutes: 15
+        timeout-minutes: 30
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
