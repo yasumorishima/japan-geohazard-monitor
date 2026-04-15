@@ -217,19 +217,20 @@ jobs:
           mkdir -p data
           python3 scripts/fetch_earthquakes.py
 
-      - name: Fetch TEC data (major events ±7 days)
+      - name: Fetch TEC data (continuous 2011-now, recent-first)
         id: fetch_tec_event
         if: inputs.target == 'all' || inputs.target == 'tec' || inputs.target == ''
         continue-on-error: true
         timeout-minutes: 30
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
+          TEC_MAX_DATES: "150"
         run: |
-          python3 scripts/fetch_tec.py --mode event
+          python3 scripts/fetch_tec.py --mode continuous
 
-      - name: Fetch TEC random baseline (±7 days around 300 random dates)
+      - name: Fetch TEC random baseline (legacy, skipped in continuous mode)
         id: fetch_tec_random
-        if: inputs.target == 'all' || inputs.target == 'tec' || inputs.target == ''
+        if: false
         continue-on-error: true
         timeout-minutes: 30
         env:
@@ -318,6 +319,7 @@ jobs:
         timeout-minutes: 30
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
+          GNSS_TEC_MAX_DATES: "30"
         run: |
           python3 scripts/fetch_gnss_tec.py || echo "GNSS-TEC fetch non-fatal failure"
 
@@ -341,6 +343,7 @@ jobs:
         timeout-minutes: 20
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
+          ULF_MAX_DATES: "300"
         run: |
           python3 scripts/fetch_kakioka_ulf.py || echo "ULF fetch completed"
 

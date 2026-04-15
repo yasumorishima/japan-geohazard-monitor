@@ -287,42 +287,41 @@ async def fetch_date(session: aiohttp.ClientSession, date: datetime,
 
 
 async def main():
-    """Fetch GNSS-TEC data for dates around major earthquakes."""
+    """Fetch GNSS-TEC data continuously for 2011-now."""
     await init_db()
     await init_gnss_tec_table()
 
     now = datetime.now(timezone.utc).isoformat()
 
-    # Get dates around M6+ earthquakes (±3 days)
+    # Continuous strategy: all dates 2011-01-01 to yesterday, fetch missing.
+    # Recent-first fill so active-analysis window completes first.
+    start_date = datetime(2011, 1, 1)
+    end_date = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+    total_days = (end_date - start_date).days + 1
+    all_dates = [start_date + timedelta(days=i) for i in range(total_days)]
+
     async with safe_connect() as db:
-        eq_rows = await db.execute_fetchall(
-            "SELECT DISTINCT DATE(occurred_at) FROM earthquakes "
-            "WHERE magnitude >= 6.0 ORDER BY occurred_at"
-        )
         existing = await db.execute_fetchall(
             "SELECT DISTINCT DATE(epoch) FROM gnss_tec"
         )
 
-    eq_dates = set()
-    for r in eq_rows:
-        d = datetime.strptime(r[0], "%Y-%m-%d")
-        for offset in range(-3, 4):
-            eq_dates.add(d + timedelta(days=offset))
-
     existing_dates = set(datetime.strptime(r[0], "%Y-%m-%d") for r in existing if r[0])
-    dates_to_fetch = sorted(eq_dates - existing_dates)
+    dates_to_fetch = sorted(
+        (d for d in all_dates if d not in existing_dates),
+        reverse=True,
+    )
 
-    logger.info("GNSS-TEC: %d dates to fetch (%d earthquake dates, %d already in DB)",
-                len(dates_to_fetch), len(eq_dates), len(existing_dates))
+    logger.info("GNSS-TEC: %d missing dates (%d total, %d existing)",
+                len(dates_to_fetch), total_days, len(existing_dates))
 
     if not dates_to_fetch:
         logger.info("No new dates to fetch")
         return
 
     total_records = 0
-    # Limit per run to manage API load and workflow time
-    # Each date fetches 2 hours × ~12MB = ~24MB, parse to ~2000 rows
-    max_dates = 30  # ~30 × 24MB = ~720MB download, manageable in 120min
+    # Each date fetches 2 hours × ~12MB = ~24MB download.
+    import os as _os
+    max_dates = int(_os.environ.get("GNSS_TEC_MAX_DATES", "30"))
 
     async with aiohttp.ClientSession() as session:
         for i, date in enumerate(dates_to_fetch[:max_dates]):

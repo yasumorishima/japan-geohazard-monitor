@@ -226,24 +226,21 @@ async def main():
 
     now = datetime.now(timezone.utc).isoformat()
 
-    # Get dates around M6+ earthquakes (±7 days for better temporal coverage)
+    # Continuous strategy: enumerate all dates 2011-01-01 to yesterday, fetch missing.
+    # Recent-first order so active-analysis window fills first, then backfills history.
+    start_date = datetime(2011, 1, 1)
+    end_date = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+    total_days = (end_date - start_date).days + 1
+    all_dates = [start_date + timedelta(days=i) for i in range(total_days)]
+
     async with safe_connect() as db:
-        eq_rows = await db.execute_fetchall(
-            "SELECT DISTINCT DATE(occurred_at), latitude, longitude, magnitude "
-            "FROM earthquakes "
-            "WHERE magnitude >= 6.0 ORDER BY occurred_at"
-        )
         existing = await db.execute_fetchall(
             "SELECT DISTINCT DATE(observed_at), station FROM ulf_magnetic"
         )
-
-    eq_dates = set()
-    for r in eq_rows:
-        d = datetime.strptime(r[0], "%Y-%m-%d")
-        for offset in range(-7, 8):
-            eq_dates.add(d + timedelta(days=offset))
-
     existing_set = set((r[0], r[1]) for r in existing)
+
+    import os as _os
+    max_per_station = int(_os.environ.get("ULF_MAX_DATES", "300"))
 
     total_records = 0
     total_fetched = 0
@@ -252,22 +249,20 @@ async def main():
     async with aiohttp.ClientSession() as session:
         # Try all three stations but prioritize KAK (most relevant for Tokyo/Kanto)
         for station in ["KAK", "MMB", "KNY"]:
+            # Recent-first: sort descending so latest missing dates fill first
             dates_to_fetch = sorted(
-                d for d in eq_dates
-                if (d.strftime("%Y-%m-%d"), station) not in existing_set
-                and d.year >= 2011  # INTERMAGNET has good coverage from 2011+
+                (d for d in all_dates
+                 if (d.strftime("%Y-%m-%d"), station) not in existing_set),
+                reverse=True,
             )
 
             if not dates_to_fetch:
                 logger.info("%s: all dates already fetched", station)
                 continue
 
-            logger.info("%s: %d dates to fetch (%d total eq dates, %d existing)",
-                        station, len(dates_to_fetch), len(eq_dates), len(existing_set))
+            logger.info("%s: %d dates to fetch (%d total, %d existing)",
+                        station, len(dates_to_fetch), total_days, len(existing_set))
 
-            # Process in batches — increased limit for full temporal coverage
-            # INTERMAGNET GIN V1 is reliable, 0.5s between requests
-            max_per_station = 300
             batch = dates_to_fetch[:max_per_station]
             station_records = 0
 

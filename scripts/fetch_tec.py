@@ -175,8 +175,8 @@ def expand_with_window(anchor_dates: list[date], window: int = WINDOW_DAYS) -> l
 async def main():
     parser = argparse.ArgumentParser(description="Fetch TEC IONEX data")
     parser.add_argument(
-        "--mode", choices=["event", "random"], default="event",
-        help="event: M6.5+ earthquakes ±7d | random: random dates for baseline",
+        "--mode", choices=["event", "random", "continuous"], default="continuous",
+        help="continuous: all dates 2011-now | event: M6.5+ earthquakes ±7d | random: baseline",
     )
     parser.add_argument(
         "--n-dates", type=int, default=300,
@@ -187,34 +187,45 @@ async def main():
     await init_db()
 
     async with aiohttp.ClientSession() as session:
-        # 1. Determine anchor dates
-        if args.mode == "event":
+        # 1. Determine candidate dates
+        if args.mode == "continuous":
+            start = date(2011, 1, 1)
+            end = date.today() - timedelta(days=1)
+            total = (end - start).days + 1
+            all_dates = [start + timedelta(days=i) for i in range(total)]
+            logger.info("Continuous mode: %d candidate dates (2011-01-01..%s)", total, end)
+        elif args.mode == "event":
             anchor_dates = await get_major_earthquakes(session)
-            logger.info("Event mode: %d anchor dates from M6.5+ earthquakes", len(anchor_dates))
+            all_dates = expand_with_window(anchor_dates, WINDOW_DAYS)
+            logger.info("Event mode: %d dates from M6.5+ earthquakes ±%dd", len(all_dates), WINDOW_DAYS)
         else:
             random_mod.seed(42)
             start = date(2011, 1, 1)
-            end = date.today() - timedelta(days=8)  # Leave room for window
+            end = date.today() - timedelta(days=8)
             total_days = (end - start).days
             anchors = set()
             attempts = 0
             while len(anchors) < args.n_dates and attempts < args.n_dates * 3:
                 anchors.add(start + timedelta(days=random_mod.randint(0, total_days)))
                 attempts += 1
-            anchor_dates = sorted(anchors)
-            logger.info("Random mode: %d anchor dates generated", len(anchor_dates))
+            all_dates = expand_with_window(sorted(anchors), WINDOW_DAYS)
+            logger.info("Random mode: %d dates", len(all_dates))
 
-        # 2. Expand to full ±7 day windows
-        all_dates = expand_with_window(anchor_dates, WINDOW_DAYS)
-
-        # 3. Check which dates already exist in DB
+        # 2. Check which dates already exist in DB
         async with safe_connect() as db:
             existing = await get_existing_tec_dates(db)
 
-        new_dates = [d for d in all_dates if d.isoformat() not in existing]
+        # Recent-first: sort descending so active-analysis window fills first
+        missing = [d for d in all_dates if d.isoformat() not in existing]
+        new_dates = sorted(missing, reverse=True)
+
+        import os as _os
+        max_dates = int(_os.environ.get("TEC_MAX_DATES", "100"))
+        new_dates = new_dates[:max_dates]
+
         logger.info(
-            "Total dates: %d | Already in DB: %d | To download: %d",
-            len(all_dates), len(all_dates) - len(new_dates), len(new_dates),
+            "Total: %d | Existing: %d | Missing: %d | This run: %d",
+            len(all_dates), len(existing), len(missing), len(new_dates),
         )
 
         if not new_dates:
