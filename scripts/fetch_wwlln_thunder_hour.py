@@ -70,10 +70,10 @@ CELL_DEG = 2.0
 
 TIMEOUT = aiohttp.ClientTimeout(total=300, connect=30)
 
-# Each annual file is ~tens of MB and parses in a few seconds; 13 years
-# of historical data fits within a single 20min step but we cap to leave
-# slack for new yearly releases.
-MAX_FILES_PER_RUN = 5
+# Each annual file is ~620 MB and parses in a few seconds; 13 years
+# of historical data would blow the step timeout + bandwidth cap.
+# Override via WWLLN_TH_MAX_FILES for debug runs.
+MAX_FILES_PER_RUN = int(os.environ.get("WWLLN_TH_MAX_FILES", "5"))
 
 
 async def init_table():
@@ -163,15 +163,29 @@ def parse_wwlln_netcdf(data_bytes: bytes, year: int) -> list[dict]:
         ds = netCDF4.Dataset(tmp_path, "r")
         var_names = list(ds.variables.keys())
 
+        # Diagnostic dump: every variable's shape/dtype/_FillValue and dims
+        for vn in var_names:
+            v = ds.variables[vn]
+            fv = getattr(v, "_FillValue", None)
+            missing = getattr(v, "missing_value", None)
+            logger.info(
+                "WWLLN %d diag: var=%s dims=%s shape=%s dtype=%s fill=%s missing=%s",
+                year, vn, v.dimensions, v.shape, v.dtype, fv, missing,
+            )
+
         # Locate thunder_hours variable defensively
         th_var = None
+        th_name = None
         for cand in ("thunder_hours", "thunder_hour", "TH", "th", "ThunderHours"):
             if cand in ds.variables:
                 th_var = ds.variables[cand]
+                th_name = cand
                 break
         if th_var is None:
             logger.warning("No thunder_hours variable in NetCDF (vars: %s)", var_names)
             return []
+        logger.info("WWLLN %d diag: selected th_var=%s dims=%s shape=%s",
+                    year, th_name, th_var.dimensions, th_var.shape)
 
         # Locate lat/lon
         lat = None
@@ -189,9 +203,21 @@ def parse_wwlln_netcdf(data_bytes: bytes, year: int) -> list[dict]:
             return []
 
         th_data = th_var[:]
+        logger.info(
+            "WWLLN %d diag: th_data type=%s shape=%s dtype=%s masked=%s",
+            year, type(th_data).__name__, getattr(th_data, "shape", None),
+            getattr(th_data, "dtype", None),
+            bool(getattr(th_data, "mask", None) is not None
+                 and np.any(getattr(th_data, "mask", False))),
+        )
 
         lat_arr = np.asarray(lat)
         lon_arr = np.asarray(lon)
+        logger.info(
+            "WWLLN %d diag: lat range [%.3f, %.3f] n=%d, lon range [%.3f, %.3f] n=%d",
+            year, float(lat_arr.min()), float(lat_arr.max()), len(lat_arr),
+            float(lon_arr.min()), float(lon_arr.max()), len(lon_arr),
+        )
         lat_mask = (lat_arr >= JAPAN_LAT_MIN) & (lat_arr <= JAPAN_LAT_MAX)
         lon_mask = (lon_arr >= JAPAN_LON_MIN) & (lon_arr <= JAPAN_LON_MAX)
         lat_idx = np.where(lat_mask)[0]
@@ -231,8 +257,22 @@ def parse_wwlln_netcdf(data_bytes: bytes, year: int) -> list[dict]:
         for month_idx in range(n_months):
             month = month_idx + 1
             date = f"{year}-{month:02d}-01"
-            slab = np.asarray(window[month_idx], dtype=np.float64)
-            valid = np.isfinite(slab) & (slab >= 0) & (slab < 1e6)
+            raw_slab = window[month_idx]
+            if hasattr(raw_slab, "mask"):
+                slab = raw_slab.astype(np.float64).filled(np.nan)
+            else:
+                slab = np.asarray(raw_slab, dtype=np.float64)
+            finite = np.isfinite(slab)
+            valid = finite & (slab >= 0) & (slab < 1e6)
+            if month_idx < 2 or not valid.any():
+                finite_vals = slab[finite] if finite.any() else np.array([])
+                logger.info(
+                    "WWLLN %d diag month=%02d: slab shape=%s finite=%d valid=%d min=%s max=%s sample=%s",
+                    year, month, slab.shape, int(finite.sum()), int(valid.sum()),
+                    float(finite_vals.min()) if finite_vals.size else None,
+                    float(finite_vals.max()) if finite_vals.size else None,
+                    finite_vals[:5].tolist() if finite_vals.size else [],
+                )
             if not valid.any():
                 continue
 
