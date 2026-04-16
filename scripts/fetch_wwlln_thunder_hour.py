@@ -202,22 +202,35 @@ def parse_wwlln_netcdf(data_bytes: bytes, year: int) -> list[dict]:
             logger.warning("No lat/lon variable in NetCDF (vars: %s)", var_names)
             return []
 
-        th_data = th_var[:]
+        # Observed layout in wwllnmth: dims=('nlon','nlat','nmon'), shape=(7200,3600,12).
+        # Normalize to (time, lat, lon) regardless of source order so the rest
+        # of this function can assume that shape.
+        dim_names = th_var.dimensions
+        lat_dim_cands = {"nlat", "lat", "latitude", "Latitude"}
+        lon_dim_cands = {"nlon", "lon", "longitude", "Longitude"}
+        time_dim_cands = {"nmon", "mon", "month", "time", "Time"}
+        lat_axis = next((i for i, d in enumerate(dim_names) if d in lat_dim_cands), None)
+        lon_axis = next((i for i, d in enumerate(dim_names) if d in lon_dim_cands), None)
+        time_axis = next((i for i, d in enumerate(dim_names) if d in time_dim_cands), None)
+        if lat_axis is None or lon_axis is None:
+            logger.warning("WWLLN %d: could not identify lat/lon axes in dims=%s",
+                           year, dim_names)
+            return []
+
+        th_raw = th_var[:]
+        if time_axis is not None:
+            th_data = np.transpose(th_raw, (time_axis, lat_axis, lon_axis))
+            n_months = th_data.shape[0]
+        else:
+            th_data = np.transpose(th_raw, (lat_axis, lon_axis))[np.newaxis, ...]
+            n_months = 1
         logger.info(
-            "WWLLN %d diag: th_data type=%s shape=%s dtype=%s masked=%s",
-            year, type(th_data).__name__, getattr(th_data, "shape", None),
-            getattr(th_data, "dtype", None),
-            bool(getattr(th_data, "mask", None) is not None
-                 and np.any(getattr(th_data, "mask", False))),
+            "WWLLN %d diag: after transpose th_data shape=%s dtype=%s (time_axis=%s lat_axis=%s lon_axis=%s)",
+            year, th_data.shape, th_data.dtype, time_axis, lat_axis, lon_axis,
         )
 
         lat_arr = np.asarray(lat)
         lon_arr = np.asarray(lon)
-        logger.info(
-            "WWLLN %d diag: lat range [%.3f, %.3f] n=%d, lon range [%.3f, %.3f] n=%d",
-            year, float(lat_arr.min()), float(lat_arr.max()), len(lat_arr),
-            float(lon_arr.min()), float(lon_arr.max()), len(lon_arr),
-        )
         lat_mask = (lat_arr >= JAPAN_LAT_MIN) & (lat_arr <= JAPAN_LAT_MAX)
         lon_mask = (lon_arr >= JAPAN_LON_MIN) & (lon_arr <= JAPAN_LON_MAX)
         lat_idx = np.where(lat_mask)[0]
@@ -226,16 +239,7 @@ def parse_wwlln_netcdf(data_bytes: bytes, year: int) -> list[dict]:
             logger.warning("WWLLN %d: Japan region not in grid", year)
             return []
 
-        # Slice to Japan window once
-        if th_data.ndim == 3:
-            n_months = th_data.shape[0]
-            window = th_data[:, lat_idx[0]:lat_idx[-1] + 1, lon_idx[0]:lon_idx[-1] + 1]
-        elif th_data.ndim == 2:
-            n_months = 1
-            window = th_data[lat_idx[0]:lat_idx[-1] + 1, lon_idx[0]:lon_idx[-1] + 1][np.newaxis, ...]
-        else:
-            logger.warning("WWLLN %d: unexpected th_data ndim=%d", year, th_data.ndim)
-            return []
+        window = th_data[:, lat_idx[0]:lat_idx[-1] + 1, lon_idx[0]:lon_idx[-1] + 1]
 
         lat_window = lat_arr[lat_idx[0]:lat_idx[-1] + 1]
         lon_window = lon_arr[lon_idx[0]:lon_idx[-1] + 1]
