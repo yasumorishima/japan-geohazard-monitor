@@ -306,10 +306,10 @@ async def main():
         )
 
     existing_dates = set(datetime.strptime(r[0], "%Y-%m-%d") for r in existing if r[0])
-    dates_to_fetch = sorted(
-        (d for d in all_dates if d not in existing_dates),
-        reverse=True,
-    )
+    # Oldest-first for GNSS-TEC: Nagoya ISEE has sporadic 404s in the last 1-6 months
+    # (publication lag). 2011-early-2026 archive is ~fully populated, so filling
+    # from oldest fastest catches up without wasting cron budget on missing URLs.
+    dates_to_fetch = sorted(d for d in all_dates if d not in existing_dates)
 
     logger.info("GNSS-TEC: %d missing dates (%d total, %d existing)",
                 len(dates_to_fetch), total_days, len(existing_dates))
