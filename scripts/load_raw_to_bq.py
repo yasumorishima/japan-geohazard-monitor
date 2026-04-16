@@ -186,6 +186,16 @@ TABLES = {
             {"name": "received_at", "type": "STRING"},
         ],
     },
+    "lightning_thunder_hour": {
+        "query": "SELECT observed_at, cell_lat, cell_lon, thunder_hours, received_at FROM lightning_thunder_hour",
+        "schema": [
+            {"name": "observed_at", "type": "STRING"},
+            {"name": "cell_lat", "type": "FLOAT"},
+            {"name": "cell_lon", "type": "FLOAT"},
+            {"name": "thunder_hours", "type": "FLOAT"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
     "olr": {
         "query": "SELECT observed_at, cell_lat, cell_lon, olr_wm2, received_at FROM olr",
         "schema": [

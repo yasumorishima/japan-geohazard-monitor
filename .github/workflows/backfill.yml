@@ -39,6 +39,7 @@ on:
           - cosmic_ray
           - lightning
           - iss_lis
+          - wwlln_thunder_hour
           - geomag
           - olr
           - iers
@@ -381,6 +382,19 @@ jobs:
         run: |
           python3 scripts/fetch_iss_lis_lightning.py || echo "ISS LIS fetch failed (non-fatal)"
 
+      - name: Fetch WWLLN Monthly Thunder Hour (Earthdata auth, 2013-2025)
+        id: fetch_wwlln_thunder_hour
+        if: (inputs.target == 'all' || inputs.target == 'wwlln_thunder_hour' || inputs.target == '') && steps.earthdata_check.outputs.earthdata_ok == 'true'
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+        run: |
+          python3 scripts/fetch_wwlln_thunder_hour.py || echo "WWLLN thunder-hour fetch failed (non-fatal)"
+
       - name: Fetch INTERMAGNET hourly + CSES satellite EM data
         id: fetch_geomag
         if: inputs.target == 'all' || inputs.target == 'geomag' || inputs.target == ''
@@ -570,7 +584,7 @@ jobs:
           tables = [
               'earthquakes', 'tec', 'geomag_kp', 'focal_mechanisms',
               'gnss_tec', 'modis_lst', 'ulf_magnetic', 'cosmic_ray',
-              'lightning', 'iss_lis_lightning', 'geomag_hourly', 'satellite_em',
+              'lightning', 'iss_lis_lightning', 'lightning_thunder_hour', 'geomag_hourly', 'satellite_em',
               'olr', 'earth_rotation', 'solar_wind', 'gravity_mascon',
               'so2_column', 'cloud_fraction', 'nightlight',
               'goes_xray', 'goes_proton', 'tidal_stress', 'particle_flux',
@@ -656,6 +670,7 @@ jobs:
           FETCH_COSMIC_RAY: ${{ steps.fetch_cosmic_ray.outcome }}
           FETCH_LIGHTNING: ${{ steps.fetch_lightning.outcome }}
           FETCH_ISS_LIS: ${{ steps.fetch_iss_lis.outcome }}
+          FETCH_WWLLN_TH: ${{ steps.fetch_wwlln_thunder_hour.outcome }}
           FETCH_GEOMAG: ${{ steps.fetch_geomag.outcome }}
           FETCH_OLR: ${{ steps.fetch_olr.outcome }}
           FETCH_IERS: ${{ steps.fetch_iers.outcome }}
@@ -694,6 +709,9 @@ jobs:
               'cosmic_ray': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM cosmic_ray',
               'lightning': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM lightning',
               'iss_lis_lightning': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM iss_lis_lightning',
+              # WWLLN Thunder Hour is monthly; *30 converts months → ~days for the same % formula.
+              # Source coverage 2013-01 to 2025-12 ⇒ caps at ~85% of the 2011-now timespan by design.
+              'lightning_thunder_hour': 'SELECT COUNT(DISTINCT substr(observed_at,1,7)) * 30 FROM lightning_thunder_hour',
               'geomag_hourly': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM geomag_hourly WHERE station=\"KAK\"',
               'satellite_em': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM satellite_em',
               'olr': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM olr',
@@ -749,6 +767,7 @@ jobs:
               'Cosmic ray': os.environ.get('FETCH_COSMIC_RAY', 'skipped'),
               'Lightning': os.environ.get('FETCH_LIGHTNING', 'skipped'),
               'ISS LIS': os.environ.get('FETCH_ISS_LIS', 'skipped'),
+              'WWLLN ThunderHour': os.environ.get('FETCH_WWLLN_TH', 'skipped'),
               'Geomag': os.environ.get('FETCH_GEOMAG', 'skipped'),
               'OLR': os.environ.get('FETCH_OLR', 'skipped'),
               'IERS': os.environ.get('FETCH_IERS', 'skipped'),
@@ -815,6 +834,7 @@ jobs:
             steps.fetch_cosmic_ray.outcome == 'failure' ||
             steps.fetch_lightning.outcome == 'failure' ||
             steps.fetch_iss_lis.outcome == 'failure' ||
+            steps.fetch_wwlln_thunder_hour.outcome == 'failure' ||
             steps.fetch_geomag.outcome == 'failure' ||
             steps.fetch_olr.outcome == 'failure' ||
             steps.fetch_iers.outcome == 'failure' ||
@@ -850,6 +870,7 @@ jobs:
           [ "${{ steps.fetch_cosmic_ray.outcome }}" = "failure" ] && FAILED="$FAILED cosmic_ray"
           [ "${{ steps.fetch_lightning.outcome }}" = "failure" ] && FAILED="$FAILED lightning"
           [ "${{ steps.fetch_iss_lis.outcome }}" = "failure" ] && FAILED="$FAILED iss_lis"
+          [ "${{ steps.fetch_wwlln_thunder_hour.outcome }}" = "failure" ] && FAILED="$FAILED wwlln_thunder_hour"
           [ "${{ steps.fetch_geomag.outcome }}" = "failure" ] && FAILED="$FAILED geomag"
           [ "${{ steps.fetch_olr.outcome }}" = "failure" ] && FAILED="$FAILED olr"
           [ "${{ steps.fetch_iers.outcome }}" = "failure" ] && FAILED="$FAILED iers"
@@ -886,6 +907,9 @@ jobs:
               'cosmic_ray': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM cosmic_ray',
               'lightning': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM lightning',
               'iss_lis_lightning': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM iss_lis_lightning',
+              # WWLLN Thunder Hour is monthly; *30 converts months → ~days for the same % formula.
+              # Source coverage 2013-01 to 2025-12 ⇒ caps at ~85% of the 2011-now timespan by design.
+              'lightning_thunder_hour': 'SELECT COUNT(DISTINCT substr(observed_at,1,7)) * 30 FROM lightning_thunder_hour',
               'geomag_hourly': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM geomag_hourly WHERE station=\"KAK\"',
               'satellite_em': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM satellite_em',
               'olr': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM olr',
