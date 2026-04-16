@@ -196,6 +196,16 @@ TABLES = {
             {"name": "received_at", "type": "STRING"},
         ],
     },
+    "lightning_lis_otd": {
+        "query": "SELECT observed_at, cell_lat, cell_lon, flash_rate, received_at FROM lightning_lis_otd",
+        "schema": [
+            {"name": "observed_at", "type": "STRING"},
+            {"name": "cell_lat", "type": "FLOAT"},
+            {"name": "cell_lon", "type": "FLOAT"},
+            {"name": "flash_rate", "type": "FLOAT"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
     "olr": {
         "query": "SELECT observed_at, cell_lat, cell_lon, olr_wm2, received_at FROM olr",
         "schema": [
