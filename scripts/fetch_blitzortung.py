@@ -398,38 +398,37 @@ async def main():
 
     now = datetime.now(timezone.utc).isoformat()
 
-    # Determine target dates: days around M6+ earthquakes (+-7 days)
+    # Continuous strategy: all dates 2011-01-01 to yesterday, fetch missing.
+    # Recent-first: Blitzortung Sferics Bonn has better coverage for recent dates,
+    # and analysis window focuses on recent events first.
+    start_date = datetime(2011, 1, 1)
+    end_date = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+    total_days = (end_date - start_date).days + 1
+    all_dates = [start_date + timedelta(days=i) for i in range(total_days)]
+
     async with safe_connect() as db:
-        eq_rows = await db.execute_fetchall(
-            "SELECT DISTINCT DATE(occurred_at), latitude, longitude, magnitude "
-            "FROM earthquakes "
-            "WHERE magnitude >= 6.0 ORDER BY occurred_at"
-        )
         existing = await db.execute_fetchall(
             "SELECT DISTINCT observed_at FROM lightning"
         )
 
-    target_dates = set()
-    for r in eq_rows:
-        d = datetime.strptime(r[0], "%Y-%m-%d")
-        for offset in range(-7, 8):
-            target_dates.add(d + timedelta(days=offset))
-
     existing_dates = set(r[0] for r in existing)
 
     dates_to_fetch = sorted(
-        d for d in target_dates
-        if d.strftime("%Y-%m-%d") not in existing_dates
-        and d.year >= 2011
+        (d for d in all_dates if d.strftime("%Y-%m-%d") not in existing_dates),
+        reverse=True,
     )
+
+    import os as _os
+    max_dates = int(_os.environ.get("LIGHTNING_MAX_DATES", "200"))
+    dates_to_fetch = dates_to_fetch[:max_dates]
 
     if not dates_to_fetch:
         logger.info("All target dates already fetched")
         return
 
     logger.info(
-        "%d dates to fetch (%d total target dates, %d existing)",
-        len(dates_to_fetch), len(target_dates), len(existing_dates),
+        "%d dates to fetch (%d total, %d existing)",
+        len(dates_to_fetch), total_days, len(existing_dates),
     )
 
     total_records = 0

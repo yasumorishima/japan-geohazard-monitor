@@ -364,6 +364,7 @@ jobs:
         timeout-minutes: 10
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
+          LIGHTNING_MAX_DATES: "200"
         run: |
           python3 scripts/fetch_blitzortung.py || echo "Lightning fetch failed (non-fatal)"
 
