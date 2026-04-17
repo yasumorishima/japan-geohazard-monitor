@@ -101,10 +101,10 @@ async def list_available_files(session: aiohttp.ClientSession) -> dict[int, str]
     For years with both final and preliminary files, the preliminary file
     is preferred for the current year, final for past years.
     """
-    list_url = f"{S3_BASE_URL}?list-type=2&prefix={S3_PREFIX}&max-keys=200"
+    list_params = {"list-type": "2", "prefix": S3_PREFIX, "max-keys": "200"}
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            async with session.get(list_url, timeout=TIMEOUT) as resp:
+            async with session.get(S3_BASE_URL, params=list_params, timeout=TIMEOUT) as resp:
                 if resp.status != 200:
                     logger.warning("S3 listing attempt %d: HTTP %d", attempt, resp.status)
                     if attempt == MAX_RETRIES:
