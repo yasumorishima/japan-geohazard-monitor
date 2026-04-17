@@ -6,22 +6,22 @@ Audit run: [24402252536](https://github.com/yasumorishima/japan-geohazard-monito
 
 Auditing backfill artifact `backfill-checkpoint-24393165660` (latest, 4.0 GB DB)
 revealed that **10 of the 76 feature_matrix features are unreliable** due to
-underlying raw-table issues. The BQ feature_matrix loaded on 2026-03-22
-(`phase="15h"`, reported CV AUC 0.7417) was trained on this mix of clean and
-contaminated data — the AUC number should NOT be treated as final model
-performance until the upstream tables are corrected and the feature matrix is
-rebuilt.
+underlying raw-table issues. As of 2026-04-17, **8 of 10 contaminated features
+are now FIXED** (goes_xray, solar_wind, goes_proton, so2, cloud_fraction,
+soil_moisture). Remaining: lightning (WONTFIX, no free daily source) and
+satellite_em (feature not wired to pipeline). The BQ feature_matrix needs
+a clean rebuild with the fixed data.
 
 ## Per-feature contamination
 
 | Feature(s) | Upstream table | Issue | File |
 |---|---|---|---|
-| `xray_flux_max_24h` | `goes_xray` | Timestamps in 1980-1995 (31-year shift). LISIRD returns seconds since J2000 (2000-01-01 12:00 UT); fetcher parses as Unix seconds. | `scripts/fetch_goes_xray.py:351,370` |
-| `sw_bz_min_24h`, `sw_pressure_max_24h`, `dst_min_24h` | `solar_wind` | NASA OMNI2 yearly files include placeholder data through 2026-12-31 (future). | `scripts/fetch_solar_wind.py:49` |
-| `proton_flux_max_24h` | `goes_proton` | Same OMNI2 yearly-file padding. | `scripts/fetch_goes_proton.py:46` |
+| `xray_flux_max_24h` | `goes_xray` | ✅ FIXED — LISIRD .json→.jsond 切替 (ms Unix epoch) + SWPC time_tag ISO 8601 対応 (607977e) + pre-2010 rows purge. |  |
+| `sw_bz_min_24h`, `sw_pressure_max_24h`, `dst_min_24h` | `solar_wind` | ✅ FIXED — `dt > utcnow()` skip + one-time purge of future rows. | `scripts/fetch_solar_wind.py:113` |
+| `proton_flux_max_24h` | `goes_proton` | ✅ FIXED — Same future-date filter + purge. | `scripts/fetch_goes_proton.py:109` |
 | `so2_column_anomaly` | `so2_column` | Data appeared stuck at 2014 due to salvage SKIP_TABLES bug + 40min timeout loop (never reached 2015). OMSO2G V003 has 2004-2025 data on GES DISC. Fixed in a888964 (timeout 90min + SKIP_TABLES cleared). | `backfill.yml`, `salvage_db.py` |
 | `cloud_fraction_anomaly` | `cloud_fraction` | Table never created — `init_cloud_table()` exception handler order bug (`OperationalError` subclass of `DatabaseError`, wrong catch order). Fixed in a888964. | `scripts/fetch_cloud_fraction.py:76-99` |
-| `soil_moisture_anomaly` | `soil_moisture` | Table never created (SMOPS ERDDAP IP blacklisted, SMOPS_END_YEAR=2022 hardcoded). | `scripts/fetch_smap_moisture.py:66` |
+| `soil_moisture_anomaly` | `soil_moisture` | ✅ FIXED — fetch step was missing from backfill.yml (39a601b). CPC monthly + SMOPS daily fetcher exists but was never called. |  |
 | `lightning_count_7d`, `lightning_anomaly` | `lightning` | 0 rows — Blitzortung archive returns HTML (access restricted) for every month. | run log 2026-04-14 L2454-2460 |
 
 ## Tables that are fine (evidence-backed)
