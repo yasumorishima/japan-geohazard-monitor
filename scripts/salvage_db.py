@@ -30,7 +30,9 @@ import os
 import sqlite3
 import sys
 
-SKIP_TABLES = {"so2_column", "cloud_fraction"}
+# Originally skipped so2_column/cloud_fraction (corruption origin in pre-salvage era).
+# Removed 2026-04-17: post-salvage checkpoints are integrity-ok, safe to include.
+SKIP_TABLES = set()
 
 
 def salvage(src: str, dst: str) -> bool:
