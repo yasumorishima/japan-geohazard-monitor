@@ -136,8 +136,8 @@ jobs:
                 # Ubuntu runners ship sqlite3 without sqlite_dbpage vtab, so
                 # `.recover` fails immediately. Use per-table ATTACH+INSERT
                 # salvage (proven 35/37 tables recovered in debug run
-                # 24421917797). Skips so2_column/cloud_fraction (corruption
-                # origin — let backfill re-fetch those from source).
+                # 24421917797). All tables now included (SKIP_TABLES cleared
+                # in commit bec5675).
                 echo "  corrupted — attempting per-table salvage"
                 python3 scripts/salvage_db.py \
                   --src data/geohazard.db --dst /tmp/salvaged.db
@@ -467,7 +467,7 @@ jobs:
         id: fetch_so2
         if: (inputs.target == 'all' || inputs.target == 'so2' || inputs.target == '') && steps.earthdata_check.outputs.earthdata_ok == 'true'
         continue-on-error: true
-        timeout-minutes: 40
+        timeout-minutes: 90
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
@@ -503,7 +503,7 @@ jobs:
         id: fetch_cloud
         if: (inputs.target == 'all' || inputs.target == 'cloud' || inputs.target == '') && steps.earthdata_check.outputs.earthdata_ok == 'true'
         continue-on-error: true
-        timeout-minutes: 40
+        timeout-minutes: 90
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}

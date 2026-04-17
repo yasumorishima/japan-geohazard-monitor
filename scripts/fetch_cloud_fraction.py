@@ -76,6 +76,11 @@ async def init_cloud_table():
     async with safe_connect() as db:
         try:
             await db.execute("SELECT COUNT(*) FROM cloud_fraction")
+        except _sqlite3.OperationalError as e:
+            # "no such table" is the expected path on a fresh DB; swallow.
+            # Must come BEFORE DatabaseError (OperationalError is a subclass).
+            if "no such table" not in str(e).lower():
+                raise
         except _sqlite3.DatabaseError as e:
             # Only the specific corruption signatures; re-raise anything else
             # (UNIQUE constraint, locked, schema change, etc.) so real errors
@@ -93,10 +98,6 @@ async def init_cloud_table():
                 await db.execute("DROP TABLE IF EXISTS cloud_fraction")
                 await db.commit()
             else:
-                raise
-        except _sqlite3.OperationalError as e:
-            # "no such table" is the expected path on a fresh DB; swallow.
-            if "no such table" not in str(e).lower():
                 raise
         await db.execute("""
             CREATE TABLE IF NOT EXISTS cloud_fraction (
