@@ -49,7 +49,7 @@ focal_mechanisms 3,498   rows 2,222 days   39.8%                    ✅
 | so2_column 2015+ gap | ✅ RESOLVED (a888964) — root cause was salvage SKIP_TABLES + 40min timeout loop. OMSO2G V003 has data 2004-2025. Will accumulate in next cron runs. |
 | cloud_fraction init bug | ✅ RESOLVED (a888964) — exception handler order fix. Table will be created on next cron run. |
 | soil_moisture fetch step missing | ✅ RESOLVED — fetch step was never added to backfill.yml. Added fetch_soil_moisture (CPC monthly + SMOPS daily, no auth). |
-| lightning alternative source | open — WWLLN (requires subscription) or Bonn sferics archive |
+| lightning daily data | ⬜ WONTFIX — no free daily source exists (GLD360/ENTLN=paid, Blitzortung=restricted, Bonn=EU only). Monthly coverage via WWLLN+LIS/OTD (Phase 20) is sufficient. Features auto-excluded. |
 | satellite_em (CSES) | open — Swarm EFI/MAG via ESA (no registration) as interim |
 | snet_pressure | open — HinetPy rejects every date; S-net station catalog needs verification |
 
