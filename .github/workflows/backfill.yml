@@ -56,6 +56,7 @@ on:
           - dart
           - ioc_sealevel
           - tide_gauge
+          - soil_moisture
           - ocean_color
 
 permissions:
@@ -486,6 +487,16 @@ jobs:
         run: |
           python3 scripts/fetch_tide_gauge.py || echo "Tide gauge fetch failed (non-fatal)"
 
+      - name: Fetch soil moisture (NOAA CPC monthly + SMOPS daily)
+        id: fetch_soil_moisture
+        if: inputs.target == 'all' || inputs.target == 'soil_moisture' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_smap_moisture.py || echo "Soil moisture fetch failed (non-fatal)"
+
       - name: Fetch NASA ocean color chlorophyll-a
         id: fetch_ocean_color
         if: (inputs.target == 'all' || inputs.target == 'ocean_color' || inputs.target == '')
@@ -701,6 +712,7 @@ jobs:
           FETCH_CLOUD: ${{ steps.fetch_cloud.outcome }}
           FETCH_NIGHTLIGHT: ${{ steps.fetch_nightlight.outcome }}
           FETCH_TIDE_GAUGE: ${{ steps.fetch_tide_gauge.outcome }}
+          FETCH_SOIL_MOISTURE: ${{ steps.fetch_soil_moisture.outcome }}
           FETCH_OCEAN_COLOR: ${{ steps.fetch_ocean_color.outcome }}
           FETCH_GOES_XRAY: ${{ steps.fetch_goes_xray.outcome }}
           FETCH_GOES_PROTON: ${{ steps.fetch_goes_proton.outcome }}
@@ -802,6 +814,7 @@ jobs:
               'Cloud': os.environ.get('FETCH_CLOUD', 'skipped'),
               'Nightlight': os.environ.get('FETCH_NIGHTLIGHT', 'skipped'),
               'Tide gauge': os.environ.get('FETCH_TIDE_GAUGE', 'skipped'),
+              'Soil moisture': os.environ.get('FETCH_SOIL_MOISTURE', 'skipped'),
               'Ocean color': os.environ.get('FETCH_OCEAN_COLOR', 'skipped'),
               'GOES X-ray': os.environ.get('FETCH_GOES_XRAY', 'skipped'),
               'GOES proton': os.environ.get('FETCH_GOES_PROTON', 'skipped'),
@@ -870,6 +883,7 @@ jobs:
             steps.fetch_cloud.outcome == 'failure' ||
             steps.fetch_nightlight.outcome == 'failure' ||
             steps.fetch_tide_gauge.outcome == 'failure' ||
+            steps.fetch_soil_moisture.outcome == 'failure' ||
             steps.fetch_ocean_color.outcome == 'failure' ||
             steps.fetch_goes_xray.outcome == 'failure' ||
             steps.fetch_goes_proton.outcome == 'failure' ||
@@ -907,6 +921,7 @@ jobs:
           [ "${{ steps.fetch_cloud.outcome }}" = "failure" ] && FAILED="$FAILED cloud"
           [ "${{ steps.fetch_nightlight.outcome }}" = "failure" ] && FAILED="$FAILED nightlight"
           [ "${{ steps.fetch_tide_gauge.outcome }}" = "failure" ] && FAILED="$FAILED tide_gauge"
+          [ "${{ steps.fetch_soil_moisture.outcome }}" = "failure" ] && FAILED="$FAILED soil_moisture"
           [ "${{ steps.fetch_ocean_color.outcome }}" = "failure" ] && FAILED="$FAILED ocean_color"
           [ "${{ steps.fetch_goes_xray.outcome }}" = "failure" ] && FAILED="$FAILED goes_xray"
           [ "${{ steps.fetch_goes_proton.outcome }}" = "failure" ] && FAILED="$FAILED goes_proton"
