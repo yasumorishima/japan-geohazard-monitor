@@ -310,7 +310,7 @@ jobs:
 
       - name: Fetch OMI SO2 column data (Earthdata auth)
         continue-on-error: true
-        timeout-minutes: 30
+        timeout-minutes: 90
         if: steps.earthdata_check.outputs.earthdata_ok == 'true'
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
@@ -320,15 +320,13 @@ jobs:
         run: |
           python3 scripts/fetch_omi_so2.py || echo "SO2 fetch failed (non-fatal)"
 
-      # SMAP disabled: NOAA ERDDAP permanently blacklists GitHub Actions IPs (403).
-      # DB-restored data is still usable. Re-enable if ERDDAP block is lifted.
-      # - name: Fetch SMAP soil moisture (Earthdata auth optional)
-      #   continue-on-error: true
-      #   timeout-minutes: 20
-      #   env:
-      #     GEOHAZARD_DB_PATH: ./data/geohazard.db
-      #   run: |
-      #     python3 scripts/fetch_smap_moisture.py || echo "SMAP fetch failed (non-fatal)"
+      - name: Fetch soil moisture (NOAA CPC monthly + SMOPS daily)
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_smap_moisture.py || echo "Soil moisture fetch failed (non-fatal)"
 
       # --- Phase 10b: Additional unconventional sources ---
 
@@ -353,7 +351,7 @@ jobs:
 
       - name: Fetch MODIS cloud fraction (Earthdata auth)
         continue-on-error: true
-        timeout-minutes: 30
+        timeout-minutes: 90
         if: steps.earthdata_check.outputs.earthdata_ok == 'true'
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
