@@ -9,12 +9,13 @@ attributed to the LAIC (Lithosphere-Atmosphere-Ionosphere Coupling) model:
 Unlike MODIS LST (point measurements at epicenters), OLR captures broad-scale
 thermal anomalies over the entire Japan region at 2.5-degree resolution.
 
-Data source: NOAA NCEI CDR (Climate Data Record) OLR Daily
+Data source: NOAA NCEI CDR (Climate Data Record) OLR Daily v02r00
     - Derived from NOAA satellite observations
     - 2.5-degree global grid, daily, 1979-present (~2-day lag)
     - Per-year NetCDF files + preliminary file for current year
     - No authentication required
-    - URL: https://www.ncei.noaa.gov/data/outgoing-longwave-radiation-daily/access/
+    - S3: https://archive.data.noaa.gov/cdr/ (prefix UMD_ESSIC/OLR_CDR/Daily/OLR-D-CDR_01B-21/)
+    - Migrated from legacy NCEI HTTPS in 2025 (v01r02 → v02r00)
 
 Target features:
     - olr_anomaly: deviation from 30-day rolling mean (in σ units)
@@ -44,8 +45,13 @@ from config import DB_PATH
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# NCEI CDR OLR directory listing
-NCEI_BASE_URL = "https://www.ncei.noaa.gov/data/outgoing-longwave-radiation-daily/access/"
+# NCEI CDR OLR v02r00 — migrated from NCEI HTTPS to S3 archive (2025)
+# Bucket: ncei-cdr-data-976619599284-us-east-1
+# Prefix: UMD_ESSIC/OLR_CDR/Daily/OLR-D-CDR_01B-21/
+S3_BASE_URL = "https://archive.data.noaa.gov/cdr/"
+S3_PREFIX = "UMD_ESSIC/OLR_CDR/Daily/OLR-D-CDR_01B-21/"
+# Legacy URL kept as comment for reference
+# NCEI_BASE_URL = "https://www.ncei.noaa.gov/data/outgoing-longwave-radiation-daily/access/"
 
 # Japan bounding box
 NORTH = 46.0
@@ -58,11 +64,11 @@ TIMEOUT = aiohttp.ClientTimeout(total=600, connect=30)
 
 START_YEAR = 2011
 
-# Pattern for yearly CDR OLR files
-# Final: olr-daily_v01r02_YYYYMMDD_YYYYMMDD.nc
-# Preliminary: olr-daily_v01r02-preliminary_YYYYMMDD_YYYYMMDD.nc
+# Pattern for yearly CDR OLR v02r00 files on S3
+# Final: OLR-Daily_v02r00_sYYYYMMDD_eYYYYMMDD.nc
+# Preliminary: OLR-Daily_v02r00-preliminary_sYYYYMMDD_eYYYYMMDD.nc
 FILE_PATTERN = re.compile(
-    r'olr-daily_v01r02(?:-preliminary)?_(\d{4})\d{4}_(\d{4})\d{4}\.nc'
+    r'OLR-Daily_v02r00(?:-preliminary)?_s(\d{4})\d{4}_e(\d{4})\d{4}\.nc'
 )
 
 
@@ -88,57 +94,60 @@ async def init_olr_table():
 
 
 async def list_available_files(session: aiohttp.ClientSession) -> dict[int, str]:
-    """Parse NCEI directory listing to find available OLR NetCDF files.
+    """List available OLR NetCDF files from NCEI S3 archive.
 
-    Returns dict mapping year -> filename. For years with both final and
-    preliminary files, the preliminary file is preferred for the current year
-    (more recent data), and the final file is preferred for past years.
+    Uses S3 ListObjectsV2 API on archive.data.noaa.gov/cdr/ bucket.
+    Returns dict mapping year -> S3 key (relative to bucket root).
+    For years with both final and preliminary files, the preliminary file
+    is preferred for the current year, final for past years.
     """
+    list_url = f"{S3_BASE_URL}?list-type=2&prefix={S3_PREFIX}&max-keys=200"
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            async with session.get(NCEI_BASE_URL, timeout=TIMEOUT) as resp:
+            async with session.get(list_url, timeout=TIMEOUT) as resp:
                 if resp.status != 200:
-                    logger.warning("Directory listing attempt %d: HTTP %d", attempt, resp.status)
+                    logger.warning("S3 listing attempt %d: HTTP %d", attempt, resp.status)
                     if attempt == MAX_RETRIES:
                         return {}
                     await asyncio.sleep(2 ** attempt)
                     continue
-                html = await resp.text()
+                xml_text = await resp.text()
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-            logger.warning("Directory listing attempt %d: %s", attempt, type(e).__name__)
+            logger.warning("S3 listing attempt %d: %s", attempt, type(e).__name__)
             if attempt == MAX_RETRIES:
                 return {}
             await asyncio.sleep(2 ** attempt)
             continue
 
-        # Parse filenames from HTML directory listing
-        # Links look like: <a href="olr-daily_v01r02_20110101_20111231.nc">
+        # Parse S3 XML listing: <Key>UMD_ESSIC/.../OLR-Daily_v02r00_s20110101_e20111231.nc</Key>
         files_by_year: dict[int, dict[str, str]] = {}
-        for match in FILE_PATTERN.finditer(html):
-            filename = match.group(0)
-            start_year = int(match.group(1))
+        for key_match in re.finditer(r'<Key>([^<]+)</Key>', xml_text):
+            s3_key = key_match.group(1)
+            filename = s3_key.split("/")[-1]
+            m = FILE_PATTERN.match(filename)
+            if not m:
+                continue
+            start_year = int(m.group(1))
             is_preliminary = "-preliminary" in filename
 
             if start_year not in files_by_year:
                 files_by_year[start_year] = {}
 
             if is_preliminary:
-                files_by_year[start_year]["preliminary"] = filename
+                files_by_year[start_year]["preliminary"] = s3_key
             else:
-                files_by_year[start_year]["final"] = filename
+                files_by_year[start_year]["final"] = s3_key
 
         # Select best file per year
         current_year = datetime.now(timezone.utc).year
         result: dict[int, str] = {}
         for year, variants in files_by_year.items():
             if year == current_year:
-                # Prefer preliminary for current year (more recent data)
                 result[year] = variants.get("preliminary", variants.get("final", ""))
             else:
-                # Prefer final for past years
                 result[year] = variants.get("final", variants.get("preliminary", ""))
 
-        logger.info("Found %d year files on NCEI (years %s-%s)",
+        logger.info("Found %d year files on S3 (years %s-%s)",
                      len(result),
                      min(result.keys()) if result else "?",
                      max(result.keys()) if result else "?")
@@ -149,9 +158,12 @@ async def list_available_files(session: aiohttp.ClientSession) -> dict[int, str]
 
 async def download_netcdf(session: aiohttp.ClientSession, filename: str,
                            dest_path: Path) -> bool:
-    """Download a single NetCDF file from NCEI."""
-    url = NCEI_BASE_URL + filename
-    logger.info("Downloading %s (~95MB)...", filename)
+    """Download a single NetCDF file from NCEI S3 archive.
+
+    filename is the full S3 key (e.g. UMD_ESSIC/OLR_CDR/.../OLR-Daily_v02r00_s20110101_e20111231.nc).
+    """
+    url = S3_BASE_URL + filename
+    logger.info("Downloading %s (~95MB)...", filename.split("/")[-1])
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -290,25 +302,26 @@ async def main():
     async with aiohttp.ClientSession() as session:
         available_files = await list_available_files(session)
         if not available_files:
-            logger.error("Could not list NCEI files — aborting OLR fetch")
+            logger.error("Could not list S3 files — aborting OLR fetch")
             return
 
         total_records = 0
 
         for year in fetch_years:
             if year not in available_files:
-                logger.warning("No NCEI file available for year %d", year)
+                logger.warning("No S3 file available for year %d", year)
                 continue
 
-            filename = available_files[year]
-            logger.info("Processing OLR %d (%s)...", year, filename)
+            s3_key = available_files[year]
+            short_name = s3_key.split("/")[-1]
+            logger.info("Processing OLR %d (%s)...", year, short_name)
 
             # Download to a temp file
             with tempfile.TemporaryDirectory() as tmpdir:
-                nc_path = Path(tmpdir) / filename
-                success = await download_netcdf(session, filename, nc_path)
+                nc_path = Path(tmpdir) / short_name
+                success = await download_netcdf(session, s3_key, nc_path)
                 if not success:
-                    logger.warning("Failed to download %s — skipping year %d", filename, year)
+                    logger.warning("Failed to download %s — skipping year %d", short_name, year)
                     continue
 
                 # Extract Japan region data (runs synchronously — CPU-bound)
