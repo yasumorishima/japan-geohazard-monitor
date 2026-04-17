@@ -19,8 +19,8 @@ rebuilt.
 | `xray_flux_max_24h` | `goes_xray` | Timestamps in 1980-1995 (31-year shift). LISIRD returns seconds since J2000 (2000-01-01 12:00 UT); fetcher parses as Unix seconds. | `scripts/fetch_goes_xray.py:351,370` |
 | `sw_bz_min_24h`, `sw_pressure_max_24h`, `dst_min_24h` | `solar_wind` | NASA OMNI2 yearly files include placeholder data through 2026-12-31 (future). | `scripts/fetch_solar_wind.py:49` |
 | `proton_flux_max_24h` | `goes_proton` | Same OMNI2 yearly-file padding. | `scripts/fetch_goes_proton.py:46` |
-| `so2_column_anomaly` | `so2_column` | Data stops 2014-12-27 (OMI row anomaly end-of-life, 11 years of ingestion silently absent). | source-driven, not code |
-| `cloud_fraction_anomaly` | `cloud_fraction` | Table CORRUPT — `PRAGMA integrity_check` fails, all writes since run #3 blocked. | page-level SQLite corruption |
+| `so2_column_anomaly` | `so2_column` | Data appeared stuck at 2014 due to salvage SKIP_TABLES bug + 40min timeout loop (never reached 2015). OMSO2G V003 has 2004-2025 data on GES DISC. Fixed in a888964 (timeout 90min + SKIP_TABLES cleared). | `backfill.yml`, `salvage_db.py` |
+| `cloud_fraction_anomaly` | `cloud_fraction` | Table never created — `init_cloud_table()` exception handler order bug (`OperationalError` subclass of `DatabaseError`, wrong catch order). Fixed in a888964. | `scripts/fetch_cloud_fraction.py:76-99` |
 | `soil_moisture_anomaly` | `soil_moisture` | Table never created (SMOPS ERDDAP IP blacklisted, SMOPS_END_YEAR=2022 hardcoded). | `scripts/fetch_smap_moisture.py:66` |
 | `lightning_count_7d`, `lightning_anomaly` | `lightning` | 0 rows — Blitzortung archive returns HTML (access restricted) for every month. | run log 2026-04-14 L2454-2460 |
 
@@ -44,10 +44,10 @@ focal_mechanisms 3,498   rows 2,222 days   39.8%                    ✅
 
 | Action | Status |
 |---|---|
-| goes_xray epoch fix | pending PR — switch to `.jsond` endpoint (ms Unix) + date sanity filter + drop existing 1980-1995 rows |
+| goes_xray time_tag fix | ✅ RESOLVED (607977e) — SWPC changed time_tag from space-separated to ISO 8601. Fixed with `.replace("T", " ")`. |
 | solar_wind/goes_proton future-date filter | pending PR — reject rows where `observed_at > utcnow()` |
-| so2_column 2015+ gap | investigation — verify OMI actually continued past 2014; if so, find why fetcher stops |
-| cloud_fraction drop+refetch | pending PR — DROP TABLE on next backfill startup, re-fetch from MODIS |
+| so2_column 2015+ gap | ✅ RESOLVED (a888964) — root cause was salvage SKIP_TABLES + 40min timeout loop. OMSO2G V003 has data 2004-2025. Will accumulate in next cron runs. |
+| cloud_fraction init bug | ✅ RESOLVED (a888964) — exception handler order fix. Table will be created on next cron run. |
 | soil_moisture alternative source | open — SMAP L3 via NASA Earthdata (CMR) instead of ERDDAP |
 | lightning alternative source | open — WWLLN (requires subscription) or Bonn sferics archive |
 | satellite_em (CSES) | open — Swarm EFI/MAG via ESA (no registration) as interim |
@@ -55,4 +55,4 @@ focal_mechanisms 3,498   rows 2,222 days   39.8%                    ✅
 
 ## validate_data.py / diagnose_data_gaps.py known bugs
 
-Both scripts have incorrect `time_col` entries for 7 tables. `earthquakes` coverage% has been computed against a non-existent column `time` (actual: `occurred_at`) for weeks. Affected: earthquakes, focal_mechanisms, tec, gnss_tec, geomag_kp, modis_lst, snet_waveform. Separate PR planned.
+Both scripts had incorrect `time_col` entries for 7 tables. ✅ Fixed in commits 10a85c5 + 9648abc (backfill.yml coverage report). Affected: earthquakes, focal_mechanisms, tec, gnss_tec, geomag_kp, modis_lst, snet_waveform.
