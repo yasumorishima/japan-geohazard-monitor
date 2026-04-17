@@ -596,7 +596,7 @@ jobs:
           import sqlite3, os
           db = sqlite3.connect(os.environ['GEOHAZARD_DB_PATH'])
           time_col = {
-              'earthquakes': 'time', 'tec': 'epoch', 'geomag_kp': 'time_tag',
+              'earthquakes': 'occurred_at', 'tec': 'epoch', 'geomag_kp': 'time_tag',
               'focal_mechanisms': 'occurred_at', 'gnss_tec': 'epoch',
               'modis_lst': 'observed_date', 'snet_waveform': 'date_str',
           }
