@@ -595,6 +595,11 @@ jobs:
           python3 -c "
           import sqlite3, os
           db = sqlite3.connect(os.environ['GEOHAZARD_DB_PATH'])
+          time_col = {
+              'earthquakes': 'time', 'tec': 'epoch', 'geomag_kp': 'time_tag',
+              'focal_mechanisms': 'occurred_at', 'gnss_tec': 'epoch',
+              'modis_lst': 'observed_date', 'snet_waveform': 'date_str',
+          }
           tables = [
               'earthquakes', 'tec', 'geomag_kp', 'focal_mechanisms',
               'gnss_tec', 'modis_lst', 'ulf_magnetic', 'cosmic_ray',
@@ -607,9 +612,10 @@ jobs:
           ]
           for t in tables:
               try:
+                  col = time_col.get(t, 'observed_at')
                   cnt = db.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0]
-                  mi = db.execute(f'SELECT MIN(observed_at) FROM {t}').fetchone()[0]
-                  mx = db.execute(f'SELECT MAX(observed_at) FROM {t}').fetchone()[0]
+                  mi = db.execute(f'SELECT MIN({col}) FROM {t}').fetchone()[0]
+                  mx = db.execute(f'SELECT MAX({col}) FROM {t}').fetchone()[0]
                   print(f'{t}: {cnt:,} rows ({mi} → {mx})')
               except Exception as e:
                   print(f'{t}: ERROR {e}')
