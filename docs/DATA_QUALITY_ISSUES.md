@@ -46,7 +46,7 @@ focal_mechanisms 3,498   rows 2,222 days   39.8%                    ✅
 |---|---|
 | goes_xray time_tag fix | ✅ RESOLVED (607977e) — SWPC changed time_tag from space-separated to ISO 8601. Fixed with `.replace("T", " ")`. |
 | solar_wind/goes_proton future-date filter | ✅ RESOLVED — `dt > utcnow()` skip + one-time purge of existing future rows already in both fetchers |
-| so2_column 2015+ gap | ✅ RESOLVED (a888964) — root cause was salvage SKIP_TABLES + 40min timeout loop. OMSO2G V003 has data 2004-2025. Will accumulate in next cron runs. |
+| so2_column 2015+ gap | ✅ RESOLVED (a888964 + ec61a92) — root cause 1: salvage SKIP_TABLES + 40min timeout loop. Root cause 2: targeted dispatch runs (e.g. target=cloud_fraction) uploaded partial checkpoints that overwrote full ones, resetting SO2 to 0 rows every cycle. Fix: skip checkpoint upload for targeted dispatches. Verified: 4.5M rows (→2016-05). |
 | cloud_fraction init bug | ✅ RESOLVED (a888964) — exception handler order fix. Table will be created on next cron run. |
 | soil_moisture fetch step missing | ✅ RESOLVED — fetch step was never added to backfill.yml. Added fetch_soil_moisture (CPC monthly + SMOPS daily, no auth). |
 | lightning daily data | ⬜ WONTFIX — no free daily source exists (GLD360/ENTLN=paid, Blitzortung=restricted, Bonn=EU only). Monthly coverage via WWLLN+LIS/OTD (Phase 20) is sufficient. Features auto-excluded. |
