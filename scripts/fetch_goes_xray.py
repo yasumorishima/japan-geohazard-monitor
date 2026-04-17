@@ -193,9 +193,10 @@ async def fetch_swpc_json(session: aiohttp.ClientSession, n_days: int = 7) -> li
 
     rows = []
     for tag, fluxes in time_map.items():
-        # Parse time_tag: "2024-01-15 12:00:00.000"
+        # Parse time_tag: "2024-01-15 12:00:00.000" or "2026-04-10T08:59:00Z"
         try:
-            dt = datetime.strptime(tag[:19], "%Y-%m-%d %H:%M:%S")
+            clean = tag[:19].replace("T", " ")
+            dt = datetime.strptime(clean, "%Y-%m-%d %H:%M:%S")
         except ValueError:
             continue
 
