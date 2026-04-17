@@ -68,9 +68,10 @@ CELL_DEG = 2.0
 
 TIMEOUT = aiohttp.ClientTimeout(total=300, connect=30)
 
-# Dataset start (1995-05). Used to map month-index → calendar date.
+# Dataset start. The time dim is labelled "Month_since_Jan_95" so idx=0
+# corresponds to 1995-01 (240 months → last = 2014-12).
 DATASET_START_YEAR = 1995
-DATASET_START_MONTH = 5
+DATASET_START_MONTH = 1
 
 
 async def init_table():
@@ -187,14 +188,19 @@ def parse_lis_otd_netcdf(data_bytes: bytes) -> list[dict]:
         logger.info("LISOTD diag: selected fr_var=%s dims=%s shape=%s",
                     fr_name, fr_var.dimensions, fr_var.shape)
 
-        # Locate lat/lon/time dims dynamically (learned from WWLLN axis fix)
+        # Locate lat/lon/time dims dynamically (learned from WWLLN axis fix).
+        # Use lowercase substring matching so variants like "Month_since_Jan_95"
+        # still resolve to the time axis.
         dim_names = fr_var.dimensions
-        lat_dim_cands = {"Latitude", "latitude", "lat", "Lat", "nlat"}
-        lon_dim_cands = {"Longitude", "longitude", "lon", "Lon", "nlon"}
-        time_dim_cands = {"Month", "month", "Time", "time", "nmon", "mon"}
-        lat_axis = next((i for i, d in enumerate(dim_names) if d in lat_dim_cands), None)
-        lon_axis = next((i for i, d in enumerate(dim_names) if d in lon_dim_cands), None)
-        time_axis = next((i for i, d in enumerate(dim_names) if d in time_dim_cands), None)
+        def _match(d: str, keywords) -> bool:
+            dl = d.lower()
+            return any(k in dl for k in keywords)
+        lat_kw = ("lat",)
+        lon_kw = ("lon",)
+        time_kw = ("month", "time", "nmon", "mon_", "since_jan", "since_")
+        lat_axis = next((i for i, d in enumerate(dim_names) if _match(d, lat_kw)), None)
+        lon_axis = next((i for i, d in enumerate(dim_names) if _match(d, lon_kw)), None)
+        time_axis = next((i for i, d in enumerate(dim_names) if _match(d, time_kw)), None)
         if lat_axis is None or lon_axis is None or time_axis is None:
             logger.warning("LISOTD: could not identify axes in dims=%s", dim_names)
             return []
@@ -269,7 +275,8 @@ def parse_lis_otd_netcdf(data_bytes: bytes) -> list[dict]:
             # Flash-rate is non-negative; fill values typically -9999.
             # Keep values in sane physical range (< 1000 fl/km²/yr).
             valid = np.isfinite(slab) & (slab >= 0) & (slab < 1e4)
-            if month_idx < 2 or month_idx in (189, 190) or not valid.any():
+            # idx=194 is 2011-03 (Tohoku earthquake month) — log it for verification.
+            if month_idx < 2 or month_idx in (193, 194, 195) or not valid.any():
                 finite = slab[np.isfinite(slab)]
                 logger.info(
                     "LISOTD diag month=%03d (%s): shape=%s valid=%d finite_min=%s finite_max=%s sample=%s",
