@@ -183,6 +183,14 @@ FEATURE_NAMES = [
     "snet_vlf_spatial_gradient",       # along-trench VLF power gradient — SSE migration detection
     "snet_highgain_snr_anomaly",       # high-gain sensor SNR anomaly — micro-amplitude change (σ)
     "snet_spectral_slope_velocity",    # velocity spectral slope anomaly (σ)
+    # AK. LIS/OTD flash rate (Phase 20) — Cecil et al. 2014, pre-seismic LAIC
+    "lis_otd_flash_rate",              # monthly flash rate for cell (flashes/km²/day)
+    "lis_otd_flash_rate_zscore",       # z-score vs cell×calendar-month climatology (1995-2014)
+    "lis_otd_flash_rate_ratio",        # ratio to cell×calendar-month mean
+    # AL. WWLLN thunder hours (Phase 20) — Virts et al. 2013
+    "wwlln_thunder_hours",             # monthly thunder hours for cell
+    "wwlln_thunder_hours_zscore",      # z-score vs cell×calendar-month distribution
+    "wwlln_thunder_hours_ratio",       # ratio to cell×calendar-month mean
 ]
 
 N_FEATURES = len(FEATURE_NAMES)
@@ -233,6 +241,13 @@ OPTIONAL_FEATURE_GROUPS = {
     ],
     "snet_highgain": [
         "snet_highgain_snr_anomaly",
+    ],
+    # Phase 20 — Monthly lightning climatology
+    "lightning_lis_otd": [
+        "lis_otd_flash_rate", "lis_otd_flash_rate_zscore", "lis_otd_flash_rate_ratio",
+    ],
+    "lightning_thunder_hour": [
+        "wwlln_thunder_hours", "wwlln_thunder_hours_zscore", "wwlln_thunder_hours_ratio",
     ],
 }
 
@@ -298,7 +313,9 @@ class FeatureExtractor:
                  ioc_sealevel_data: dict = None,
                  snet_waveform_data: dict = None,
                  snet_velocity_data: dict = None,
-                 snet_highgain_data: dict = None):
+                 snet_highgain_data: dict = None,
+                 lightning_lis_otd_data: dict = None,
+                 lightning_thunder_hour_data: dict = None):
         """
         Args:
             events: list of dicts with keys: time, mag, lat, lon, depth, t_days
@@ -320,6 +337,8 @@ class FeatureExtractor:
             snet_waveform_data: {date_str: {rms_combined, ...}} — acceleration features
             snet_velocity_data: {date_str: {vel_rms_combined, vlf_power, ...}} — velocity features
             snet_highgain_data: {date_str: {hg_rms_combined, ...}} — high-gain accel features
+            lightning_lis_otd_data: {(month_str, cell_lat, cell_lon): {flash_rate, mean, std}}
+            lightning_thunder_hour_data: {(month_str, cell_lat, cell_lon): {thunder_hours, mean, std}}
         """
         self.events = events
         self.fm_dict = fm_dict
@@ -352,6 +371,8 @@ class FeatureExtractor:
         self.snet_waveform_data = snet_waveform_data or {}
         self.snet_velocity_data = snet_velocity_data or {}
         self.snet_highgain_data = snet_highgain_data or {}
+        self.lightning_lis_otd_data = lightning_lis_otd_data or {}
+        self.lightning_thunder_hour_data = lightning_thunder_hour_data or {}
 
         # Pre-compute cell → zone mapping + zone → cells index
         self.cell_zone = {}
@@ -1110,6 +1131,27 @@ class FeatureExtractor:
         if hg_val != 0:
             snet_highgain_snr_anomaly = (hg_val - hg_mean) / max(hg_std, 0.001)
 
+        # --- AK. LIS/OTD flash rate (Phase 20) ---
+        month_str = date_str[:7] + "-01"  # YYYY-MM-DD → YYYY-MM-01
+        lo_key = (month_str, cell_lat, cell_lon)
+        lo = self.lightning_lis_otd_data.get(lo_key, {})
+        lo_fr = lo.get("flash_rate", 0.0) or 0.0
+        lo_mean = lo.get("mean", 0.0) or 0.0
+        lo_std = lo.get("std", 0.0) or 0.0
+        lis_otd_flash_rate = lo_fr
+        lis_otd_flash_rate_zscore = (lo_fr - lo_mean) / max(lo_std, 1e-6) if lo_fr > 0 and lo_std > 0 else 0.0
+        lis_otd_flash_rate_ratio = lo_fr / max(lo_mean, 1e-6) if lo_fr > 0 and lo_mean > 0 else 0.0
+
+        # --- AL. WWLLN thunder hours (Phase 20) ---
+        th_key = (month_str, cell_lat, cell_lon)
+        th = self.lightning_thunder_hour_data.get(th_key, {})
+        th_val = th.get("thunder_hours", 0.0) or 0.0
+        th_mean = th.get("mean", 0.0) or 0.0
+        th_std = th.get("std", 0.0) or 0.0
+        wwlln_thunder_hours = th_val
+        wwlln_thunder_hours_zscore = (th_val - th_mean) / max(th_std, 1e-6) if th_val > 0 and th_std > 0 else 0.0
+        wwlln_thunder_hours_ratio = th_val / max(th_mean, 1e-6) if th_val > 0 and th_mean > 0 else 0.0
+
         # Assemble feature vector
         return [
             rate_7d,
@@ -1228,6 +1270,14 @@ class FeatureExtractor:
             snet_vlf_spatial_gradient,
             snet_highgain_snr_anomaly,
             snet_spectral_slope_velocity,
+            # AK. LIS/OTD flash rate (Phase 20)
+            lis_otd_flash_rate,
+            lis_otd_flash_rate_zscore,
+            lis_otd_flash_rate_ratio,
+            # AL. WWLLN thunder hours (Phase 20)
+            wwlln_thunder_hours,
+            wwlln_thunder_hours_zscore,
+            wwlln_thunder_hours_ratio,
         ]
 
     def extract_dict(self, cell_lat, cell_lon, t_now_days) -> dict:

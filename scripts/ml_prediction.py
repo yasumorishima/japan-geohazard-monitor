@@ -172,6 +172,8 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
                    dart_pressure_data=None, ioc_sealevel_data=None,
                    snet_waveform_data=None,
                    snet_velocity_data=None, snet_highgain_data=None,
+                   lightning_lis_otd_data=None,
+                   lightning_thunder_hour_data=None,
                    min_target_mag=None, window_days=None, step_days=None):
     """Generate feature matrix and labels.
 
@@ -238,6 +240,8 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
         snet_waveform_data=snet_waveform_data,
         snet_velocity_data=snet_velocity_data,
         snet_highgain_data=snet_highgain_data,
+        lightning_lis_otd_data=lightning_lis_otd_data,
+        lightning_thunder_hour_data=lightning_thunder_hour_data,
     )
     # Build index mask: which positions in the full feature vector to keep
     feature_mask = [i for i, name in enumerate(FEATURE_NAMES) if name in set(active_feature_names)]
@@ -281,6 +285,8 @@ def build_dataset(events, fm_dict, t0, etas_params=None,
         snet_waveform_data=snet_waveform_data,
         snet_velocity_data=snet_velocity_data,
         snet_highgain_data=snet_highgain_data,
+        lightning_lis_otd_data=lightning_lis_otd_data,
+        lightning_thunder_hour_data=lightning_thunder_hour_data,
     )
 
     # Generate samples
@@ -1325,6 +1331,100 @@ async def load_phase9_lightning(db_path):
         return data
     except Exception as e:
         logger.warning("  Lightning load failed (non-fatal): %s", e)
+        return {}
+
+
+async def load_phase20_lightning_lis_otd(db_path):
+    """Load LIS/OTD monthly flash rate with per-cell×calendar-month baselines.
+
+    Returns dict: {(month_str, cell_lat, cell_lon): {flash_rate, mean, std}}
+    where month_str is YYYY-MM-01 and mean/std are the climatological baseline
+    for that cell and calendar month (Jan, Feb, ...) across all years.
+    """
+    from collections import defaultdict
+    data = {}
+    try:
+        async with safe_connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT observed_at, cell_lat, cell_lon, flash_rate "
+                "FROM lightning_lis_otd"
+            )
+        if not rows:
+            logger.info("  No LIS/OTD data available")
+            return {}
+
+        cell_month_values = defaultdict(list)
+        raw = []
+        for r in rows:
+            month_str = r[0]  # already YYYY-MM-01
+            clat, clon, fr = r[1], r[2], r[3] or 0.0
+            raw.append((month_str, clat, clon, fr))
+            cal_month = int(month_str[5:7])
+            cell_month_values[(clat, clon, cal_month)].append(fr)
+
+        baselines = {}
+        for key, vals in cell_month_values.items():
+            import statistics
+            m = statistics.mean(vals)
+            s = statistics.stdev(vals) if len(vals) > 1 else 0.0
+            baselines[key] = (m, s)
+
+        for month_str, clat, clon, fr in raw:
+            cal_month = int(month_str[5:7])
+            m, s = baselines.get((clat, clon, cal_month), (0.0, 0.0))
+            data[(month_str, clat, clon)] = {"flash_rate": fr, "mean": m, "std": s}
+
+        logger.info("  LIS/OTD data loaded: %d cell-month records (baselines from %d cell×month combos)",
+                    len(data), len(baselines))
+        return data
+    except Exception as e:
+        logger.warning("  LIS/OTD load failed (non-fatal): %s", e)
+        return {}
+
+
+async def load_phase20_lightning_thunder_hour(db_path):
+    """Load WWLLN thunder hour with per-cell×calendar-month baselines.
+
+    Returns dict: {(month_str, cell_lat, cell_lon): {thunder_hours, mean, std}}
+    """
+    from collections import defaultdict
+    data = {}
+    try:
+        async with safe_connect(db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT observed_at, cell_lat, cell_lon, thunder_hours "
+                "FROM lightning_thunder_hour"
+            )
+        if not rows:
+            logger.info("  No WWLLN thunder hour data available")
+            return {}
+
+        cell_month_values = defaultdict(list)
+        raw = []
+        for r in rows:
+            month_str = r[0]
+            clat, clon, th = r[1], r[2], r[3] or 0.0
+            raw.append((month_str, clat, clon, th))
+            cal_month = int(month_str[5:7])
+            cell_month_values[(clat, clon, cal_month)].append(th)
+
+        baselines = {}
+        for key, vals in cell_month_values.items():
+            import statistics
+            m = statistics.mean(vals)
+            s = statistics.stdev(vals) if len(vals) > 1 else 0.0
+            baselines[key] = (m, s)
+
+        for month_str, clat, clon, th in raw:
+            cal_month = int(month_str[5:7])
+            m, s = baselines.get((clat, clon, cal_month), (0.0, 0.0))
+            data[(month_str, clat, clon)] = {"thunder_hours": th, "mean": m, "std": s}
+
+        logger.info("  WWLLN thunder hour data loaded: %d cell-month records (baselines from %d cell×month combos)",
+                    len(data), len(baselines))
+        return data
+    except Exception as e:
+        logger.warning("  WWLLN thunder hour load failed (non-fatal): %s", e)
         return {}
 
 
@@ -2570,6 +2670,11 @@ async def run_ml_prediction():
     ioc_sealevel_data = await load_phase13_ioc_sealevel(DB_PATH)
     snet_waveform_data, snet_velocity_data, snet_highgain_data = await load_phase18_snet_waveform(DB_PATH)
 
+    # --- Phase 20: Monthly lightning climatology ---
+    logger.info("--- Loading Phase 20 data (LIS/OTD flash rate, WWLLN thunder hour) ---")
+    lightning_lis_otd_data = await load_phase20_lightning_lis_otd(DB_PATH)
+    lightning_thunder_hour_data = await load_phase20_lightning_thunder_hour(DB_PATH)
+
     # Multi-target loop
     target_results = {}
     primary_metadata = None
@@ -2613,6 +2718,8 @@ async def run_ml_prediction():
             snet_waveform_data=snet_waveform_data,
             snet_velocity_data=snet_velocity_data,
             snet_highgain_data=snet_highgain_data,
+            lightning_lis_otd_data=lightning_lis_otd_data,
+            lightning_thunder_hour_data=lightning_thunder_hour_data,
             min_target_mag=cfg["min_mag"],
             window_days=cfg["window_days"],
             step_days=cfg["step_days"],
