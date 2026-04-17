@@ -665,7 +665,16 @@ jobs:
       - name: Upload checkpoint artifact
         # Only upload when snapshot succeeded (integrity-checked) — never
         # propagate a corrupt DB as a new checkpoint.
-        if: steps.snapshot.outcome == 'success'
+        # CRITICAL: Skip checkpoint upload for targeted dispatch runs.
+        # A targeted run (e.g. target=cloud_fraction) only fetches one table,
+        # so its checkpoint is missing data from other tables that were
+        # accumulated in previous full runs. Uploading it would overwrite the
+        # latest full checkpoint and reset progress for all other tables.
+        if: >-
+          steps.snapshot.outcome == 'success'
+          && (github.event_name != 'workflow_dispatch'
+              || inputs.target == 'all'
+              || inputs.target == '')
         uses: actions/upload-artifact@v4
         with:
           name: backfill-checkpoint-${{ github.run_id }}
