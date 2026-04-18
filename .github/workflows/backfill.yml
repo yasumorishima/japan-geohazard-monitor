@@ -83,11 +83,13 @@ permissions:
 jobs:
   # =====================================================================
   # HEAVY JOB — MODIS LST / SO2 / cloud / S-net waveform / S-net pressure
-  # Combined estimated runtime ~2h45m; timeout 290m leaves slack.
+  # Observed runtime (2026-04-18 run 24595180615): MODIS 1h13m + SO2 1h22m +
+  # cloud >1h13m (cancelled by job timeout) + S-net + restore + snapshot
+  # = full pipeline needs ~5h. Raised 290 → 350 (GitHub hard limit 360).
   # =====================================================================
   heavy:
     runs-on: ubuntu-latest
-    timeout-minutes: 290
+    timeout-minutes: 350
     outputs:
       install_win32tools: ${{ steps.install_win32tools.outcome }}
       fetch_snet_waveform: ${{ steps.fetch_snet_waveform.outcome }}
@@ -347,7 +349,13 @@ jobs:
           fi
 
       - name: Upload heavy.db artifact
-        if: steps.snapshot.outcome == 'success'
+        # always() needed because GitHub Actions skips plain-`if:` steps when
+        # the job is cancelled (e.g. job-level timeout). Without it, snapshot
+        # ran successfully but the artifact was lost — observed in run
+        # 24595180615 (2026-04-18) where heavy timed out mid-cloud_fraction
+        # and the heavy.db never reached merge, so BQ heavy-owned tables
+        # were WRITE_TRUNCATE'd back to the restored checkpoint state.
+        if: always() && steps.snapshot.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: backfill-heavy-${{ github.run_id }}
@@ -842,7 +850,8 @@ jobs:
           fi
 
       - name: Upload light.db artifact
-        if: steps.snapshot.outcome == 'success'
+        # always() guard — same rationale as the heavy job's Upload step.
+        if: always() && steps.snapshot.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: backfill-light-${{ github.run_id }}
