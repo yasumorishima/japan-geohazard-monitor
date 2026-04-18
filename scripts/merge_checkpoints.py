@@ -1,31 +1,42 @@
-"""Merge two SQLite checkpoint DBs from parallel heavy/light backfill jobs.
+"""Merge N SQLite checkpoint DBs from parallel backfill fetch jobs.
 
 Strategy:
     1. Copy `--base` to `--dst` verbatim (light job DB, contains majority of
-       tables and the previous-run snapshot of heavy-owned tables too).
-    2. ATTACH `--overlay` (heavy job DB) and, for each table listed in
-       `--overlay-tables`, DELETE the base rows then INSERT OR IGNORE from
-       overlay. This guarantees heavy-owned tables reflect the heavy job's
-       latest fetch and never carry stale base rows forward.
-    3. Run integrity_check on `--dst` and refuse to declare success unless
+       tables and the previous-run snapshot of every owned table from
+       other jobs too, since every job restored the same prior checkpoint).
+    2. For each `--overlay PATH:TABLES` arg, ATTACH the overlay DB and, per
+       listed table, DELETE base rows then INSERT OR IGNORE from overlay.
+       This guarantees overlay-owned tables reflect the job's latest fetch
+       and never carry stale base rows forward.
+    3. Missing overlay files are tolerated (their tables are left as-is in
+       base — matches "fetch job skipped / cancelled" semantics). Their
+       prior-checkpoint rows survive because base was restored from the
+       same checkpoint.
+    4. Run integrity_check on `--dst` and refuse to declare success unless
        it returns "ok" with at least one table.
 
 Why DELETE-then-INSERT instead of plain INSERT OR IGNORE for overlay tables:
-    Both jobs restore the same prior checkpoint, so the base DB already has
-    the previous-cron snapshot of heavy-owned tables. A plain INSERT OR
+    Every job restores the same prior checkpoint, so the base DB already has
+    the previous-cron snapshot of overlay-owned tables. A plain INSERT OR
     IGNORE would leave those stale rows untouched and only append the
-    incremental new rows from heavy. Wiping the base rows for overlay
-    tables and re-inserting from overlay yields the same row set the
-    heavy job would have produced if it had run alone.
+    incremental new rows from the overlay. Wiping the base rows for overlay
+    tables and re-inserting from overlay yields the same row set the overlay
+    job would have produced if it had run alone.
+
+Why missing overlay is safe:
+    If a fetch job was skipped (target-not-this-job) or cancelled (5h
+    timeout, runner failure), its overlay file is absent. Leaving base's
+    checkpoint-derived rows in place means the merged DB matches the prior
+    checkpoint for those tables — the same state BQ already has. No
+    WRITE_TRUNCATE regression.
 
 Tolerant modes:
     - If `--base` is missing and `--require-base` is set, exit 1.
-    - If `--base` is missing without --require-base, treat `--overlay` as base
-      (no overlay step). NOTE: this loses every light-owned table, so
-      WRITE_TRUNCATE BQ upload would erase BQ accumulation. CI must pass
-      --require-base.
-    - If `--overlay` is missing, copy `--base` to `--dst` and succeed.
-    - If both are missing, exit 1.
+    - If `--base` is missing without --require-base, the first overlay is
+      promoted to base (no overlay step for that overlay's tables). Only
+      reachable when caller accepts losing light-owned tables. CI must
+      always pass --require-base.
+    - If base is present but every overlay is missing, dst is base verbatim.
 
 Triggers:
     The geohazard schema defines no triggers (verified via repo-wide grep).
@@ -35,14 +46,16 @@ Triggers:
 
 WAL mode:
     backfill.yml uses `src.backup(dst)` for snapshot creation, which flushes
-    the WAL into the main DB file. Both base and overlay arriving here are
+    the WAL into the main DB file. Both base and overlays arriving here are
     therefore standalone files with no -wal/-shm sidecars to worry about.
 
 Usage:
     python3 scripts/merge_checkpoints.py \
         --base /tmp/light/geohazard.db \
-        --overlay /tmp/heavy/geohazard.db \
-        --overlay-tables modis_lst,so2_column,cloud_fraction,snet_waveform,snet_pressure \
+        --overlay /tmp/modis/geohazard.db:modis_lst \
+        --overlay /tmp/so2/geohazard.db:so2_column \
+        --overlay /tmp/cloud/geohazard.db:cloud_fraction \
+        --overlay /tmp/snet/geohazard.db:snet_waveform,snet_pressure \
         --dst data/geohazard.db \
         --require-base
 
@@ -77,18 +90,107 @@ def _verify(dst: str) -> bool:
     return integrity == "ok" and n_tables > 0
 
 
+def _apply_overlay(
+    dst_conn: sqlite3.Connection,
+    overlay_path: str,
+    overlay_tables: list[str],
+    base_table_names: set[str],
+) -> tuple[list[tuple[str, int, int]], list[tuple[str, str]]]:
+    """Apply one overlay to the already-opened dst connection.
+
+    Returns (applied, skipped) per-table outcomes.
+    """
+    applied: list[tuple[str, int, int]] = []
+    skipped: list[tuple[str, str]] = []
+
+    dst_conn.execute("ATTACH DATABASE ? AS overlay", (overlay_path,))
+    try:
+        overlay_table_names = {
+            row[0]
+            for row in dst_conn.execute(
+                "SELECT name FROM overlay.sqlite_master "
+                "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        }
+
+        for name in overlay_tables:
+            # Reject identifiers with double-quote so `"{name}"` can't inject.
+            if '"' in name:
+                skipped.append((name, "table name contains double-quote"))
+                continue
+            if name not in overlay_table_names:
+                skipped.append((name, "missing in overlay"))
+                continue
+            if name not in base_table_names:
+                # Overlay-only table that base never created — copy schema.
+                schema = dst_conn.execute(
+                    "SELECT sql FROM overlay.sqlite_master "
+                    "WHERE type='table' AND name=?",
+                    (name,),
+                ).fetchone()
+                if not schema or not schema[0]:
+                    skipped.append((name, "no schema in overlay"))
+                    continue
+                try:
+                    dst_conn.execute(schema[0])
+                    base_table_names.add(name)
+                except sqlite3.Error as e:
+                    skipped.append((name, f"schema create failed: {e}"))
+                    continue
+
+            try:
+                before = dst_conn.execute(
+                    f'SELECT COUNT(*) FROM main."{name}"'
+                ).fetchone()[0]
+                dst_conn.execute("BEGIN")
+                dst_conn.execute(f'DELETE FROM main."{name}"')
+                dst_conn.execute(
+                    f'INSERT OR IGNORE INTO main."{name}" '
+                    f'SELECT * FROM overlay."{name}"'
+                )
+                dst_conn.execute("COMMIT")
+                after = dst_conn.execute(
+                    f'SELECT COUNT(*) FROM main."{name}"'
+                ).fetchone()[0]
+                print(
+                    f"  {name}: {before:,} -> {after:,} rows (overlay applied "
+                    f"from {overlay_path})"
+                )
+                applied.append((name, before, after))
+            except sqlite3.DatabaseError as e:
+                print(f"  {name}: FAILED ({e})")
+                skipped.append((name, str(e)))
+                try:
+                    dst_conn.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+    finally:
+        dst_conn.execute("DETACH DATABASE overlay")
+    return applied, skipped
+
+
 def merge(
     base: str,
-    overlay: str,
-    overlay_tables: list[str],
+    overlays: list[tuple[str, list[str]]],
     dst: str,
     require_base: bool = False,
 ) -> bool:
-    base_exists = bool(base) and os.path.exists(base)
-    overlay_exists = bool(overlay) and os.path.exists(overlay)
+    """Merge base + N overlays into dst.
 
-    if not base_exists and not overlay_exists:
-        print("both base and overlay are missing")
+    overlays: list of (path, [tables]) pairs. Missing files are tolerated.
+    """
+    base_exists = bool(base) and os.path.exists(base)
+    present_overlays = [(p, t) for p, t in overlays if p and os.path.exists(p)]
+    missing_overlays = [(p, t) for p, t in overlays if p and not os.path.exists(p)]
+
+    for path, tables in missing_overlays:
+        print(
+            f"overlay missing: {path} (tables {tables} left as-is in base -- "
+            "prior-checkpoint rows retained)"
+        )
+
+    if not base_exists and not present_overlays:
+        print("base missing and no overlays present")
         return False
 
     if not base_exists and require_base:
@@ -103,140 +205,101 @@ def merge(
         os.remove(dst)
     os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
 
-    if not base_exists:
-        # Heavy-only: promote overlay to dst as-is. No overlay step needed
-        # because the only DB we have is already "the overlay". This path
-        # is only reachable when require_base is False — caller has opted
-        # in to losing light-owned tables.
-        print(f"base missing, promoting overlay {overlay} to dst")
-        shutil.copyfile(overlay, dst)
-        print()
-        print("=== merge summary (overlay-only) ===")
-        return _verify(dst)
+    # Seed dst from whichever DB we can.
+    if base_exists:
+        print(f"copying base {base} -> {dst}")
+        shutil.copyfile(base, dst)
+        seeded_from = "base"
+    else:
+        # Not reachable in CI (caller passes --require-base). Promote first
+        # overlay so dst is at least a valid DB for its owned tables.
+        first_path, _ = present_overlays[0]
+        print(f"base missing, promoting first overlay {first_path} to dst")
+        shutil.copyfile(first_path, dst)
+        present_overlays = present_overlays[1:]
+        seeded_from = f"overlay {first_path}"
 
-    print(f"copying base {base} -> {dst}")
-    shutil.copyfile(base, dst)
-
-    if not overlay_exists:
-        print("overlay missing, dst is base verbatim")
+    if not present_overlays:
+        print(f"no overlays to apply, dst is {seeded_from} verbatim")
         print()
-        print("=== merge summary (base-only) ===")
-        return _verify(dst)
-
-    if not overlay_tables:
-        print("--overlay-tables empty, dst is base verbatim")
-        print()
-        print("=== merge summary (no overlay tables) ===")
+        print(f"=== merge summary ({seeded_from}-only) ===")
         return _verify(dst)
 
     # Overlay step: ATTACH overlay, DELETE then INSERT OR IGNORE per table.
-    # IGNORE guards against UNIQUE conflicts that could appear if the same
-    # row was somehow present in both (shouldn't happen post-DELETE, but
-    # cheap insurance).
-    #
-    # isolation_level=None puts the connection in autocommit mode so we can
-    # issue explicit BEGIN/COMMIT/ROLLBACK per table. This matters because
-    # DELETE-then-INSERT must be atomic — if INSERT fails after DELETE
-    # succeeds (e.g. schema mismatch), Python's implicit-transaction default
-    # would leave the table empty after an automatic commit on the next
-    # statement.
+    # isolation_level=None enables explicit BEGIN/COMMIT/ROLLBACK per table
+    # — DELETE-then-INSERT must be atomic.
     conn = sqlite3.connect(dst, isolation_level=None)
-    conn.execute("ATTACH DATABASE ? AS overlay", (overlay,))
+    try:
+        base_table_names = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM main.sqlite_master "
+                "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        }
 
-    overlay_table_names = {
-        row[0]
-        for row in conn.execute(
-            "SELECT name FROM overlay.sqlite_master "
-            "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-        ).fetchall()
-    }
-    base_table_names = {
-        row[0]
-        for row in conn.execute(
-            "SELECT name FROM main.sqlite_master "
-            "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-        ).fetchall()
-    }
+        all_applied: list[tuple[str, int, int]] = []
+        all_skipped: list[tuple[str, str]] = []
 
-    applied: list[tuple[str, int, int]] = []
-    skipped: list[tuple[str, str]] = []
-
-    for name in overlay_tables:
-        # Defensive: reject identifiers containing a double-quote so that the
-        # `"{name}"` interpolation below cannot escape into SQL injection.
-        # Real callers pass a fixed list from CI, but a typo or future
-        # refactor shouldn't open this path.
-        if '"' in name:
-            skipped.append((name, "table name contains double-quote"))
-            continue
-        if name not in overlay_table_names:
-            skipped.append((name, "missing in overlay"))
-            continue
-        if name not in base_table_names:
-            # Heavy-only table that base never created — copy schema first.
-            schema = conn.execute(
-                "SELECT sql FROM overlay.sqlite_master "
-                "WHERE type='table' AND name=?",
-                (name,),
-            ).fetchone()
-            if not schema or not schema[0]:
-                skipped.append((name, "no schema in overlay"))
+        for path, tables in present_overlays:
+            if not tables:
+                print(f"skipping {path}: empty table list")
                 continue
-            try:
-                conn.execute(schema[0])
-            except sqlite3.Error as e:
-                skipped.append((name, f"schema create failed: {e}"))
-                continue
-
-        try:
-            before = conn.execute(
-                f'SELECT COUNT(*) FROM main."{name}"'
-            ).fetchone()[0]
-            conn.execute("BEGIN")
-            conn.execute(f'DELETE FROM main."{name}"')
-            conn.execute(
-                f'INSERT OR IGNORE INTO main."{name}" '
-                f'SELECT * FROM overlay."{name}"'
+            print(f"applying overlay {path} for tables {tables}")
+            applied, skipped = _apply_overlay(
+                conn, path, tables, base_table_names
             )
-            conn.execute("COMMIT")
-            after = conn.execute(
-                f'SELECT COUNT(*) FROM main."{name}"'
-            ).fetchone()[0]
-            print(f"  {name}: {before:,} -> {after:,} rows (overlay applied)")
-            applied.append((name, before, after))
-        except sqlite3.DatabaseError as e:
-            print(f"  {name}: FAILED ({e})")
-            skipped.append((name, str(e)))
-            try:
-                conn.execute("ROLLBACK")
-            except sqlite3.Error:
-                pass
-
-    conn.execute("DETACH DATABASE overlay")
-    conn.close()
+            all_applied.extend(applied)
+            all_skipped.extend(skipped)
+    finally:
+        conn.close()
 
     print()
     print("=== merge summary ===")
-    print(f"  overlay tables applied: {len(applied)}")
-    for name, before, after in applied:
+    print(f"  overlays present: {len(present_overlays)}")
+    print(f"  overlays missing: {len(missing_overlays)}")
+    print(f"  overlay tables applied: {len(all_applied)}")
+    for name, before, after in all_applied:
         delta = after - before
         sign = "+" if delta >= 0 else ""
         print(f"    - {name}: {before:,} -> {after:,} ({sign}{delta:,})")
-    if skipped:
-        print(f"  overlay tables skipped: {len(skipped)}")
-        for name, reason in skipped:
+    if all_skipped:
+        print(f"  overlay tables skipped: {len(all_skipped)}")
+        for name, reason in all_skipped:
             print(f"    - {name}: {reason[:100]}")
     return _verify(dst)
+
+
+def _parse_overlay(arg: str) -> tuple[str, list[str]]:
+    """Parse `PATH:TABLE1,TABLE2` into (path, [tables]).
+
+    Split on the last colon so Windows paths like `C:\\tmp\\x.db:t1,t2` work.
+    """
+    if ":" not in arg:
+        raise argparse.ArgumentTypeError(
+            f"--overlay arg must be PATH:TABLES, got {arg!r}"
+        )
+    path, _, tables_str = arg.rpartition(":")
+    tables = [t.strip() for t in tables_str.split(",") if t.strip()]
+    if not tables:
+        raise argparse.ArgumentTypeError(
+            f"--overlay arg has no tables after colon: {arg!r}"
+        )
+    return path, tables
 
 
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--base", required=True, help="base DB path (light job)")
-    p.add_argument("--overlay", required=True, help="overlay DB path (heavy job)")
     p.add_argument(
-        "--overlay-tables",
-        required=True,
-        help="comma-separated table names whose rows are taken from overlay",
+        "--overlay",
+        action="append",
+        default=[],
+        type=_parse_overlay,
+        help=(
+            "overlay as PATH:TABLE[,TABLE]. Repeat for each fetch job. "
+            "Missing files are tolerated (their tables are left as base)."
+        ),
     )
     p.add_argument("--dst", required=True, help="destination DB path")
     p.add_argument(
@@ -244,15 +307,14 @@ def main() -> int:
         action="store_true",
         help=(
             "fail if base is missing (recommended for CI; without this flag "
-            "a missing base causes overlay to be promoted, erasing "
+            "a missing base causes the first overlay to be promoted, erasing "
             "light-owned tables)"
         ),
     )
     args = p.parse_args()
-    overlay_tables = [t.strip() for t in args.overlay_tables.split(",") if t.strip()]
-    return 0 if merge(
-        args.base, args.overlay, overlay_tables, args.dst, args.require_base
-    ) else 1
+    if not args.overlay:
+        print("no --overlay given; dst will be base verbatim")
+    return 0 if merge(args.base, args.overlay, args.dst, args.require_base) else 1
 
 
 if __name__ == "__main__":

@@ -3,18 +3,32 @@ name: Backfill Data
 # Continuous backfill for ALL data tables.
 # Runs every 3 hours around the clock until 100% coverage is reached.
 #
-# 2026-04-18 split into heavy/light parallel jobs to escape the GitHub
-# 5h hard limit. Earlier serial layout hit 5h with MODIS LST + SO2 +
-# cloud_fraction in series and got cancelled before reaching BQ upload,
-# leaving cloud/SO2 progressing at ~1/10 the expected rate.
+# 2026-04-18: further split into per-fetcher parallel jobs. Earlier
+# heavy/light split still hit the 5h GitHub job limit because MODIS LST +
+# SO2 + cloud_fraction serialised inside one heavy job drifted to ~4h52m
+# before timeout and consistently got cancelled mid-cloud_fraction on
+# schedule runs. 5 parallel fetch jobs + light + merge keeps any single
+# fetcher's runaway from taking out the whole batch.
 #
 # Topology:
-#   heavy  (timeout 290m): MODIS LST / SO2 / cloud_fraction / S-net waveform
-#                          / S-net pressure  → uploads heavy.db artifact
-#   light  (timeout 200m): the other ~26 fetchers                → uploads light.db artifact
-#   merge  (timeout 60m):  needs both, runs scripts/merge_checkpoints.py
-#                          (light=base, heavy=overlay) → Snapshot/Upload
-#                          checkpoint/Upload BQ/Discord/Issue
+#   fetch-modis  (timeout 150m): MODIS LST           -> modis.db artifact
+#   fetch-so2    (timeout 120m): OMI SO2 column      -> so2.db artifact
+#   fetch-cloud  (timeout 120m): MODIS cloud_frac    -> cloud.db artifact
+#   fetch-snet   (timeout 240m): win32tools install
+#                                 + S-net waveform
+#                                 + S-net pressure   -> snet.db artifact
+#   light        (timeout 200m): remaining ~26 fetchers -> light.db artifact
+#   merge        (timeout 60m):  needs all 5 above, runs
+#                                 scripts/merge_checkpoints.py with light
+#                                 as base and 4 overlays.
+#                                 Then Snapshot / Coverage / Upload
+#                                 checkpoint (target ガード) / Upload BQ
+#                                 (target ガード) / Discord / Issue.
+#
+# If a fetch job is target-skipped (workflow_dispatch with a specific
+# target) or cancelled / fails, its overlay artifact is absent and
+# merge_checkpoints.py leaves those tables as the base's
+# prior-checkpoint rows (no BQ regression).
 #
 # Disable this workflow once coverage reaches 100%.
 
@@ -82,21 +96,19 @@ permissions:
 
 jobs:
   # =====================================================================
-  # HEAVY JOB — MODIS LST / SO2 / cloud / S-net waveform / S-net pressure
-  # Observed runtime (2026-04-18 run 24595180615): MODIS 1h13m + SO2 1h22m +
-  # cloud >1h13m (cancelled by job timeout) + S-net + restore + snapshot
-  # = full pipeline needs ~5h. Raised 290 → 350 (GitHub hard limit 360).
+  # FETCH-MODIS — MODIS LST only. Typical runtime ~70min; timeout 150m
+  # leaves slack for Phase 2 random-control fetches.
   # =====================================================================
-  heavy:
+  fetch-modis:
+    if: >-
+      github.event_name == 'schedule'
+      || inputs.target == 'all'
+      || inputs.target == ''
+      || inputs.target == 'modis_lst'
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 150
     outputs:
-      install_win32tools: ${{ steps.install_win32tools.outcome }}
-      fetch_snet_waveform: ${{ steps.fetch_snet_waveform.outcome }}
-      fetch_snet_pressure: ${{ steps.fetch_snet_pressure.outcome }}
       fetch_modis_lst: ${{ steps.fetch_modis_lst.outcome }}
-      fetch_so2: ${{ steps.fetch_so2.outcome }}
-      fetch_cloud: ${{ steps.fetch_cloud.outcome }}
       snapshot_outcome: ${{ steps.snapshot.outcome }}
 
     steps:
@@ -109,15 +121,13 @@ jobs:
       - name: Install dependencies
         run: |
           pip install aiohttp aiosqlite numpy scipy netCDF4 google-cloud-bigquery pyarrow scikit-learn h5py
-          sudo apt-get install -y ncompress  # For .Z IONEX decompression
+          sudo apt-get install -y ncompress
 
       - name: Restore previous database checkpoint
         id: restore
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-        # bash -e is off for this step so the inner loop can delete corrupt
-        # artifacts and keep trying older ones instead of dying on first failure.
         shell: bash {0}
         run: |
           set +e
@@ -138,19 +148,19 @@ jobs:
               gh run download "$PREV_RUN" --repo ${{ github.repository }} \
                 --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>/dev/null
               if [ $? -ne 0 ]; then
-                echo "  download failed — skip"
+                echo "  download failed -- skip"
                 continue
               fi
               DB_FILE="/tmp/db-restore/geohazard.db"
               [ ! -f "$DB_FILE" ] && DB_FILE="/tmp/db-restore/data/geohazard.db"
               if [ ! -f "$DB_FILE" ]; then
-                echo "  no geohazard.db in artifact — skip"
+                echo "  no geohazard.db in artifact -- skip"
                 continue
               fi
               cp "$DB_FILE" data/geohazard.db
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
-              echo "  copied ($DB_SIZE) — checking integrity"
+              echo "  copied ($DB_SIZE) -- checking integrity"
               python3 scripts/check_db_integrity.py data/geohazard.db
               if [ $? -eq 0 ]; then
                 RESTORED="${ARTIFACT_NAME}"
@@ -158,9 +168,8 @@ jobs:
                 echo "Restored from $ARTIFACT_NAME"
                 break
               else
-                echo "  corrupted — attempting per-table salvage"
-                python3 scripts/salvage_db.py \
-                  --src data/geohazard.db --dst /tmp/salvaged.db
+                echo "  corrupted -- attempting per-table salvage"
+                python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
                 if [ $? -eq 0 ] && [ -f /tmp/salvaged.db ]; then
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
                   mv /tmp/salvaged.db data/geohazard.db
@@ -169,13 +178,13 @@ jobs:
                   echo "Salvaged via per-table copy from $ARTIFACT_NAME"
                   break
                 fi
-                echo "  salvage failed — trying next artifact"
+                echo "  salvage failed -- trying next artifact"
                 rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm /tmp/salvaged.db
               fi
             done
           done
           if [ -z "$RESTORED" ]; then
-            echo "No usable checkpoint found — will init fresh DB"
+            echo "No usable checkpoint found -- will init fresh DB"
           fi
           exit 0
 
@@ -188,11 +197,180 @@ jobs:
           NEEDS_INIT=0
           if [ ! -f data/geohazard.db ]; then
             NEEDS_INIT=1
-            echo "No DB file — will init"
+            echo "No DB file -- will init"
           else
             python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null
             if [ $? -ne 0 ]; then
-              echo "Existing DB is corrupt — removing and re-initialising"
+              echo "Existing DB is corrupt -- removing and re-initialising"
+              rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+              NEEDS_INIT=1
+            fi
+          fi
+          if [ "$NEEDS_INIT" = "1" ]; then
+            python3 -c "
+          import asyncio, sys
+          sys.path.insert(0, 'src')
+          from db import init_db
+          asyncio.run(init_db())
+          print('DB initialised')
+          "
+            if [ $? -ne 0 ]; then
+              echo "::error::init_db failed"
+              exit 1
+            fi
+          fi
+
+      - name: Fetch MODIS LST (thermal anomaly discovery)
+        id: fetch_modis_lst
+        if: inputs.target == 'all' || inputs.target == 'modis_lst' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 120
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_modis_lst.py || echo "MODIS LST discovery completed"
+
+      - name: Snapshot DB
+        id: snapshot
+        if: always()
+        run: |
+          python3 -c "
+          import sqlite3, sys
+          try:
+              src = sqlite3.connect('data/geohazard.db')
+              src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+              r = src.execute('PRAGMA integrity_check').fetchone()[0]
+              if r != 'ok':
+                  print(f'REFUSING to snapshot corrupt DB: {r[:200]}')
+                  src.close()
+                  sys.exit(1)
+              dst = sqlite3.connect('data/geohazard_snapshot.db')
+              src.backup(dst)
+              dst.close()
+              src.close()
+              print('Snapshot created (post-integrity-check)')
+          except Exception as e:
+              print(f'Snapshot failed: {e}')
+              sys.exit(1)
+          "
+          if [ -f data/geohazard_snapshot.db ]; then
+            mv data/geohazard_snapshot.db data/geohazard.db
+          fi
+
+      - name: Upload modis.db artifact
+        if: always() && steps.snapshot.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backfill-modis-${{ github.run_id }}
+          path: data/geohazard.db
+          retention-days: 7
+
+  # =====================================================================
+  # FETCH-SO2 — OMI SO2 only. Requires Earthdata auth.
+  # =====================================================================
+  fetch-so2:
+    if: >-
+      github.event_name == 'schedule'
+      || inputs.target == 'all'
+      || inputs.target == ''
+      || inputs.target == 'so2'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    outputs:
+      fetch_so2: ${{ steps.fetch_so2.outcome }}
+      snapshot_outcome: ${{ steps.snapshot.outcome }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install aiohttp aiosqlite numpy scipy netCDF4 google-cloud-bigquery pyarrow scikit-learn h5py
+          sudo apt-get install -y ncompress
+
+      - name: Restore previous database checkpoint
+        id: restore
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash {0}
+        run: |
+          set +e
+          mkdir -p data results
+          RESTORED=""
+          MAX_TRIES=30
+          for PREFIX in "backfill-checkpoint-" "database-checkpoint-"; do
+            [ -n "$RESTORED" ] && break
+            RUN_IDS=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+              --jq "[.artifacts[] | select(.name | startswith(\"${PREFIX}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" 2>/dev/null)
+            for PREV_RUN in $RUN_IDS; do
+              [ -z "$PREV_RUN" ] && continue
+              case "$PREV_RUN" in (*[!0-9]*) continue;; esac
+              [ "$PREV_RUN" = "${{ github.run_id }}" ] && continue
+              ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
+              echo "Trying artifact: $ARTIFACT_NAME"
+              rm -rf /tmp/db-restore
+              gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+                --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>/dev/null
+              if [ $? -ne 0 ]; then
+                echo "  download failed -- skip"
+                continue
+              fi
+              DB_FILE="/tmp/db-restore/geohazard.db"
+              [ ! -f "$DB_FILE" ] && DB_FILE="/tmp/db-restore/data/geohazard.db"
+              if [ ! -f "$DB_FILE" ]; then
+                echo "  no geohazard.db in artifact -- skip"
+                continue
+              fi
+              cp "$DB_FILE" data/geohazard.db
+              rm -f data/geohazard.db-wal data/geohazard.db-shm
+              DB_SIZE=$(du -h data/geohazard.db | cut -f1)
+              echo "  copied ($DB_SIZE) -- checking integrity"
+              python3 scripts/check_db_integrity.py data/geohazard.db
+              if [ $? -eq 0 ]; then
+                RESTORED="${ARTIFACT_NAME}"
+                echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
+                echo "Restored from $ARTIFACT_NAME"
+                break
+              else
+                echo "  corrupted -- attempting per-table salvage"
+                python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
+                if [ $? -eq 0 ] && [ -f /tmp/salvaged.db ]; then
+                  rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                  mv /tmp/salvaged.db data/geohazard.db
+                  RESTORED="${ARTIFACT_NAME}-salvaged"
+                  echo "restored=${ARTIFACT_NAME}-salvaged" >> "$GITHUB_OUTPUT"
+                  echo "Salvaged via per-table copy from $ARTIFACT_NAME"
+                  break
+                fi
+                echo "  salvage failed -- trying next artifact"
+                rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm /tmp/salvaged.db
+              fi
+            done
+          done
+          if [ -z "$RESTORED" ]; then
+            echo "No usable checkpoint found -- will init fresh DB"
+          fi
+          exit 0
+
+      - name: Init DB if missing or corrupt
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        shell: bash {0}
+        run: |
+          set +e
+          NEEDS_INIT=0
+          if [ ! -f data/geohazard.db ]; then
+            NEEDS_INIT=1
+            echo "No DB file -- will init"
+          else
+            python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null
+            if [ $? -ne 0 ]; then
+              echo "Existing DB is corrupt -- removing and re-initialising"
               rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
               NEEDS_INIT=1
             fi
@@ -222,11 +400,374 @@ jobs:
             echo "earthdata_ok=true" >> "$GITHUB_OUTPUT"
           else
             echo "earthdata_ok=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Earthdata auth FAILED — SO2, cloud, nightlight, ISS LIS will be skipped"
+            echo "::warning::Earthdata auth FAILED -- SO2 will be skipped"
           fi
         continue-on-error: true
 
-      # ====== HEAVY FETCH STEPS ======
+      - name: Fetch OMI SO2 column data
+        id: fetch_so2
+        if: (inputs.target == 'all' || inputs.target == 'so2' || inputs.target == '') && steps.earthdata_check.outputs.earthdata_ok == 'true'
+        continue-on-error: true
+        timeout-minutes: 90
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+          SO2_MAX_DATES: "2000"
+        run: python3 -u scripts/fetch_omi_so2.py
+
+      - name: Snapshot DB
+        id: snapshot
+        if: always()
+        run: |
+          python3 -c "
+          import sqlite3, sys
+          try:
+              src = sqlite3.connect('data/geohazard.db')
+              src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+              r = src.execute('PRAGMA integrity_check').fetchone()[0]
+              if r != 'ok':
+                  print(f'REFUSING to snapshot corrupt DB: {r[:200]}')
+                  src.close()
+                  sys.exit(1)
+              dst = sqlite3.connect('data/geohazard_snapshot.db')
+              src.backup(dst)
+              dst.close()
+              src.close()
+              print('Snapshot created (post-integrity-check)')
+          except Exception as e:
+              print(f'Snapshot failed: {e}')
+              sys.exit(1)
+          "
+          if [ -f data/geohazard_snapshot.db ]; then
+            mv data/geohazard_snapshot.db data/geohazard.db
+          fi
+
+      - name: Upload so2.db artifact
+        if: always() && steps.snapshot.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backfill-so2-${{ github.run_id }}
+          path: data/geohazard.db
+          retention-days: 7
+
+  # =====================================================================
+  # FETCH-CLOUD — MODIS cloud fraction only. Requires Earthdata auth.
+  # =====================================================================
+  fetch-cloud:
+    if: >-
+      github.event_name == 'schedule'
+      || inputs.target == 'all'
+      || inputs.target == ''
+      || inputs.target == 'cloud'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    outputs:
+      fetch_cloud: ${{ steps.fetch_cloud.outcome }}
+      snapshot_outcome: ${{ steps.snapshot.outcome }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install aiohttp aiosqlite numpy scipy netCDF4 google-cloud-bigquery pyarrow scikit-learn h5py
+          sudo apt-get install -y ncompress
+
+      - name: Restore previous database checkpoint
+        id: restore
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash {0}
+        run: |
+          set +e
+          mkdir -p data results
+          RESTORED=""
+          MAX_TRIES=30
+          for PREFIX in "backfill-checkpoint-" "database-checkpoint-"; do
+            [ -n "$RESTORED" ] && break
+            RUN_IDS=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+              --jq "[.artifacts[] | select(.name | startswith(\"${PREFIX}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" 2>/dev/null)
+            for PREV_RUN in $RUN_IDS; do
+              [ -z "$PREV_RUN" ] && continue
+              case "$PREV_RUN" in (*[!0-9]*) continue;; esac
+              [ "$PREV_RUN" = "${{ github.run_id }}" ] && continue
+              ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
+              echo "Trying artifact: $ARTIFACT_NAME"
+              rm -rf /tmp/db-restore
+              gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+                --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>/dev/null
+              if [ $? -ne 0 ]; then
+                echo "  download failed -- skip"
+                continue
+              fi
+              DB_FILE="/tmp/db-restore/geohazard.db"
+              [ ! -f "$DB_FILE" ] && DB_FILE="/tmp/db-restore/data/geohazard.db"
+              if [ ! -f "$DB_FILE" ]; then
+                echo "  no geohazard.db in artifact -- skip"
+                continue
+              fi
+              cp "$DB_FILE" data/geohazard.db
+              rm -f data/geohazard.db-wal data/geohazard.db-shm
+              DB_SIZE=$(du -h data/geohazard.db | cut -f1)
+              echo "  copied ($DB_SIZE) -- checking integrity"
+              python3 scripts/check_db_integrity.py data/geohazard.db
+              if [ $? -eq 0 ]; then
+                RESTORED="${ARTIFACT_NAME}"
+                echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
+                echo "Restored from $ARTIFACT_NAME"
+                break
+              else
+                echo "  corrupted -- attempting per-table salvage"
+                python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
+                if [ $? -eq 0 ] && [ -f /tmp/salvaged.db ]; then
+                  rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                  mv /tmp/salvaged.db data/geohazard.db
+                  RESTORED="${ARTIFACT_NAME}-salvaged"
+                  echo "restored=${ARTIFACT_NAME}-salvaged" >> "$GITHUB_OUTPUT"
+                  echo "Salvaged via per-table copy from $ARTIFACT_NAME"
+                  break
+                fi
+                echo "  salvage failed -- trying next artifact"
+                rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm /tmp/salvaged.db
+              fi
+            done
+          done
+          if [ -z "$RESTORED" ]; then
+            echo "No usable checkpoint found -- will init fresh DB"
+          fi
+          exit 0
+
+      - name: Init DB if missing or corrupt
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        shell: bash {0}
+        run: |
+          set +e
+          NEEDS_INIT=0
+          if [ ! -f data/geohazard.db ]; then
+            NEEDS_INIT=1
+            echo "No DB file -- will init"
+          else
+            python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null
+            if [ $? -ne 0 ]; then
+              echo "Existing DB is corrupt -- removing and re-initialising"
+              rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+              NEEDS_INIT=1
+            fi
+          fi
+          if [ "$NEEDS_INIT" = "1" ]; then
+            python3 -c "
+          import asyncio, sys
+          sys.path.insert(0, 'src')
+          from db import init_db
+          asyncio.run(init_db())
+          print('DB initialised')
+          "
+            if [ $? -ne 0 ]; then
+              echo "::error::init_db failed"
+              exit 1
+            fi
+          fi
+
+      - name: Validate Earthdata credentials
+        id: earthdata_check
+        env:
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+        run: |
+          if python3 scripts/test_earthdata_auth.py; then
+            echo "earthdata_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "earthdata_ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Earthdata auth FAILED -- cloud will be skipped"
+          fi
+        continue-on-error: true
+
+      - name: Fetch MODIS cloud fraction
+        id: fetch_cloud
+        if: (inputs.target == 'all' || inputs.target == 'cloud' || inputs.target == '') && steps.earthdata_check.outputs.earthdata_ok == 'true'
+        continue-on-error: true
+        timeout-minutes: 90
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+          CLOUD_MAX_DATES: "2000"
+        run: python3 -u scripts/fetch_cloud_fraction.py
+
+      - name: Snapshot DB
+        id: snapshot
+        if: always()
+        run: |
+          python3 -c "
+          import sqlite3, sys
+          try:
+              src = sqlite3.connect('data/geohazard.db')
+              src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+              r = src.execute('PRAGMA integrity_check').fetchone()[0]
+              if r != 'ok':
+                  print(f'REFUSING to snapshot corrupt DB: {r[:200]}')
+                  src.close()
+                  sys.exit(1)
+              dst = sqlite3.connect('data/geohazard_snapshot.db')
+              src.backup(dst)
+              dst.close()
+              src.close()
+              print('Snapshot created (post-integrity-check)')
+          except Exception as e:
+              print(f'Snapshot failed: {e}')
+              sys.exit(1)
+          "
+          if [ -f data/geohazard_snapshot.db ]; then
+            mv data/geohazard_snapshot.db data/geohazard.db
+          fi
+
+      - name: Upload cloud.db artifact
+        if: always() && steps.snapshot.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backfill-cloud-${{ github.run_id }}
+          path: data/geohazard.db
+          retention-days: 7
+
+  # =====================================================================
+  # FETCH-SNET — win32tools install + S-net waveform + S-net pressure.
+  # These three steps share HinetPy tooling and credentials; keeping them
+  # in one job avoids re-installing win32tools twice. Typical combined
+  # runtime ~3h; timeout 240m.
+  # =====================================================================
+  fetch-snet:
+    if: >-
+      github.event_name == 'schedule'
+      || inputs.target == 'all'
+      || inputs.target == ''
+      || inputs.target == 'snet_waveform'
+      || inputs.target == 'snet_pressure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    outputs:
+      install_win32tools: ${{ steps.install_win32tools.outcome }}
+      fetch_snet_waveform: ${{ steps.fetch_snet_waveform.outcome }}
+      fetch_snet_pressure: ${{ steps.fetch_snet_pressure.outcome }}
+      snapshot_outcome: ${{ steps.snapshot.outcome }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install aiohttp aiosqlite numpy scipy netCDF4 google-cloud-bigquery pyarrow scikit-learn h5py
+          sudo apt-get install -y ncompress
+
+      - name: Restore previous database checkpoint
+        id: restore
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash {0}
+        run: |
+          set +e
+          mkdir -p data results
+          RESTORED=""
+          MAX_TRIES=30
+          for PREFIX in "backfill-checkpoint-" "database-checkpoint-"; do
+            [ -n "$RESTORED" ] && break
+            RUN_IDS=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+              --jq "[.artifacts[] | select(.name | startswith(\"${PREFIX}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" 2>/dev/null)
+            for PREV_RUN in $RUN_IDS; do
+              [ -z "$PREV_RUN" ] && continue
+              case "$PREV_RUN" in (*[!0-9]*) continue;; esac
+              [ "$PREV_RUN" = "${{ github.run_id }}" ] && continue
+              ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
+              echo "Trying artifact: $ARTIFACT_NAME"
+              rm -rf /tmp/db-restore
+              gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+                --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>/dev/null
+              if [ $? -ne 0 ]; then
+                echo "  download failed -- skip"
+                continue
+              fi
+              DB_FILE="/tmp/db-restore/geohazard.db"
+              [ ! -f "$DB_FILE" ] && DB_FILE="/tmp/db-restore/data/geohazard.db"
+              if [ ! -f "$DB_FILE" ]; then
+                echo "  no geohazard.db in artifact -- skip"
+                continue
+              fi
+              cp "$DB_FILE" data/geohazard.db
+              rm -f data/geohazard.db-wal data/geohazard.db-shm
+              DB_SIZE=$(du -h data/geohazard.db | cut -f1)
+              echo "  copied ($DB_SIZE) -- checking integrity"
+              python3 scripts/check_db_integrity.py data/geohazard.db
+              if [ $? -eq 0 ]; then
+                RESTORED="${ARTIFACT_NAME}"
+                echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
+                echo "Restored from $ARTIFACT_NAME"
+                break
+              else
+                echo "  corrupted -- attempting per-table salvage"
+                python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
+                if [ $? -eq 0 ] && [ -f /tmp/salvaged.db ]; then
+                  rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                  mv /tmp/salvaged.db data/geohazard.db
+                  RESTORED="${ARTIFACT_NAME}-salvaged"
+                  echo "restored=${ARTIFACT_NAME}-salvaged" >> "$GITHUB_OUTPUT"
+                  echo "Salvaged via per-table copy from $ARTIFACT_NAME"
+                  break
+                fi
+                echo "  salvage failed -- trying next artifact"
+                rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm /tmp/salvaged.db
+              fi
+            done
+          done
+          if [ -z "$RESTORED" ]; then
+            echo "No usable checkpoint found -- will init fresh DB"
+          fi
+          exit 0
+
+      - name: Init DB if missing or corrupt
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        shell: bash {0}
+        run: |
+          set +e
+          NEEDS_INIT=0
+          if [ ! -f data/geohazard.db ]; then
+            NEEDS_INIT=1
+            echo "No DB file -- will init"
+          else
+            python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null
+            if [ $? -ne 0 ]; then
+              echo "Existing DB is corrupt -- removing and re-initialising"
+              rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+              NEEDS_INIT=1
+            fi
+          fi
+          if [ "$NEEDS_INIT" = "1" ]; then
+            python3 -c "
+          import asyncio, sys
+          sys.path.insert(0, 'src')
+          from db import init_db
+          asyncio.run(init_db())
+          print('DB initialised')
+          "
+            if [ $? -ne 0 ]; then
+              echo "::error::init_db failed"
+              exit 1
+            fi
+          fi
 
       - name: Install win32tools for S-net (catwin32 + win2sac_32)
         id: install_win32tools
@@ -280,48 +821,7 @@ jobs:
           pip install HinetPy 2>/dev/null || true
           python3 scripts/fetch_snet_pressure.py || echo "S-net pressure fetch failed (non-fatal)"
 
-      - name: Fetch MODIS LST (thermal anomaly discovery)
-        id: fetch_modis_lst
-        if: inputs.target == 'all' || inputs.target == 'modis_lst' || inputs.target == ''
-        continue-on-error: true
-        # 605 land events × ~7s/event ≈ 70 min. Earlier 45m timeout cut off
-        # at ~200/605, leaving coverage stuck at 3%. 120m leaves slack for
-        # Phase 2 random-control fetches.
-        timeout-minutes: 120
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-        run: |
-          python3 scripts/fetch_modis_lst.py || echo "MODIS LST discovery completed"
-
-      - name: Fetch OMI SO2 column data (Earthdata auth)
-        id: fetch_so2
-        if: (inputs.target == 'all' || inputs.target == 'so2' || inputs.target == '') && steps.earthdata_check.outputs.earthdata_ok == 'true'
-        continue-on-error: true
-        timeout-minutes: 90
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
-          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
-          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
-          SO2_MAX_DATES: "2000"
-        run: python3 -u scripts/fetch_omi_so2.py
-
-      - name: Fetch MODIS cloud fraction (Earthdata auth)
-        id: fetch_cloud
-        if: (inputs.target == 'all' || inputs.target == 'cloud' || inputs.target == '') && steps.earthdata_check.outputs.earthdata_ok == 'true'
-        continue-on-error: true
-        timeout-minutes: 90
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
-          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
-          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
-          CLOUD_MAX_DATES: "2000"
-        run: python3 -u scripts/fetch_cloud_fraction.py
-
-      # ====== HEAVY POST-FETCH ======
-
-      - name: Snapshot DB for heavy artifact
+      - name: Snapshot DB
         id: snapshot
         if: always()
         run: |
@@ -348,23 +848,17 @@ jobs:
             mv data/geohazard_snapshot.db data/geohazard.db
           fi
 
-      - name: Upload heavy.db artifact
-        # always() needed because GitHub Actions skips plain-`if:` steps when
-        # the job is cancelled (e.g. job-level timeout). Without it, snapshot
-        # ran successfully but the artifact was lost — observed in run
-        # 24595180615 (2026-04-18) where heavy timed out mid-cloud_fraction
-        # and the heavy.db never reached merge, so BQ heavy-owned tables
-        # were WRITE_TRUNCATE'd back to the restored checkpoint state.
+      - name: Upload snet.db artifact
         if: always() && steps.snapshot.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: backfill-heavy-${{ github.run_id }}
+          name: backfill-snet-${{ github.run_id }}
           path: data/geohazard.db
           retention-days: 7
 
   # =====================================================================
-  # LIGHT JOB — all 26 other fetchers
-  # Combined estimated runtime ~1h45m; timeout 200m leaves slack.
+  # LIGHT JOB -- all 26 other fetchers. Combined estimated runtime ~1h45m;
+  # timeout 200m leaves slack. Serves as the base DB for merge.
   # =====================================================================
   light:
     runs-on: ubuntu-latest
@@ -409,7 +903,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install aiohttp aiosqlite numpy scipy netCDF4 google-cloud-bigquery pyarrow scikit-learn h5py
-          sudo apt-get install -y ncompress  # For .Z IONEX decompression
+          sudo apt-get install -y ncompress
 
       - name: Restore previous database checkpoint
         id: restore
@@ -436,19 +930,19 @@ jobs:
               gh run download "$PREV_RUN" --repo ${{ github.repository }} \
                 --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>/dev/null
               if [ $? -ne 0 ]; then
-                echo "  download failed — skip"
+                echo "  download failed -- skip"
                 continue
               fi
               DB_FILE="/tmp/db-restore/geohazard.db"
               [ ! -f "$DB_FILE" ] && DB_FILE="/tmp/db-restore/data/geohazard.db"
               if [ ! -f "$DB_FILE" ]; then
-                echo "  no geohazard.db in artifact — skip"
+                echo "  no geohazard.db in artifact -- skip"
                 continue
               fi
               cp "$DB_FILE" data/geohazard.db
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
-              echo "  copied ($DB_SIZE) — checking integrity"
+              echo "  copied ($DB_SIZE) -- checking integrity"
               python3 scripts/check_db_integrity.py data/geohazard.db
               if [ $? -eq 0 ]; then
                 RESTORED="${ARTIFACT_NAME}"
@@ -456,9 +950,8 @@ jobs:
                 echo "Restored from $ARTIFACT_NAME"
                 break
               else
-                echo "  corrupted — attempting per-table salvage"
-                python3 scripts/salvage_db.py \
-                  --src data/geohazard.db --dst /tmp/salvaged.db
+                echo "  corrupted -- attempting per-table salvage"
+                python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
                 if [ $? -eq 0 ] && [ -f /tmp/salvaged.db ]; then
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
                   mv /tmp/salvaged.db data/geohazard.db
@@ -467,13 +960,13 @@ jobs:
                   echo "Salvaged via per-table copy from $ARTIFACT_NAME"
                   break
                 fi
-                echo "  salvage failed — trying next artifact"
+                echo "  salvage failed -- trying next artifact"
                 rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm /tmp/salvaged.db
               fi
             done
           done
           if [ -z "$RESTORED" ]; then
-            echo "No usable checkpoint found — will init fresh DB"
+            echo "No usable checkpoint found -- will init fresh DB"
           fi
           exit 0
 
@@ -486,11 +979,11 @@ jobs:
           NEEDS_INIT=0
           if [ ! -f data/geohazard.db ]; then
             NEEDS_INIT=1
-            echo "No DB file — will init"
+            echo "No DB file -- will init"
           else
             python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null
             if [ $? -ne 0 ]; then
-              echo "Existing DB is corrupt — removing and re-initialising"
+              echo "Existing DB is corrupt -- removing and re-initialising"
               rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
               NEEDS_INIT=1
             fi
@@ -520,11 +1013,9 @@ jobs:
             echo "earthdata_ok=true" >> "$GITHUB_OUTPUT"
           else
             echo "earthdata_ok=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Earthdata auth FAILED — SO2, cloud, nightlight, ISS LIS will be skipped"
+            echo "::warning::Earthdata auth FAILED -- nightlight, ISS LIS will be skipped"
           fi
         continue-on-error: true
-
-      # ====== LIGHT FETCH STEPS ======
 
       - name: Fetch earthquake data (M3+, 2011-2026)
         id: fetch_earthquakes
@@ -820,8 +1311,6 @@ jobs:
         run: |
           python3 scripts/fetch_ioc_sealevel.py || echo "IOC sea level fetch failed (non-fatal)"
 
-      # ====== LIGHT POST-FETCH ======
-
       - name: Snapshot DB for light artifact
         id: snapshot
         if: always()
@@ -850,7 +1339,6 @@ jobs:
           fi
 
       - name: Upload light.db artifact
-        # always() guard — same rationale as the heavy job's Upload step.
         if: always() && steps.snapshot.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
@@ -859,11 +1347,12 @@ jobs:
           retention-days: 7
 
   # =====================================================================
-  # MERGE JOB — combine heavy.db + light.db, snapshot/checkpoint/BQ/Discord
-  # if: always() so a single-job failure still triggers BQ upload + reporting.
+  # MERGE JOB -- combine light (base) with modis / so2 / cloud / snet
+  # overlays, then snapshot / coverage / checkpoint / BQ / Discord / Issue.
+  # if: always() so single-job failure still triggers BQ upload + reporting.
   # =====================================================================
   merge:
-    needs: [heavy, light]
+    needs: [fetch-modis, fetch-so2, fetch-cloud, fetch-snet, light]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -887,24 +1376,50 @@ jobs:
           name: backfill-light-${{ github.run_id }}
           path: /tmp/light
 
-      - name: Download heavy.db artifact
-        id: download_heavy
+      - name: Download modis.db artifact
+        id: download_modis
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: backfill-heavy-${{ github.run_id }}
-          path: /tmp/heavy
+          name: backfill-modis-${{ github.run_id }}
+          path: /tmp/modis
 
-      - name: Merge heavy + light checkpoints
+      - name: Download so2.db artifact
+        id: download_so2
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: backfill-so2-${{ github.run_id }}
+          path: /tmp/so2
+
+      - name: Download cloud.db artifact
+        id: download_cloud
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: backfill-cloud-${{ github.run_id }}
+          path: /tmp/cloud
+
+      - name: Download snet.db artifact
+        id: download_snet
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: backfill-snet-${{ github.run_id }}
+          path: /tmp/snet
+
+      - name: Merge light + 4 overlays
         id: merge
         run: |
           mkdir -p data
-          # --require-base ensures we never let a heavy-only DB through to BQ
+          # --require-base ensures we never let an overlay-only DB through to BQ
           # (would WRITE_TRUNCATE every light-owned table and zero them out).
           python3 scripts/merge_checkpoints.py \
             --base /tmp/light/geohazard.db \
-            --overlay /tmp/heavy/geohazard.db \
-            --overlay-tables modis_lst,so2_column,cloud_fraction,snet_waveform,snet_pressure \
+            --overlay /tmp/modis/geohazard.db:modis_lst \
+            --overlay /tmp/so2/geohazard.db:so2_column \
+            --overlay /tmp/cloud/geohazard.db:cloud_fraction \
+            --overlay /tmp/snet/geohazard.db:snet_waveform,snet_pressure \
             --dst data/geohazard.db \
             --require-base
 
@@ -964,20 +1479,20 @@ jobs:
                   cnt = db.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0]
                   mi = db.execute(f'SELECT MIN({col}) FROM {t}').fetchone()[0]
                   mx = db.execute(f'SELECT MAX({col}) FROM {t}').fetchone()[0]
-                  print(f'{t}: {cnt:,} rows ({mi} → {mx})')
+                  print(f'{t}: {cnt:,} rows ({mi} -> {mx})')
               except Exception as e:
                   print(f'{t}: ERROR {e}')
           db.close()
           "
 
       - name: Upload checkpoint artifact
-        # Only upload when snapshot succeeded (integrity-checked) — never
+        # Only upload when snapshot succeeded (integrity-checked) -- never
         # propagate a corrupt DB as a new checkpoint.
         # CRITICAL: Skip checkpoint upload for targeted dispatch runs.
-        # A targeted run (e.g. target=cloud_fraction) only fetches one table,
-        # so its checkpoint is missing data from other tables that were
-        # accumulated in previous full runs. Uploading it would overwrite the
-        # latest full checkpoint and reset progress for all other tables.
+        # A targeted run (e.g. target=cloud) only fetches one table, so its
+        # checkpoint is missing data from other tables that were accumulated
+        # in previous full runs. Uploading would overwrite the latest full
+        # checkpoint and reset progress for all other tables.
         if: >-
           steps.snapshot.outcome == 'success'
           && (github.event_name != 'workflow_dispatch'
@@ -991,14 +1506,11 @@ jobs:
 
       - name: Upload to BigQuery
         id: bq_upload
-        # Skip when snapshot's integrity check rejected the DB — uploading
-        # from a corrupt DB wastes 15min and spams Discord.
-        # CRITICAL: Skip BQ upload for targeted dispatch runs.
-        # load_raw_to_bq.py uses WRITE_TRUNCATE for all 31 tables. A targeted
-        # run only fetches one table, so the in-DB rows for non-target tables
-        # come from the restored checkpoint (potentially older than current BQ).
-        # Letting it run would overwrite BQ with the older snapshot — exactly
-        # what bit lightning_thunder_hour (31,824 → 24,480 rows on 2026-04-17).
+        # Skip when snapshot's integrity check rejected the DB, or when this
+        # is a targeted dispatch -- load_raw_to_bq.py uses WRITE_TRUNCATE for
+        # all 31 tables, so a targeted run would overwrite BQ with older
+        # rows for non-target tables (exactly what bit lightning_thunder_hour
+        # 31,824 -> 24,480 on 2026-04-17).
         if: >-
           steps.snapshot.outcome == 'success'
           && (github.event_name != 'workflow_dispatch'
@@ -1020,10 +1532,10 @@ jobs:
           FETCH_TEC_RANDOM: ${{ needs.light.outputs.fetch_tec_random }}
           FETCH_KP: ${{ needs.light.outputs.fetch_kp }}
           FETCH_CMT: ${{ needs.light.outputs.fetch_cmt }}
-          FETCH_SNET_WAVEFORM: ${{ needs.heavy.outputs.fetch_snet_waveform }}
-          FETCH_SNET_PRESSURE: ${{ needs.heavy.outputs.fetch_snet_pressure }}
+          FETCH_SNET_WAVEFORM: ${{ needs.fetch-snet.outputs.fetch_snet_waveform }}
+          FETCH_SNET_PRESSURE: ${{ needs.fetch-snet.outputs.fetch_snet_pressure }}
           FETCH_GNSS_TEC: ${{ needs.light.outputs.fetch_gnss_tec }}
-          FETCH_MODIS_LST: ${{ needs.heavy.outputs.fetch_modis_lst }}
+          FETCH_MODIS_LST: ${{ needs.fetch-modis.outputs.fetch_modis_lst }}
           FETCH_ULF: ${{ needs.light.outputs.fetch_ulf }}
           FETCH_COSMIC_RAY: ${{ needs.light.outputs.fetch_cosmic_ray }}
           FETCH_LIGHTNING: ${{ needs.light.outputs.fetch_lightning }}
@@ -1035,8 +1547,8 @@ jobs:
           FETCH_IERS: ${{ needs.light.outputs.fetch_iers }}
           FETCH_SOLAR_WIND: ${{ needs.light.outputs.fetch_solar_wind }}
           FETCH_GRACE: ${{ needs.light.outputs.fetch_grace }}
-          FETCH_SO2: ${{ needs.heavy.outputs.fetch_so2 }}
-          FETCH_CLOUD: ${{ needs.heavy.outputs.fetch_cloud }}
+          FETCH_SO2: ${{ needs.fetch-so2.outputs.fetch_so2 }}
+          FETCH_CLOUD: ${{ needs.fetch-cloud.outputs.fetch_cloud }}
           FETCH_NIGHTLIGHT: ${{ needs.light.outputs.fetch_nightlight }}
           FETCH_TIDE_GAUGE: ${{ needs.light.outputs.fetch_tide_gauge }}
           FETCH_SOIL_MOISTURE: ${{ needs.light.outputs.fetch_soil_moisture }}
@@ -1049,26 +1561,31 @@ jobs:
           FETCH_IOC_SEALEVEL: ${{ needs.light.outputs.fetch_ioc_sealevel }}
           BQ_UPLOAD: ${{ steps.bq_upload.outcome }}
           MERGE_OUTCOME: ${{ steps.merge.outcome }}
-          HEAVY_RESULT: ${{ needs.heavy.result }}
+          FETCH_MODIS_RESULT: ${{ needs.fetch-modis.result }}
+          FETCH_SO2_RESULT: ${{ needs.fetch-so2.result }}
+          FETCH_CLOUD_RESULT: ${{ needs.fetch-cloud.result }}
+          FETCH_SNET_RESULT: ${{ needs.fetch-snet.result }}
           LIGHT_RESULT: ${{ needs.light.result }}
         run: |
           if [ -z "$DISCORD_WEBHOOK_URL" ]; then exit 0; fi
           # When the merge step failed (e.g. base missing under --require-base),
           # data/geohazard.db doesn't exist for the per-table coverage queries.
-          # Skip the DB-driven body and post a short failure embed instead.
           if [ ! -f data/geohazard.db ]; then
             python3 -c "
           import json, os, urllib.request
           url = os.environ.get('DISCORD_WEBHOOK_URL', '')
           run_url = 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
           body = (
-              'Heavy: ' + os.environ.get('HEAVY_RESULT', 'unknown') + '\n'
-              'Light: ' + os.environ.get('LIGHT_RESULT', 'unknown') + '\n'
-              'Merge: ' + os.environ.get('MERGE_OUTCOME', 'unknown') + '\n'
+              'fetch-modis: ' + os.environ.get('FETCH_MODIS_RESULT', 'unknown') + '\n'
+              'fetch-so2:   ' + os.environ.get('FETCH_SO2_RESULT', 'unknown') + '\n'
+              'fetch-cloud: ' + os.environ.get('FETCH_CLOUD_RESULT', 'unknown') + '\n'
+              'fetch-snet:  ' + os.environ.get('FETCH_SNET_RESULT', 'unknown') + '\n'
+              'light:       ' + os.environ.get('LIGHT_RESULT', 'unknown') + '\n'
+              'merge:       ' + os.environ.get('MERGE_OUTCOME', 'unknown') + '\n'
               '\nNo merged DB to report coverage from.'
           )
           payload = json.dumps({'embeds': [{
-              'title': '🔴 Backfill #${{ github.run_number }} — merge skipped/failed',
+              'title': '🔴 Backfill #${{ github.run_number }} -- merge skipped/failed',
               'color': 15158332,
               'description': body[:4000],
               'footer': {'text': run_url},
@@ -1184,13 +1701,13 @@ jobs:
               report += '\n\n🎉 ALL ≥95%! Backfill nearly complete'
 
           if alerts or failed_steps:
-              color = 15158332  # red
-              title = '🔴 Backfill #${{ github.run_number }} — issues detected'
+              color = 15158332
+              title = '🔴 Backfill #${{ github.run_number }} -- issues detected'
           elif all_95:
-              color = 3066993   # green
-              title = '🎉 Backfill #${{ github.run_number }} — ≥95% coverage!'
+              color = 3066993
+              title = '🎉 Backfill #${{ github.run_number }} -- ≥95% coverage!'
           else:
-              color = 3447003   # blue (in progress)
+              color = 3447003
               title = '📊 Backfill #${{ github.run_number }}'
 
           url = os.environ.get('DISCORD_WEBHOOK_URL', '')
@@ -1213,10 +1730,10 @@ jobs:
             needs.light.outputs.fetch_tec_random == 'failure' ||
             needs.light.outputs.fetch_kp == 'failure' ||
             needs.light.outputs.fetch_cmt == 'failure' ||
-            needs.heavy.outputs.fetch_snet_waveform == 'failure' ||
-            needs.heavy.outputs.fetch_snet_pressure == 'failure' ||
+            needs.fetch-snet.outputs.fetch_snet_waveform == 'failure' ||
+            needs.fetch-snet.outputs.fetch_snet_pressure == 'failure' ||
             needs.light.outputs.fetch_gnss_tec == 'failure' ||
-            needs.heavy.outputs.fetch_modis_lst == 'failure' ||
+            needs.fetch-modis.outputs.fetch_modis_lst == 'failure' ||
             needs.light.outputs.fetch_ulf == 'failure' ||
             needs.light.outputs.fetch_cosmic_ray == 'failure' ||
             needs.light.outputs.fetch_lightning == 'failure' ||
@@ -1228,8 +1745,8 @@ jobs:
             needs.light.outputs.fetch_iers == 'failure' ||
             needs.light.outputs.fetch_solar_wind == 'failure' ||
             needs.light.outputs.fetch_grace == 'failure' ||
-            needs.heavy.outputs.fetch_so2 == 'failure' ||
-            needs.heavy.outputs.fetch_cloud == 'failure' ||
+            needs.fetch-so2.outputs.fetch_so2 == 'failure' ||
+            needs.fetch-cloud.outputs.fetch_cloud == 'failure' ||
             needs.light.outputs.fetch_nightlight == 'failure' ||
             needs.light.outputs.fetch_tide_gauge == 'failure' ||
             needs.light.outputs.fetch_soil_moisture == 'failure' ||
@@ -1252,10 +1769,10 @@ jobs:
           [ "${{ needs.light.outputs.fetch_tec_random }}" = "failure" ] && FAILED="$FAILED tec_random"
           [ "${{ needs.light.outputs.fetch_kp }}" = "failure" ] && FAILED="$FAILED kp"
           [ "${{ needs.light.outputs.fetch_cmt }}" = "failure" ] && FAILED="$FAILED cmt"
-          [ "${{ needs.heavy.outputs.fetch_snet_waveform }}" = "failure" ] && FAILED="$FAILED snet_waveform"
-          [ "${{ needs.heavy.outputs.fetch_snet_pressure }}" = "failure" ] && FAILED="$FAILED snet_pressure"
+          [ "${{ needs.fetch-snet.outputs.fetch_snet_waveform }}" = "failure" ] && FAILED="$FAILED snet_waveform"
+          [ "${{ needs.fetch-snet.outputs.fetch_snet_pressure }}" = "failure" ] && FAILED="$FAILED snet_pressure"
           [ "${{ needs.light.outputs.fetch_gnss_tec }}" = "failure" ] && FAILED="$FAILED gnss_tec"
-          [ "${{ needs.heavy.outputs.fetch_modis_lst }}" = "failure" ] && FAILED="$FAILED modis_lst"
+          [ "${{ needs.fetch-modis.outputs.fetch_modis_lst }}" = "failure" ] && FAILED="$FAILED modis_lst"
           [ "${{ needs.light.outputs.fetch_ulf }}" = "failure" ] && FAILED="$FAILED ulf"
           [ "${{ needs.light.outputs.fetch_cosmic_ray }}" = "failure" ] && FAILED="$FAILED cosmic_ray"
           [ "${{ needs.light.outputs.fetch_lightning }}" = "failure" ] && FAILED="$FAILED lightning"
@@ -1267,8 +1784,8 @@ jobs:
           [ "${{ needs.light.outputs.fetch_iers }}" = "failure" ] && FAILED="$FAILED iers"
           [ "${{ needs.light.outputs.fetch_solar_wind }}" = "failure" ] && FAILED="$FAILED solar_wind"
           [ "${{ needs.light.outputs.fetch_grace }}" = "failure" ] && FAILED="$FAILED grace"
-          [ "${{ needs.heavy.outputs.fetch_so2 }}" = "failure" ] && FAILED="$FAILED so2"
-          [ "${{ needs.heavy.outputs.fetch_cloud }}" = "failure" ] && FAILED="$FAILED cloud"
+          [ "${{ needs.fetch-so2.outputs.fetch_so2 }}" = "failure" ] && FAILED="$FAILED so2"
+          [ "${{ needs.fetch-cloud.outputs.fetch_cloud }}" = "failure" ] && FAILED="$FAILED cloud"
           [ "${{ needs.light.outputs.fetch_nightlight }}" = "failure" ] && FAILED="$FAILED nightlight"
           [ "${{ needs.light.outputs.fetch_tide_gauge }}" = "failure" ] && FAILED="$FAILED tide_gauge"
           [ "${{ needs.light.outputs.fetch_soil_moisture }}" = "failure" ] && FAILED="$FAILED soil_moisture"
@@ -1283,8 +1800,6 @@ jobs:
           [ "${{ steps.merge.outcome }}" = "failure" ] && FAILED="$FAILED merge"
           FAILED=$(echo "$FAILED" | xargs)
 
-          # Coverage extraction needs the merged DB; if merge failed there's
-          # nothing to query, so emit a placeholder rather than crash.
           if [ -f data/geohazard.db ]; then
             COVERAGE=$(python3 -c "
           import sqlite3
@@ -1335,7 +1850,7 @@ jobs:
           db.close()
           " 2>/dev/null || echo "Coverage unavailable")
           else
-            COVERAGE="(merged DB unavailable — merge step likely failed)"
+            COVERAGE="(merged DB unavailable -- merge step likely failed)"
           fi
 
           gh issue create \
@@ -1354,4 +1869,4 @@ jobs:
           ### Action needed
           Check the run log for error details and fix the underlying issue.
           ISSUE_EOF
-          )" 2>/dev/null || echo "Issue creation failed"
+          )"
