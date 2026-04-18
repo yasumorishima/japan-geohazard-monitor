@@ -2,7 +2,20 @@ name: Backfill Data
 
 # Continuous backfill for ALL data tables.
 # Runs every 3 hours around the clock until 100% coverage is reached.
-# Each run restores the previous DB checkpoint, fetches a batch, saves checkpoint, uploads to BQ.
+#
+# 2026-04-18 split into heavy/light parallel jobs to escape the GitHub
+# 5h hard limit. Earlier serial layout hit 5h with MODIS LST + SO2 +
+# cloud_fraction in series and got cancelled before reaching BQ upload,
+# leaving cloud/SO2 progressing at ~1/10 the expected rate.
+#
+# Topology:
+#   heavy  (timeout 290m): MODIS LST / SO2 / cloud_fraction / S-net waveform
+#                          / S-net pressure  → uploads heavy.db artifact
+#   light  (timeout 200m): the other ~26 fetchers                → uploads light.db artifact
+#   merge  (timeout 60m):  needs both, runs scripts/merge_checkpoints.py
+#                          (light=base, heavy=overlay) → Snapshot/Upload
+#                          checkpoint/Upload BQ/Discord/Issue
+#
 # Disable this workflow once coverage reaches 100%.
 
 on:
@@ -63,10 +76,26 @@ permissions:
   contents: read
   issues: write
 
+# Reusable shell snippets are inlined per job below; YAML anchors aren't
+# supported by GitHub Actions across step blocks, so duplication is
+# unavoidable for restore/init/snapshot steps.
+
 jobs:
-  backfill:
+  # =====================================================================
+  # HEAVY JOB — MODIS LST / SO2 / cloud / S-net waveform / S-net pressure
+  # Combined estimated runtime ~2h45m; timeout 290m leaves slack.
+  # =====================================================================
+  heavy:
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 290
+    outputs:
+      install_win32tools: ${{ steps.install_win32tools.outcome }}
+      fetch_snet_waveform: ${{ steps.fetch_snet_waveform.outcome }}
+      fetch_snet_pressure: ${{ steps.fetch_snet_pressure.outcome }}
+      fetch_modis_lst: ${{ steps.fetch_modis_lst.outcome }}
+      fetch_so2: ${{ steps.fetch_so2.outcome }}
+      fetch_cloud: ${{ steps.fetch_cloud.outcome }}
+      snapshot_outcome: ${{ steps.snapshot.outcome }}
 
     steps:
       - uses: actions/checkout@v4
@@ -92,12 +121,6 @@ jobs:
           set +e
           mkdir -p data results
           RESTORED=""
-          # Try backfill checkpoint first, then analysis checkpoint.
-          # For each prefix, try up to MAX_TRIES most-recent artifacts; accept
-          # the first one that passes PRAGMA integrity_check.
-          # Try up to 30 most-recent artifacts per prefix. Retention is 30 days
-          # at 3h cron → ~240 artifacts can exist, but corruption streaks are
-          # short historically; 30 covers the most-recent week.
           MAX_TRIES=30
           for PREFIX in "backfill-checkpoint-" "database-checkpoint-"; do
             [ -n "$RESTORED" ] && break
@@ -105,7 +128,6 @@ jobs:
               --jq "[.artifacts[] | select(.name | startswith(\"${PREFIX}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" 2>/dev/null)
             for PREV_RUN in $RUN_IDS; do
               [ -z "$PREV_RUN" ] && continue
-              # Guard against non-numeric noise from gh api error output
               case "$PREV_RUN" in (*[!0-9]*) continue;; esac
               [ "$PREV_RUN" = "${{ github.run_id }}" ] && continue
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
@@ -134,11 +156,6 @@ jobs:
                 echo "Restored from $ARTIFACT_NAME"
                 break
               else
-                # Ubuntu runners ship sqlite3 without sqlite_dbpage vtab, so
-                # `.recover` fails immediately. Use per-table ATTACH+INSERT
-                # salvage (proven 35/37 tables recovered in debug run
-                # 24421917797). All tables now included (SKIP_TABLES cleared
-                # in commit bec5675).
                 echo "  corrupted — attempting per-table salvage"
                 python3 scripts/salvage_db.py \
                   --src data/geohazard.db --dst /tmp/salvaged.db
@@ -207,61 +224,7 @@ jobs:
           fi
         continue-on-error: true
 
-      # ====== FETCH STEPS ======
-
-      - name: Fetch earthquake data (M3+, 2011-2026)
-        id: fetch_earthquakes
-        if: inputs.target == 'all' || inputs.target == 'earthquakes' || inputs.target == ''
-        continue-on-error: true
-        timeout-minutes: 20
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-        run: |
-          mkdir -p data
-          python3 scripts/fetch_earthquakes.py
-
-      - name: Fetch TEC data (continuous 2011-now, recent-first)
-        id: fetch_tec_event
-        if: inputs.target == 'all' || inputs.target == 'tec' || inputs.target == ''
-        continue-on-error: true
-        timeout-minutes: 30
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-          TEC_MAX_DATES: "150"
-        run: |
-          python3 scripts/fetch_tec.py --mode continuous
-
-      - name: Fetch TEC random baseline (legacy, skipped in continuous mode)
-        id: fetch_tec_random
-        if: false
-        continue-on-error: true
-        timeout-minutes: 30
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-        run: |
-          python3 scripts/fetch_tec.py --mode random --n-dates 300
-
-      - name: Fetch Kp data (2011-2026)
-        id: fetch_kp
-        if: inputs.target == 'all' || inputs.target == 'kp' || inputs.target == ''
-        continue-on-error: true
-        timeout-minutes: 15
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-        run: |
-          python3 scripts/fetch_kp.py
-
-      - name: Fetch CMT focal mechanisms (GCMT, 2011-present)
-        id: fetch_cmt
-        if: inputs.target == 'all' || inputs.target == 'cmt' || inputs.target == ''
-        continue-on-error: true
-        timeout-minutes: 15
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-        run: |
-          python3 scripts/fetch_cmt.py
-
-      # ====== S-NET (HinetPy required) ======
+      # ====== HEAVY FETCH STEPS ======
 
       - name: Install win32tools for S-net (catwin32 + win2sac_32)
         id: install_win32tools
@@ -315,17 +278,6 @@ jobs:
           pip install HinetPy 2>/dev/null || true
           python3 scripts/fetch_snet_pressure.py || echo "S-net pressure fetch failed (non-fatal)"
 
-      - name: Fetch GNSS-TEC high-resolution data (Nagoya University ISEE)
-        id: fetch_gnss_tec
-        if: inputs.target == 'all' || inputs.target == 'gnss_tec' || inputs.target == ''
-        continue-on-error: true
-        timeout-minutes: 30
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-          GNSS_TEC_MAX_DATES: "30"
-        run: |
-          python3 scripts/fetch_gnss_tec.py || echo "GNSS-TEC fetch non-fatal failure"
-
       - name: Fetch MODIS LST (thermal anomaly discovery)
         id: fetch_modis_lst
         if: inputs.target == 'all' || inputs.target == 'modis_lst' || inputs.target == ''
@@ -338,6 +290,296 @@ jobs:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
           python3 scripts/fetch_modis_lst.py || echo "MODIS LST discovery completed"
+
+      - name: Fetch OMI SO2 column data (Earthdata auth)
+        id: fetch_so2
+        if: (inputs.target == 'all' || inputs.target == 'so2' || inputs.target == '') && steps.earthdata_check.outputs.earthdata_ok == 'true'
+        continue-on-error: true
+        timeout-minutes: 90
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+          SO2_MAX_DATES: "2000"
+        run: python3 -u scripts/fetch_omi_so2.py
+
+      - name: Fetch MODIS cloud fraction (Earthdata auth)
+        id: fetch_cloud
+        if: (inputs.target == 'all' || inputs.target == 'cloud' || inputs.target == '') && steps.earthdata_check.outputs.earthdata_ok == 'true'
+        continue-on-error: true
+        timeout-minutes: 90
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+          CLOUD_MAX_DATES: "2000"
+        run: python3 -u scripts/fetch_cloud_fraction.py
+
+      # ====== HEAVY POST-FETCH ======
+
+      - name: Snapshot DB for heavy artifact
+        id: snapshot
+        if: always()
+        run: |
+          python3 -c "
+          import sqlite3, sys
+          try:
+              src = sqlite3.connect('data/geohazard.db')
+              src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+              r = src.execute('PRAGMA integrity_check').fetchone()[0]
+              if r != 'ok':
+                  print(f'REFUSING to snapshot corrupt DB: {r[:200]}')
+                  src.close()
+                  sys.exit(1)
+              dst = sqlite3.connect('data/geohazard_snapshot.db')
+              src.backup(dst)
+              dst.close()
+              src.close()
+              print('Snapshot created (post-integrity-check)')
+          except Exception as e:
+              print(f'Snapshot failed: {e}')
+              sys.exit(1)
+          "
+          if [ -f data/geohazard_snapshot.db ]; then
+            mv data/geohazard_snapshot.db data/geohazard.db
+          fi
+
+      - name: Upload heavy.db artifact
+        if: steps.snapshot.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backfill-heavy-${{ github.run_id }}
+          path: data/geohazard.db
+          retention-days: 7
+
+  # =====================================================================
+  # LIGHT JOB — all 26 other fetchers
+  # Combined estimated runtime ~1h45m; timeout 200m leaves slack.
+  # =====================================================================
+  light:
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    outputs:
+      fetch_earthquakes: ${{ steps.fetch_earthquakes.outcome }}
+      fetch_tec_event: ${{ steps.fetch_tec_event.outcome }}
+      fetch_tec_random: ${{ steps.fetch_tec_random.outcome }}
+      fetch_kp: ${{ steps.fetch_kp.outcome }}
+      fetch_cmt: ${{ steps.fetch_cmt.outcome }}
+      fetch_gnss_tec: ${{ steps.fetch_gnss_tec.outcome }}
+      fetch_ulf: ${{ steps.fetch_ulf.outcome }}
+      fetch_cosmic_ray: ${{ steps.fetch_cosmic_ray.outcome }}
+      fetch_lightning: ${{ steps.fetch_lightning.outcome }}
+      fetch_iss_lis: ${{ steps.fetch_iss_lis.outcome }}
+      fetch_wwlln_thunder_hour: ${{ steps.fetch_wwlln_thunder_hour.outcome }}
+      fetch_lis_otd_monthly: ${{ steps.fetch_lis_otd_monthly.outcome }}
+      fetch_geomag: ${{ steps.fetch_geomag.outcome }}
+      fetch_olr: ${{ steps.fetch_olr.outcome }}
+      fetch_iers: ${{ steps.fetch_iers.outcome }}
+      fetch_solar_wind: ${{ steps.fetch_solar_wind.outcome }}
+      fetch_grace: ${{ steps.fetch_grace.outcome }}
+      fetch_tide_gauge: ${{ steps.fetch_tide_gauge.outcome }}
+      fetch_soil_moisture: ${{ steps.fetch_soil_moisture.outcome }}
+      fetch_ocean_color: ${{ steps.fetch_ocean_color.outcome }}
+      fetch_nightlight: ${{ steps.fetch_nightlight.outcome }}
+      fetch_goes_xray: ${{ steps.fetch_goes_xray.outcome }}
+      fetch_goes_proton: ${{ steps.fetch_goes_proton.outcome }}
+      fetch_tidal_stress: ${{ steps.fetch_tidal_stress.outcome }}
+      fetch_particle_flux: ${{ steps.fetch_particle_flux.outcome }}
+      fetch_dart: ${{ steps.fetch_dart.outcome }}
+      fetch_ioc_sealevel: ${{ steps.fetch_ioc_sealevel.outcome }}
+      snapshot_outcome: ${{ steps.snapshot.outcome }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install aiohttp aiosqlite numpy scipy netCDF4 google-cloud-bigquery pyarrow scikit-learn h5py
+          sudo apt-get install -y ncompress  # For .Z IONEX decompression
+
+      - name: Restore previous database checkpoint
+        id: restore
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash {0}
+        run: |
+          set +e
+          mkdir -p data results
+          RESTORED=""
+          MAX_TRIES=30
+          for PREFIX in "backfill-checkpoint-" "database-checkpoint-"; do
+            [ -n "$RESTORED" ] && break
+            RUN_IDS=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+              --jq "[.artifacts[] | select(.name | startswith(\"${PREFIX}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" 2>/dev/null)
+            for PREV_RUN in $RUN_IDS; do
+              [ -z "$PREV_RUN" ] && continue
+              case "$PREV_RUN" in (*[!0-9]*) continue;; esac
+              [ "$PREV_RUN" = "${{ github.run_id }}" ] && continue
+              ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
+              echo "Trying artifact: $ARTIFACT_NAME"
+              rm -rf /tmp/db-restore
+              gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+                --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>/dev/null
+              if [ $? -ne 0 ]; then
+                echo "  download failed — skip"
+                continue
+              fi
+              DB_FILE="/tmp/db-restore/geohazard.db"
+              [ ! -f "$DB_FILE" ] && DB_FILE="/tmp/db-restore/data/geohazard.db"
+              if [ ! -f "$DB_FILE" ]; then
+                echo "  no geohazard.db in artifact — skip"
+                continue
+              fi
+              cp "$DB_FILE" data/geohazard.db
+              rm -f data/geohazard.db-wal data/geohazard.db-shm
+              DB_SIZE=$(du -h data/geohazard.db | cut -f1)
+              echo "  copied ($DB_SIZE) — checking integrity"
+              python3 scripts/check_db_integrity.py data/geohazard.db
+              if [ $? -eq 0 ]; then
+                RESTORED="${ARTIFACT_NAME}"
+                echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
+                echo "Restored from $ARTIFACT_NAME"
+                break
+              else
+                echo "  corrupted — attempting per-table salvage"
+                python3 scripts/salvage_db.py \
+                  --src data/geohazard.db --dst /tmp/salvaged.db
+                if [ $? -eq 0 ] && [ -f /tmp/salvaged.db ]; then
+                  rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                  mv /tmp/salvaged.db data/geohazard.db
+                  RESTORED="${ARTIFACT_NAME}-salvaged"
+                  echo "restored=${ARTIFACT_NAME}-salvaged" >> "$GITHUB_OUTPUT"
+                  echo "Salvaged via per-table copy from $ARTIFACT_NAME"
+                  break
+                fi
+                echo "  salvage failed — trying next artifact"
+                rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm /tmp/salvaged.db
+              fi
+            done
+          done
+          if [ -z "$RESTORED" ]; then
+            echo "No usable checkpoint found — will init fresh DB"
+          fi
+          exit 0
+
+      - name: Init DB if missing or corrupt
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        shell: bash {0}
+        run: |
+          set +e
+          NEEDS_INIT=0
+          if [ ! -f data/geohazard.db ]; then
+            NEEDS_INIT=1
+            echo "No DB file — will init"
+          else
+            python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null
+            if [ $? -ne 0 ]; then
+              echo "Existing DB is corrupt — removing and re-initialising"
+              rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+              NEEDS_INIT=1
+            fi
+          fi
+          if [ "$NEEDS_INIT" = "1" ]; then
+            python3 -c "
+          import asyncio, sys
+          sys.path.insert(0, 'src')
+          from db import init_db
+          asyncio.run(init_db())
+          print('DB initialised')
+          "
+            if [ $? -ne 0 ]; then
+              echo "::error::init_db failed"
+              exit 1
+            fi
+          fi
+
+      - name: Validate Earthdata credentials
+        id: earthdata_check
+        env:
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+        run: |
+          if python3 scripts/test_earthdata_auth.py; then
+            echo "earthdata_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "earthdata_ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Earthdata auth FAILED — SO2, cloud, nightlight, ISS LIS will be skipped"
+          fi
+        continue-on-error: true
+
+      # ====== LIGHT FETCH STEPS ======
+
+      - name: Fetch earthquake data (M3+, 2011-2026)
+        id: fetch_earthquakes
+        if: inputs.target == 'all' || inputs.target == 'earthquakes' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          mkdir -p data
+          python3 scripts/fetch_earthquakes.py
+
+      - name: Fetch TEC data (continuous 2011-now, recent-first)
+        id: fetch_tec_event
+        if: inputs.target == 'all' || inputs.target == 'tec' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          TEC_MAX_DATES: "150"
+        run: |
+          python3 scripts/fetch_tec.py --mode continuous
+
+      - name: Fetch TEC random baseline (legacy, skipped in continuous mode)
+        id: fetch_tec_random
+        if: false
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_tec.py --mode random --n-dates 300
+
+      - name: Fetch Kp data (2011-2026)
+        id: fetch_kp
+        if: inputs.target == 'all' || inputs.target == 'kp' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_kp.py
+
+      - name: Fetch CMT focal mechanisms (GCMT, 2011-present)
+        id: fetch_cmt
+        if: inputs.target == 'all' || inputs.target == 'cmt' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        run: |
+          python3 scripts/fetch_cmt.py
+
+      - name: Fetch GNSS-TEC high-resolution data (Nagoya University ISEE)
+        id: fetch_gnss_tec
+        if: inputs.target == 'all' || inputs.target == 'gnss_tec' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          GNSS_TEC_MAX_DATES: "30"
+        run: |
+          python3 scripts/fetch_gnss_tec.py || echo "GNSS-TEC fetch non-fatal failure"
 
       - name: Fetch Kakioka ULF magnetic data
         id: fetch_ulf
@@ -464,19 +706,6 @@ jobs:
         run: |
           python3 scripts/fetch_grace_gravity.py || echo "GRACE fetch failed (non-fatal)"
 
-      - name: Fetch OMI SO2 column data (Earthdata auth)
-        id: fetch_so2
-        if: (inputs.target == 'all' || inputs.target == 'so2' || inputs.target == '') && steps.earthdata_check.outputs.earthdata_ok == 'true'
-        continue-on-error: true
-        timeout-minutes: 90
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
-          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
-          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
-          SO2_MAX_DATES: "2000"
-        run: python3 -u scripts/fetch_omi_so2.py
-
       - name: Fetch UHSLC tide gauge data
         id: fetch_tide_gauge
         if: inputs.target == 'all' || inputs.target == 'tide_gauge' || inputs.target == ''
@@ -509,19 +738,6 @@ jobs:
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         run: |
           python3 scripts/fetch_ocean_color.py || echo "Ocean color fetch failed (non-fatal)"
-
-      - name: Fetch MODIS cloud fraction (Earthdata auth)
-        id: fetch_cloud
-        if: (inputs.target == 'all' || inputs.target == 'cloud' || inputs.target == '') && steps.earthdata_check.outputs.earthdata_ok == 'true'
-        continue-on-error: true
-        timeout-minutes: 90
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
-          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
-          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
-          CLOUD_MAX_DATES: "2000"
-        run: python3 -u scripts/fetch_cloud_fraction.py
 
       - name: Fetch VIIRS nighttime light/airglow (Earthdata auth)
         id: fetch_nightlight
@@ -596,10 +812,122 @@ jobs:
         run: |
           python3 scripts/fetch_ioc_sealevel.py || echo "IOC sea level fetch failed (non-fatal)"
 
-      # ====== POST-FETCH ======
+      # ====== LIGHT POST-FETCH ======
+
+      - name: Snapshot DB for light artifact
+        id: snapshot
+        if: always()
+        run: |
+          python3 -c "
+          import sqlite3, sys
+          try:
+              src = sqlite3.connect('data/geohazard.db')
+              src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+              r = src.execute('PRAGMA integrity_check').fetchone()[0]
+              if r != 'ok':
+                  print(f'REFUSING to snapshot corrupt DB: {r[:200]}')
+                  src.close()
+                  sys.exit(1)
+              dst = sqlite3.connect('data/geohazard_snapshot.db')
+              src.backup(dst)
+              dst.close()
+              src.close()
+              print('Snapshot created (post-integrity-check)')
+          except Exception as e:
+              print(f'Snapshot failed: {e}')
+              sys.exit(1)
+          "
+          if [ -f data/geohazard_snapshot.db ]; then
+            mv data/geohazard_snapshot.db data/geohazard.db
+          fi
+
+      - name: Upload light.db artifact
+        if: steps.snapshot.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backfill-light-${{ github.run_id }}
+          path: data/geohazard.db
+          retention-days: 7
+
+  # =====================================================================
+  # MERGE JOB — combine heavy.db + light.db, snapshot/checkpoint/BQ/Discord
+  # if: always() so a single-job failure still triggers BQ upload + reporting.
+  # =====================================================================
+  merge:
+    needs: [heavy, light]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install google-cloud-bigquery pyarrow numpy
+
+      - name: Download light.db artifact
+        id: download_light
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: backfill-light-${{ github.run_id }}
+          path: /tmp/light
+
+      - name: Download heavy.db artifact
+        id: download_heavy
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: backfill-heavy-${{ github.run_id }}
+          path: /tmp/heavy
+
+      - name: Merge heavy + light checkpoints
+        id: merge
+        run: |
+          mkdir -p data
+          # --require-base ensures we never let a heavy-only DB through to BQ
+          # (would WRITE_TRUNCATE every light-owned table and zero them out).
+          python3 scripts/merge_checkpoints.py \
+            --base /tmp/light/geohazard.db \
+            --overlay /tmp/heavy/geohazard.db \
+            --overlay-tables modis_lst,so2_column,cloud_fraction,snet_waveform,snet_pressure \
+            --dst data/geohazard.db \
+            --require-base
+
+      - name: Snapshot merged DB for checkpoint
+        id: snapshot
+        if: steps.merge.outcome == 'success'
+        run: |
+          python3 -c "
+          import sqlite3, sys
+          try:
+              src = sqlite3.connect('data/geohazard.db')
+              src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+              r = src.execute('PRAGMA integrity_check').fetchone()[0]
+              if r != 'ok':
+                  print(f'REFUSING to snapshot corrupt DB: {r[:200]}')
+                  src.close()
+                  sys.exit(1)
+              dst = sqlite3.connect('data/geohazard_snapshot.db')
+              src.backup(dst)
+              dst.close()
+              src.close()
+              print('Snapshot created (post-integrity-check)')
+          except Exception as e:
+              print(f'Snapshot failed: {e}')
+              sys.exit(1)
+          "
+          if [ -f data/geohazard_snapshot.db ]; then
+            mv data/geohazard_snapshot.db data/geohazard.db
+          fi
 
       - name: Coverage report
-        if: always()
+        if: steps.snapshot.outcome == 'success'
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
@@ -632,35 +960,6 @@ jobs:
                   print(f'{t}: ERROR {e}')
           db.close()
           "
-
-      - name: Snapshot DB for checkpoint
-        id: snapshot
-        if: always()
-        run: |
-          python3 -c "
-          import sqlite3, sys
-          try:
-              src = sqlite3.connect('data/geohazard.db')
-              # Merge WAL into main DB so snapshot doesn't depend on sidecar files
-              src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-              # Reject snapshotting a corrupt DB (prevents propagating corruption)
-              r = src.execute('PRAGMA integrity_check').fetchone()[0]
-              if r != 'ok':
-                  print(f'REFUSING to snapshot corrupt DB: {r[:200]}')
-                  src.close()
-                  sys.exit(1)
-              dst = sqlite3.connect('data/geohazard_snapshot.db')
-              src.backup(dst)
-              dst.close()
-              src.close()
-              print('Snapshot created (post-integrity-check)')
-          except Exception as e:
-              print(f'Snapshot failed: {e}')
-              sys.exit(1)
-          "
-          if [ -f data/geohazard_snapshot.db ]; then
-            mv data/geohazard_snapshot.db data/geohazard.db
-          fi
 
       - name: Upload checkpoint artifact
         # Only upload when snapshot succeeded (integrity-checked) — never
@@ -707,41 +1006,69 @@ jobs:
         if: always()
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          FETCH_EARTHQUAKES: ${{ steps.fetch_earthquakes.outcome }}
-          FETCH_TEC_EVENT: ${{ steps.fetch_tec_event.outcome }}
-          FETCH_TEC_RANDOM: ${{ steps.fetch_tec_random.outcome }}
-          FETCH_KP: ${{ steps.fetch_kp.outcome }}
-          FETCH_CMT: ${{ steps.fetch_cmt.outcome }}
-          FETCH_SNET_WAVEFORM: ${{ steps.fetch_snet_waveform.outcome }}
-          FETCH_SNET_PRESSURE: ${{ steps.fetch_snet_pressure.outcome }}
-          FETCH_GNSS_TEC: ${{ steps.fetch_gnss_tec.outcome }}
-          FETCH_MODIS_LST: ${{ steps.fetch_modis_lst.outcome }}
-          FETCH_ULF: ${{ steps.fetch_ulf.outcome }}
-          FETCH_COSMIC_RAY: ${{ steps.fetch_cosmic_ray.outcome }}
-          FETCH_LIGHTNING: ${{ steps.fetch_lightning.outcome }}
-          FETCH_ISS_LIS: ${{ steps.fetch_iss_lis.outcome }}
-          FETCH_WWLLN_TH: ${{ steps.fetch_wwlln_thunder_hour.outcome }}
-          FETCH_LIS_OTD: ${{ steps.fetch_lis_otd_monthly.outcome }}
-          FETCH_GEOMAG: ${{ steps.fetch_geomag.outcome }}
-          FETCH_OLR: ${{ steps.fetch_olr.outcome }}
-          FETCH_IERS: ${{ steps.fetch_iers.outcome }}
-          FETCH_SOLAR_WIND: ${{ steps.fetch_solar_wind.outcome }}
-          FETCH_GRACE: ${{ steps.fetch_grace.outcome }}
-          FETCH_SO2: ${{ steps.fetch_so2.outcome }}
-          FETCH_CLOUD: ${{ steps.fetch_cloud.outcome }}
-          FETCH_NIGHTLIGHT: ${{ steps.fetch_nightlight.outcome }}
-          FETCH_TIDE_GAUGE: ${{ steps.fetch_tide_gauge.outcome }}
-          FETCH_SOIL_MOISTURE: ${{ steps.fetch_soil_moisture.outcome }}
-          FETCH_OCEAN_COLOR: ${{ steps.fetch_ocean_color.outcome }}
-          FETCH_GOES_XRAY: ${{ steps.fetch_goes_xray.outcome }}
-          FETCH_GOES_PROTON: ${{ steps.fetch_goes_proton.outcome }}
-          FETCH_TIDAL_STRESS: ${{ steps.fetch_tidal_stress.outcome }}
-          FETCH_PARTICLE_FLUX: ${{ steps.fetch_particle_flux.outcome }}
-          FETCH_DART: ${{ steps.fetch_dart.outcome }}
-          FETCH_IOC_SEALEVEL: ${{ steps.fetch_ioc_sealevel.outcome }}
+          FETCH_EARTHQUAKES: ${{ needs.light.outputs.fetch_earthquakes }}
+          FETCH_TEC_EVENT: ${{ needs.light.outputs.fetch_tec_event }}
+          FETCH_TEC_RANDOM: ${{ needs.light.outputs.fetch_tec_random }}
+          FETCH_KP: ${{ needs.light.outputs.fetch_kp }}
+          FETCH_CMT: ${{ needs.light.outputs.fetch_cmt }}
+          FETCH_SNET_WAVEFORM: ${{ needs.heavy.outputs.fetch_snet_waveform }}
+          FETCH_SNET_PRESSURE: ${{ needs.heavy.outputs.fetch_snet_pressure }}
+          FETCH_GNSS_TEC: ${{ needs.light.outputs.fetch_gnss_tec }}
+          FETCH_MODIS_LST: ${{ needs.heavy.outputs.fetch_modis_lst }}
+          FETCH_ULF: ${{ needs.light.outputs.fetch_ulf }}
+          FETCH_COSMIC_RAY: ${{ needs.light.outputs.fetch_cosmic_ray }}
+          FETCH_LIGHTNING: ${{ needs.light.outputs.fetch_lightning }}
+          FETCH_ISS_LIS: ${{ needs.light.outputs.fetch_iss_lis }}
+          FETCH_WWLLN_TH: ${{ needs.light.outputs.fetch_wwlln_thunder_hour }}
+          FETCH_LIS_OTD: ${{ needs.light.outputs.fetch_lis_otd_monthly }}
+          FETCH_GEOMAG: ${{ needs.light.outputs.fetch_geomag }}
+          FETCH_OLR: ${{ needs.light.outputs.fetch_olr }}
+          FETCH_IERS: ${{ needs.light.outputs.fetch_iers }}
+          FETCH_SOLAR_WIND: ${{ needs.light.outputs.fetch_solar_wind }}
+          FETCH_GRACE: ${{ needs.light.outputs.fetch_grace }}
+          FETCH_SO2: ${{ needs.heavy.outputs.fetch_so2 }}
+          FETCH_CLOUD: ${{ needs.heavy.outputs.fetch_cloud }}
+          FETCH_NIGHTLIGHT: ${{ needs.light.outputs.fetch_nightlight }}
+          FETCH_TIDE_GAUGE: ${{ needs.light.outputs.fetch_tide_gauge }}
+          FETCH_SOIL_MOISTURE: ${{ needs.light.outputs.fetch_soil_moisture }}
+          FETCH_OCEAN_COLOR: ${{ needs.light.outputs.fetch_ocean_color }}
+          FETCH_GOES_XRAY: ${{ needs.light.outputs.fetch_goes_xray }}
+          FETCH_GOES_PROTON: ${{ needs.light.outputs.fetch_goes_proton }}
+          FETCH_TIDAL_STRESS: ${{ needs.light.outputs.fetch_tidal_stress }}
+          FETCH_PARTICLE_FLUX: ${{ needs.light.outputs.fetch_particle_flux }}
+          FETCH_DART: ${{ needs.light.outputs.fetch_dart }}
+          FETCH_IOC_SEALEVEL: ${{ needs.light.outputs.fetch_ioc_sealevel }}
           BQ_UPLOAD: ${{ steps.bq_upload.outcome }}
+          MERGE_OUTCOME: ${{ steps.merge.outcome }}
+          HEAVY_RESULT: ${{ needs.heavy.result }}
+          LIGHT_RESULT: ${{ needs.light.result }}
         run: |
           if [ -z "$DISCORD_WEBHOOK_URL" ]; then exit 0; fi
+          # When the merge step failed (e.g. base missing under --require-base),
+          # data/geohazard.db doesn't exist for the per-table coverage queries.
+          # Skip the DB-driven body and post a short failure embed instead.
+          if [ ! -f data/geohazard.db ]; then
+            python3 -c "
+          import json, os, urllib.request
+          url = os.environ.get('DISCORD_WEBHOOK_URL', '')
+          run_url = 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+          body = (
+              'Heavy: ' + os.environ.get('HEAVY_RESULT', 'unknown') + '\n'
+              'Light: ' + os.environ.get('LIGHT_RESULT', 'unknown') + '\n'
+              'Merge: ' + os.environ.get('MERGE_OUTCOME', 'unknown') + '\n'
+              '\nNo merged DB to report coverage from.'
+          )
+          payload = json.dumps({'embeds': [{
+              'title': '🔴 Backfill #${{ github.run_number }} — merge skipped/failed',
+              'color': 15158332,
+              'description': body[:4000],
+              'footer': {'text': run_url},
+          }]}).encode()
+          req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+          urllib.request.urlopen(req)
+          " 2>/dev/null || echo "Discord notification failed (non-fatal)"
+            exit 0
+          fi
           python3 -c "
           import sqlite3, json, os, urllib.request
           from datetime import date
@@ -749,7 +1076,6 @@ jobs:
           db = sqlite3.connect('data/geohazard.db')
           total_days = (date.today() - date(2011, 1, 1)).days
 
-          # Tables and their date-extraction SQL for coverage %
           table_info = {
               'earthquakes': 'SELECT COUNT(DISTINCT substr(occurred_at,1,10)) FROM earthquakes',
               'tec': 'SELECT COUNT(DISTINCT substr(epoch,1,10)) FROM tec',
@@ -761,11 +1087,7 @@ jobs:
               'cosmic_ray': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM cosmic_ray',
               'lightning': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM lightning',
               'iss_lis_lightning': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM iss_lis_lightning',
-              # WWLLN Thunder Hour is monthly; *30 converts months → ~days for the same % formula.
-              # Source coverage 2013-01 to 2025-12 ⇒ caps at ~85% of the 2011-now timespan by design.
               'lightning_thunder_hour': 'SELECT COUNT(DISTINCT substr(observed_at,1,7)) * 30 FROM lightning_thunder_hour',
-              # LIS/OTD monthly 1995-05 to 2014-12 (~236 months) covers 2011-03-11.
-              # Caps at ~1,300 days over 2011-now timespan (2011-2014 months only).
               'lightning_lis_otd': 'SELECT COUNT(DISTINCT substr(observed_at,1,7)) * 30 FROM lightning_lis_otd',
               'geomag_hourly': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM geomag_hourly WHERE station=\"KAK\"',
               'satellite_em': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM satellite_em',
@@ -807,7 +1129,6 @@ jobs:
                   all_95 = False
           db.close()
 
-          # Check step outcomes
           step_results = {
               'Earthquakes': os.environ.get('FETCH_EARTHQUAKES', 'skipped'),
               'TEC event': os.environ.get('FETCH_TEC_EVENT', 'skipped'),
@@ -878,81 +1199,85 @@ jobs:
       - name: Create issue on failure
         if: >-
           always() && (
-            steps.fetch_earthquakes.outcome == 'failure' ||
-            steps.fetch_tec_event.outcome == 'failure' ||
-            steps.fetch_tec_random.outcome == 'failure' ||
-            steps.fetch_kp.outcome == 'failure' ||
-            steps.fetch_cmt.outcome == 'failure' ||
-            steps.fetch_snet_waveform.outcome == 'failure' ||
-            steps.fetch_snet_pressure.outcome == 'failure' ||
-            steps.fetch_gnss_tec.outcome == 'failure' ||
-            steps.fetch_modis_lst.outcome == 'failure' ||
-            steps.fetch_ulf.outcome == 'failure' ||
-            steps.fetch_cosmic_ray.outcome == 'failure' ||
-            steps.fetch_lightning.outcome == 'failure' ||
-            steps.fetch_iss_lis.outcome == 'failure' ||
-            steps.fetch_wwlln_thunder_hour.outcome == 'failure' ||
-            steps.fetch_lis_otd_monthly.outcome == 'failure' ||
-            steps.fetch_geomag.outcome == 'failure' ||
-            steps.fetch_olr.outcome == 'failure' ||
-            steps.fetch_iers.outcome == 'failure' ||
-            steps.fetch_solar_wind.outcome == 'failure' ||
-            steps.fetch_grace.outcome == 'failure' ||
-            steps.fetch_so2.outcome == 'failure' ||
-            steps.fetch_cloud.outcome == 'failure' ||
-            steps.fetch_nightlight.outcome == 'failure' ||
-            steps.fetch_tide_gauge.outcome == 'failure' ||
-            steps.fetch_soil_moisture.outcome == 'failure' ||
-            steps.fetch_ocean_color.outcome == 'failure' ||
-            steps.fetch_goes_xray.outcome == 'failure' ||
-            steps.fetch_goes_proton.outcome == 'failure' ||
-            steps.fetch_tidal_stress.outcome == 'failure' ||
-            steps.fetch_particle_flux.outcome == 'failure' ||
-            steps.fetch_dart.outcome == 'failure' ||
-            steps.fetch_ioc_sealevel.outcome == 'failure' ||
-            steps.bq_upload.outcome == 'failure'
+            needs.light.outputs.fetch_earthquakes == 'failure' ||
+            needs.light.outputs.fetch_tec_event == 'failure' ||
+            needs.light.outputs.fetch_tec_random == 'failure' ||
+            needs.light.outputs.fetch_kp == 'failure' ||
+            needs.light.outputs.fetch_cmt == 'failure' ||
+            needs.heavy.outputs.fetch_snet_waveform == 'failure' ||
+            needs.heavy.outputs.fetch_snet_pressure == 'failure' ||
+            needs.light.outputs.fetch_gnss_tec == 'failure' ||
+            needs.heavy.outputs.fetch_modis_lst == 'failure' ||
+            needs.light.outputs.fetch_ulf == 'failure' ||
+            needs.light.outputs.fetch_cosmic_ray == 'failure' ||
+            needs.light.outputs.fetch_lightning == 'failure' ||
+            needs.light.outputs.fetch_iss_lis == 'failure' ||
+            needs.light.outputs.fetch_wwlln_thunder_hour == 'failure' ||
+            needs.light.outputs.fetch_lis_otd_monthly == 'failure' ||
+            needs.light.outputs.fetch_geomag == 'failure' ||
+            needs.light.outputs.fetch_olr == 'failure' ||
+            needs.light.outputs.fetch_iers == 'failure' ||
+            needs.light.outputs.fetch_solar_wind == 'failure' ||
+            needs.light.outputs.fetch_grace == 'failure' ||
+            needs.heavy.outputs.fetch_so2 == 'failure' ||
+            needs.heavy.outputs.fetch_cloud == 'failure' ||
+            needs.light.outputs.fetch_nightlight == 'failure' ||
+            needs.light.outputs.fetch_tide_gauge == 'failure' ||
+            needs.light.outputs.fetch_soil_moisture == 'failure' ||
+            needs.light.outputs.fetch_ocean_color == 'failure' ||
+            needs.light.outputs.fetch_goes_xray == 'failure' ||
+            needs.light.outputs.fetch_goes_proton == 'failure' ||
+            needs.light.outputs.fetch_tidal_stress == 'failure' ||
+            needs.light.outputs.fetch_particle_flux == 'failure' ||
+            needs.light.outputs.fetch_dart == 'failure' ||
+            needs.light.outputs.fetch_ioc_sealevel == 'failure' ||
+            steps.bq_upload.outcome == 'failure' ||
+            steps.merge.outcome == 'failure'
           )
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           FAILED=""
-          [ "${{ steps.fetch_earthquakes.outcome }}" = "failure" ] && FAILED="$FAILED earthquakes"
-          [ "${{ steps.fetch_tec_event.outcome }}" = "failure" ] && FAILED="$FAILED tec_event"
-          [ "${{ steps.fetch_tec_random.outcome }}" = "failure" ] && FAILED="$FAILED tec_random"
-          [ "${{ steps.fetch_kp.outcome }}" = "failure" ] && FAILED="$FAILED kp"
-          [ "${{ steps.fetch_cmt.outcome }}" = "failure" ] && FAILED="$FAILED cmt"
-          [ "${{ steps.fetch_snet_waveform.outcome }}" = "failure" ] && FAILED="$FAILED snet_waveform"
-          [ "${{ steps.fetch_snet_pressure.outcome }}" = "failure" ] && FAILED="$FAILED snet_pressure"
-          [ "${{ steps.fetch_gnss_tec.outcome }}" = "failure" ] && FAILED="$FAILED gnss_tec"
-          [ "${{ steps.fetch_modis_lst.outcome }}" = "failure" ] && FAILED="$FAILED modis_lst"
-          [ "${{ steps.fetch_ulf.outcome }}" = "failure" ] && FAILED="$FAILED ulf"
-          [ "${{ steps.fetch_cosmic_ray.outcome }}" = "failure" ] && FAILED="$FAILED cosmic_ray"
-          [ "${{ steps.fetch_lightning.outcome }}" = "failure" ] && FAILED="$FAILED lightning"
-          [ "${{ steps.fetch_iss_lis.outcome }}" = "failure" ] && FAILED="$FAILED iss_lis"
-          [ "${{ steps.fetch_wwlln_thunder_hour.outcome }}" = "failure" ] && FAILED="$FAILED wwlln_thunder_hour"
-          [ "${{ steps.fetch_lis_otd_monthly.outcome }}" = "failure" ] && FAILED="$FAILED lis_otd_monthly"
-          [ "${{ steps.fetch_geomag.outcome }}" = "failure" ] && FAILED="$FAILED geomag"
-          [ "${{ steps.fetch_olr.outcome }}" = "failure" ] && FAILED="$FAILED olr"
-          [ "${{ steps.fetch_iers.outcome }}" = "failure" ] && FAILED="$FAILED iers"
-          [ "${{ steps.fetch_solar_wind.outcome }}" = "failure" ] && FAILED="$FAILED solar_wind"
-          [ "${{ steps.fetch_grace.outcome }}" = "failure" ] && FAILED="$FAILED grace"
-          [ "${{ steps.fetch_so2.outcome }}" = "failure" ] && FAILED="$FAILED so2"
-          [ "${{ steps.fetch_cloud.outcome }}" = "failure" ] && FAILED="$FAILED cloud"
-          [ "${{ steps.fetch_nightlight.outcome }}" = "failure" ] && FAILED="$FAILED nightlight"
-          [ "${{ steps.fetch_tide_gauge.outcome }}" = "failure" ] && FAILED="$FAILED tide_gauge"
-          [ "${{ steps.fetch_soil_moisture.outcome }}" = "failure" ] && FAILED="$FAILED soil_moisture"
-          [ "${{ steps.fetch_ocean_color.outcome }}" = "failure" ] && FAILED="$FAILED ocean_color"
-          [ "${{ steps.fetch_goes_xray.outcome }}" = "failure" ] && FAILED="$FAILED goes_xray"
-          [ "${{ steps.fetch_goes_proton.outcome }}" = "failure" ] && FAILED="$FAILED goes_proton"
-          [ "${{ steps.fetch_tidal_stress.outcome }}" = "failure" ] && FAILED="$FAILED tidal_stress"
-          [ "${{ steps.fetch_particle_flux.outcome }}" = "failure" ] && FAILED="$FAILED particle_flux"
-          [ "${{ steps.fetch_dart.outcome }}" = "failure" ] && FAILED="$FAILED dart"
-          [ "${{ steps.fetch_ioc_sealevel.outcome }}" = "failure" ] && FAILED="$FAILED ioc_sealevel"
+          [ "${{ needs.light.outputs.fetch_earthquakes }}" = "failure" ] && FAILED="$FAILED earthquakes"
+          [ "${{ needs.light.outputs.fetch_tec_event }}" = "failure" ] && FAILED="$FAILED tec_event"
+          [ "${{ needs.light.outputs.fetch_tec_random }}" = "failure" ] && FAILED="$FAILED tec_random"
+          [ "${{ needs.light.outputs.fetch_kp }}" = "failure" ] && FAILED="$FAILED kp"
+          [ "${{ needs.light.outputs.fetch_cmt }}" = "failure" ] && FAILED="$FAILED cmt"
+          [ "${{ needs.heavy.outputs.fetch_snet_waveform }}" = "failure" ] && FAILED="$FAILED snet_waveform"
+          [ "${{ needs.heavy.outputs.fetch_snet_pressure }}" = "failure" ] && FAILED="$FAILED snet_pressure"
+          [ "${{ needs.light.outputs.fetch_gnss_tec }}" = "failure" ] && FAILED="$FAILED gnss_tec"
+          [ "${{ needs.heavy.outputs.fetch_modis_lst }}" = "failure" ] && FAILED="$FAILED modis_lst"
+          [ "${{ needs.light.outputs.fetch_ulf }}" = "failure" ] && FAILED="$FAILED ulf"
+          [ "${{ needs.light.outputs.fetch_cosmic_ray }}" = "failure" ] && FAILED="$FAILED cosmic_ray"
+          [ "${{ needs.light.outputs.fetch_lightning }}" = "failure" ] && FAILED="$FAILED lightning"
+          [ "${{ needs.light.outputs.fetch_iss_lis }}" = "failure" ] && FAILED="$FAILED iss_lis"
+          [ "${{ needs.light.outputs.fetch_wwlln_thunder_hour }}" = "failure" ] && FAILED="$FAILED wwlln_thunder_hour"
+          [ "${{ needs.light.outputs.fetch_lis_otd_monthly }}" = "failure" ] && FAILED="$FAILED lis_otd_monthly"
+          [ "${{ needs.light.outputs.fetch_geomag }}" = "failure" ] && FAILED="$FAILED geomag"
+          [ "${{ needs.light.outputs.fetch_olr }}" = "failure" ] && FAILED="$FAILED olr"
+          [ "${{ needs.light.outputs.fetch_iers }}" = "failure" ] && FAILED="$FAILED iers"
+          [ "${{ needs.light.outputs.fetch_solar_wind }}" = "failure" ] && FAILED="$FAILED solar_wind"
+          [ "${{ needs.light.outputs.fetch_grace }}" = "failure" ] && FAILED="$FAILED grace"
+          [ "${{ needs.heavy.outputs.fetch_so2 }}" = "failure" ] && FAILED="$FAILED so2"
+          [ "${{ needs.heavy.outputs.fetch_cloud }}" = "failure" ] && FAILED="$FAILED cloud"
+          [ "${{ needs.light.outputs.fetch_nightlight }}" = "failure" ] && FAILED="$FAILED nightlight"
+          [ "${{ needs.light.outputs.fetch_tide_gauge }}" = "failure" ] && FAILED="$FAILED tide_gauge"
+          [ "${{ needs.light.outputs.fetch_soil_moisture }}" = "failure" ] && FAILED="$FAILED soil_moisture"
+          [ "${{ needs.light.outputs.fetch_ocean_color }}" = "failure" ] && FAILED="$FAILED ocean_color"
+          [ "${{ needs.light.outputs.fetch_goes_xray }}" = "failure" ] && FAILED="$FAILED goes_xray"
+          [ "${{ needs.light.outputs.fetch_goes_proton }}" = "failure" ] && FAILED="$FAILED goes_proton"
+          [ "${{ needs.light.outputs.fetch_tidal_stress }}" = "failure" ] && FAILED="$FAILED tidal_stress"
+          [ "${{ needs.light.outputs.fetch_particle_flux }}" = "failure" ] && FAILED="$FAILED particle_flux"
+          [ "${{ needs.light.outputs.fetch_dart }}" = "failure" ] && FAILED="$FAILED dart"
+          [ "${{ needs.light.outputs.fetch_ioc_sealevel }}" = "failure" ] && FAILED="$FAILED ioc_sealevel"
           [ "${{ steps.bq_upload.outcome }}" = "failure" ] && FAILED="$FAILED bq_upload"
+          [ "${{ steps.merge.outcome }}" = "failure" ] && FAILED="$FAILED merge"
           FAILED=$(echo "$FAILED" | xargs)
 
-          # Get coverage info
-          COVERAGE=$(python3 -c "
+          # Coverage extraction needs the merged DB; if merge failed there's
+          # nothing to query, so emit a placeholder rather than crash.
+          if [ -f data/geohazard.db ]; then
+            COVERAGE=$(python3 -c "
           import sqlite3
           from datetime import date
           db = sqlite3.connect('data/geohazard.db')
@@ -968,11 +1293,7 @@ jobs:
               'cosmic_ray': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM cosmic_ray',
               'lightning': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM lightning',
               'iss_lis_lightning': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM iss_lis_lightning',
-              # WWLLN Thunder Hour is monthly; *30 converts months → ~days for the same % formula.
-              # Source coverage 2013-01 to 2025-12 ⇒ caps at ~85% of the 2011-now timespan by design.
               'lightning_thunder_hour': 'SELECT COUNT(DISTINCT substr(observed_at,1,7)) * 30 FROM lightning_thunder_hour',
-              # LIS/OTD monthly 1995-05 to 2014-12 (~236 months) covers 2011-03-11.
-              # Caps at ~1,300 days over 2011-now timespan (2011-2014 months only).
               'lightning_lis_otd': 'SELECT COUNT(DISTINCT substr(observed_at,1,7)) * 30 FROM lightning_lis_otd',
               'geomag_hourly': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM geomag_hourly WHERE station=\"KAK\"',
               'satellite_em': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM satellite_em',
@@ -1004,6 +1325,9 @@ jobs:
                   print(f'- {t}: ERROR ({e})')
           db.close()
           " 2>/dev/null || echo "Coverage unavailable")
+          else
+            COVERAGE="(merged DB unavailable — merge step likely failed)"
+          fi
 
           gh issue create \
             --repo ${{ github.repository }} \
