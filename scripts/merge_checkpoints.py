@@ -142,6 +142,29 @@ def _apply_overlay(
                 before = dst_conn.execute(
                     f'SELECT COUNT(*) FROM main."{name}"'
                 ).fetchone()[0]
+                overlay_count = dst_conn.execute(
+                    f'SELECT COUNT(*) FROM overlay."{name}"'
+                ).fetchone()[0]
+
+                # Refuse to wipe base rows with an empty overlay. Observed
+                # regression: fetch job's step failed (continue-on-error),
+                # the fetcher wrote 0 rows for its table, overlay DB had 0
+                # rows for that table, DELETE-then-INSERT left base at 0
+                # and that 0-row state got snapshotted into the next
+                # checkpoint, permanently losing accumulated rows (e.g.
+                # cloud_fraction 523K -> 0 on 2026-04-18 before this guard
+                # was added). If overlay is empty, keep base as-is.
+                if overlay_count == 0 and before > 0:
+                    print(
+                        f"  {name}: overlay empty (0 rows) but base has "
+                        f"{before:,} rows -- KEEPING base "
+                        f"(guard against wipe-and-reset from failed fetch)"
+                    )
+                    skipped.append(
+                        (name, f"overlay empty; base preserved ({before:,} rows)")
+                    )
+                    continue
+
                 dst_conn.execute("BEGIN")
                 dst_conn.execute(f'DELETE FROM main."{name}"')
                 dst_conn.execute(

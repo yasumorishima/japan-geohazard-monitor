@@ -280,6 +280,82 @@ def test_injection_name_rejected(tmp: str) -> None:
     print("PASS: table name with double-quote rejected (no SQL injection)")
 
 
+def test_empty_overlay_preserves_base(tmp: str) -> None:
+    """Regression guard: if overlay DB has 0 rows for a table, the merge
+    must KEEP base's accumulated rows rather than DELETE-then-INSERT them
+    down to 0. Caused cloud_fraction 523K -> 0 on 2026-04-18 when
+    fetch_cloud_fraction.py failed and uploaded an empty-table overlay.
+    """
+    base = os.path.join(tmp, "base.db")
+    overlay = os.path.join(tmp, "ov.db")
+    dst = os.path.join(tmp, "dst.db")
+
+    # Base has accumulated cloud_fraction rows from prior runs.
+    make_db(
+        base,
+        {
+            "cloud_fraction": [(i, f"row-{i}") for i in range(1, 11)],
+            "earthquakes": [(1, "a")],
+        },
+    )
+    # Overlay DB exists and has the table, but it's empty (fetcher failed).
+    conn = sqlite3.connect(overlay)
+    conn.execute(
+        'CREATE TABLE "cloud_fraction" (id INTEGER PRIMARY KEY, val TEXT)'
+    )
+    conn.commit()
+    conn.close()
+
+    rc, out, _ = run_merge(
+        [
+            "--base", base,
+            "--overlay", f"{overlay}:cloud_fraction",
+            "--dst", dst,
+            "--require-base",
+        ]
+    )
+    assert rc == 0, out
+    # Base's 10 rows must survive.
+    assert count_rows(dst, "cloud_fraction") == 10, (
+        f"base rows wiped by empty overlay: {count_rows(dst, 'cloud_fraction')}"
+    )
+    assert "KEEPING base" in out, (
+        f"expected guard log message missing from stdout:\n{out}"
+    )
+    print("PASS: empty overlay preserves base accumulated rows (regression guard)")
+
+
+def test_nonempty_overlay_still_replaces(tmp: str) -> None:
+    """Verify the empty-overlay guard doesn't block normal overlay
+    application when overlay has >=1 row.
+    """
+    base = os.path.join(tmp, "base.db")
+    overlay = os.path.join(tmp, "ov.db")
+    dst = os.path.join(tmp, "dst.db")
+
+    make_db(base, {"cloud_fraction": [(1, "old"), (2, "old2")]})
+    make_db(overlay, {"cloud_fraction": [(1, "new")]})
+
+    rc, out, _ = run_merge(
+        [
+            "--base", base,
+            "--overlay", f"{overlay}:cloud_fraction",
+            "--dst", dst,
+            "--require-base",
+        ]
+    )
+    assert rc == 0, out
+    # 1 fresh row replaces base's 2 rows (even though fewer, overlay is the
+    # authority when it has >=1 row).
+    assert fetch_vals(dst, "cloud_fraction") == ["new"], (
+        f"overlay with 1 row should replace base; got {fetch_vals(dst, 'cloud_fraction')}"
+    )
+    assert "KEEPING base" not in out, (
+        "guard should NOT trigger when overlay has rows"
+    )
+    print("PASS: non-empty overlay replaces base normally")
+
+
 def test_all_overlays_missing(tmp: str) -> None:
     base = os.path.join(tmp, "base.db")
     dst = os.path.join(tmp, "dst.db")
@@ -317,6 +393,8 @@ def main() -> int:
             test_overlay_table_missing_in_overlay_skips,
             test_overlay_creates_table_new_in_base,
             test_injection_name_rejected,
+            test_empty_overlay_preserves_base,
+            test_nonempty_overlay_still_replaces,
             test_all_overlays_missing,
         ]
         for t in tests:
@@ -333,7 +411,7 @@ def main() -> int:
             finally:
                 shutil.rmtree(sub, ignore_errors=True)
     print()
-    print("ALL 8 SMOKE TESTS PASSED")
+    print("ALL 10 SMOKE TESTS PASSED")
     return 0
 
 
