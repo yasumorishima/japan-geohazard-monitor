@@ -685,7 +685,17 @@ jobs:
         id: bq_upload
         # Skip when snapshot's integrity check rejected the DB — uploading
         # from a corrupt DB wastes 15min and spams Discord.
-        if: steps.snapshot.outcome == 'success'
+        # CRITICAL: Skip BQ upload for targeted dispatch runs.
+        # load_raw_to_bq.py uses WRITE_TRUNCATE for all 31 tables. A targeted
+        # run only fetches one table, so the in-DB rows for non-target tables
+        # come from the restored checkpoint (potentially older than current BQ).
+        # Letting it run would overwrite BQ with the older snapshot — exactly
+        # what bit lightning_thunder_hour (31,824 → 24,480 rows on 2026-04-17).
+        if: >-
+          steps.snapshot.outcome == 'success'
+          && (github.event_name != 'workflow_dispatch'
+              || inputs.target == 'all'
+              || inputs.target == '')
         continue-on-error: true
         timeout-minutes: 30
         env:
