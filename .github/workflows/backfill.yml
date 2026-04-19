@@ -253,7 +253,13 @@ jobs:
               src.backup(dst)
               dst.close()
               src.close()
-              print('Snapshot created (post-integrity-check)')
+              verify = sqlite3.connect('data/geohazard_snapshot.db')
+              r2 = verify.execute('PRAGMA integrity_check').fetchone()[0]
+              verify.close()
+              if r2 != 'ok':
+                  print(f'REFUSING to upload corrupt snapshot (post-backup): {r2[:200]}')
+                  sys.exit(1)
+              print('Snapshot created (post-integrity-check + post-backup verify)')
           except Exception as e:
               print(f'Snapshot failed: {e}')
               sys.exit(1)
@@ -440,7 +446,13 @@ jobs:
               src.backup(dst)
               dst.close()
               src.close()
-              print('Snapshot created (post-integrity-check)')
+              verify = sqlite3.connect('data/geohazard_snapshot.db')
+              r2 = verify.execute('PRAGMA integrity_check').fetchone()[0]
+              verify.close()
+              if r2 != 'ok':
+                  print(f'REFUSING to upload corrupt snapshot (post-backup): {r2[:200]}')
+                  sys.exit(1)
+              print('Snapshot created (post-integrity-check + post-backup verify)')
           except Exception as e:
               print(f'Snapshot failed: {e}')
               sys.exit(1)
@@ -855,7 +867,13 @@ jobs:
               src.backup(dst)
               dst.close()
               src.close()
-              print('Snapshot created (post-integrity-check)')
+              verify = sqlite3.connect('data/geohazard_snapshot.db')
+              r2 = verify.execute('PRAGMA integrity_check').fetchone()[0]
+              verify.close()
+              if r2 != 'ok':
+                  print(f'REFUSING to upload corrupt snapshot (post-backup): {r2[:200]}')
+                  sys.exit(1)
+              print('Snapshot created (post-integrity-check + post-backup verify)')
           except Exception as e:
               print(f'Snapshot failed: {e}')
               sys.exit(1)
@@ -1346,7 +1364,13 @@ jobs:
               src.backup(dst)
               dst.close()
               src.close()
-              print('Snapshot created (post-integrity-check)')
+              verify = sqlite3.connect('data/geohazard_snapshot.db')
+              r2 = verify.execute('PRAGMA integrity_check').fetchone()[0]
+              verify.close()
+              if r2 != 'ok':
+                  print(f'REFUSING to upload corrupt snapshot (post-backup): {r2[:200]}')
+                  sys.exit(1)
+              print('Snapshot created (post-integrity-check + post-backup verify)')
           except Exception as e:
               print(f'Snapshot failed: {e}')
               sys.exit(1)
