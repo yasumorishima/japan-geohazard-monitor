@@ -85,6 +85,11 @@ on:
           - tide_gauge
           - soil_moisture
           - ocean_color
+          - diagnostic
+      diag_run_id:
+        description: 'target=diagnostic 専用: 調査対象の run ID (backfill-cloud-<id>)'
+        required: false
+        default: '24614238401'
 
 permissions:
   contents: read
@@ -1353,7 +1358,7 @@ jobs:
   # =====================================================================
   merge:
     needs: [fetch-modis, fetch-so2, fetch-cloud, fetch-snet, light]
-    if: always()
+    if: always() && inputs.target != 'diagnostic'
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -1870,3 +1875,157 @@ jobs:
           Check the run log for error details and fix the underlying issue.
           ISSUE_EOF
           )"
+
+  # =====================================================================
+  # DIAGNOSTIC-CLOUD -- one-shot investigation of cloud.db "database disk
+  # image is malformed" that keeps appearing in merge for every schedule
+  # run despite fetch-cloud's Snapshot DB step reporting integrity_check
+  # ok. Target-guarded (target=diagnostic only) so schedule runs untouched.
+  #
+  # Downloads backfill-cloud-<diag_run_id> and runs 3 checks:
+  #   1. PRAGMA integrity_check on the downloaded file as-is
+  #   2. SELECT COUNT(*) FROM cloud_fraction (main-table read path)
+  #   3. ATTACH DATABASE + SELECT FROM overlay.cloud_fraction (same path
+  #      merge_checkpoints.py uses)
+  #
+  # Isolates the fault: snapshot corruption vs transport vs ATTACH-only.
+  # =====================================================================
+  diagnostic-cloud:
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'diagnostic'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DIAG_RUN_ID: ${{ inputs.diag_run_id }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download cloud.db artifact from diag_run_id
+        run: |
+          set -e
+          mkdir -p /tmp/diag
+          echo "Downloading backfill-cloud-${DIAG_RUN_ID}"
+          gh run download "${DIAG_RUN_ID}" --repo ${{ github.repository }} \
+            --name "backfill-cloud-${DIAG_RUN_ID}" --dir /tmp/diag
+          ls -lh /tmp/diag/
+          echo "SHA256:"
+          sha256sum /tmp/diag/geohazard.db || true
+          echo "File size:"
+          stat -c '%s bytes' /tmp/diag/geohazard.db
+          echo "SQLite header (first 16 bytes):"
+          head -c 16 /tmp/diag/geohazard.db | od -c | head -1
+
+      - name: Check 1 -- PRAGMA integrity_check on downloaded file
+        id: check1
+        continue-on-error: true
+        run: |
+          set +e
+          echo "=== PRAGMA integrity_check (direct sqlite3 CLI) ==="
+          sqlite3 /tmp/diag/geohazard.db "PRAGMA integrity_check;" 2>&1 | head -20
+          RC=$?
+          echo "exit=$RC"
+          echo ""
+          echo "=== PRAGMA integrity_check (via python3 sqlite3 module) ==="
+          python3 -c "
+          import sqlite3
+          try:
+              c = sqlite3.connect('/tmp/diag/geohazard.db')
+              r = c.execute('PRAGMA integrity_check').fetchall()
+              print('result:', r[:5])
+              c.close()
+              print('PYTHON_INTEGRITY=ok' if r and r[0][0]=='ok' else 'PYTHON_INTEGRITY=not_ok')
+          except Exception as e:
+              print(f'PYTHON_INTEGRITY=exception: {type(e).__name__}: {e}')
+          "
+          echo ""
+          echo "=== PRAGMA quick_check (faster, page-level) ==="
+          sqlite3 /tmp/diag/geohazard.db "PRAGMA quick_check;" 2>&1 | head -20
+          exit 0
+
+      - name: Check 2 -- SELECT COUNT(*) FROM cloud_fraction
+        id: check2
+        continue-on-error: true
+        run: |
+          set +e
+          echo "=== sqlite3 CLI SELECT COUNT(*) ==="
+          sqlite3 /tmp/diag/geohazard.db "SELECT COUNT(*) FROM cloud_fraction;" 2>&1
+          RC=$?
+          echo "exit=$RC"
+          echo ""
+          echo "=== python3 SELECT COUNT(*) ==="
+          python3 -c "
+          import sqlite3
+          try:
+              c = sqlite3.connect('/tmp/diag/geohazard.db')
+              n = c.execute('SELECT COUNT(*) FROM cloud_fraction').fetchone()[0]
+              print(f'PYTHON_COUNT={n}')
+              c.close()
+          except Exception as e:
+              print(f'PYTHON_COUNT=exception: {type(e).__name__}: {e}')
+          "
+          echo ""
+          echo "=== Sample 3 rows ==="
+          sqlite3 /tmp/diag/geohazard.db "SELECT * FROM cloud_fraction LIMIT 3;" 2>&1 | head -10
+          exit 0
+
+      - name: Check 3 -- ATTACH DATABASE path (simulates merge)
+        id: check3
+        continue-on-error: true
+        run: |
+          set +e
+          echo "=== ATTACH overlay and SELECT (mirrors merge_checkpoints.py) ==="
+          # Create a fresh main DB with an empty cloud_fraction, then ATTACH
+          # the downloaded cloud.db as overlay and read from it.
+          rm -f /tmp/diag_main.db
+          python3 -c "
+          import sqlite3
+          try:
+              main = sqlite3.connect('/tmp/diag_main.db')
+              main.execute('CREATE TABLE cloud_fraction (id INTEGER PRIMARY KEY, observed_at TEXT, cell_lat REAL, cell_lon REAL, cloud_frac REAL, received_at TEXT)')
+              main.commit()
+              print('main DB created')
+              main.execute('ATTACH DATABASE ? AS overlay', ('/tmp/diag/geohazard.db',))
+              print('ATTACH ok')
+              n = main.execute('SELECT COUNT(*) FROM overlay.cloud_fraction').fetchone()[0]
+              print(f'ATTACH_COUNT={n}')
+              # Try the DELETE/INSERT pattern merge uses
+              main.execute('BEGIN')
+              main.execute('DELETE FROM main.cloud_fraction')
+              main.execute('INSERT OR IGNORE INTO main.cloud_fraction SELECT * FROM overlay.cloud_fraction')
+              n2 = main.execute('SELECT COUNT(*) FROM main.cloud_fraction').fetchone()[0]
+              print(f'AFTER_MERGE_COUNT={n2}')
+              main.execute('COMMIT')
+              main.execute('DETACH overlay')
+              main.close()
+              print('FULL_MERGE_PATH=ok')
+          except Exception as e:
+              print(f'ATTACH_ERROR: {type(e).__name__}: {e}')
+          "
+
+      - name: Check 4 -- all tables count + schema sample
+        continue-on-error: true
+        run: |
+          set +e
+          echo "=== All tables ==="
+          sqlite3 /tmp/diag/geohazard.db ".tables" 2>&1
+          echo ""
+          echo "=== cloud_fraction schema ==="
+          sqlite3 /tmp/diag/geohazard.db ".schema cloud_fraction" 2>&1
+          echo ""
+          echo "=== Largest 5 tables by row count (best-effort) ==="
+          for T in cloud_fraction modis_lst so2_column snet_waveform earthquakes; do
+            N=$(sqlite3 /tmp/diag/geohazard.db "SELECT COUNT(*) FROM $T;" 2>&1)
+            echo "  $T: $N"
+          done
+
+      - name: Summary
+        run: |
+          echo "=== Diagnostic summary ==="
+          echo "check1 (integrity_check): ${{ steps.check1.outcome }}"
+          echo "check2 (direct table read): ${{ steps.check2.outcome }}"
+          echo "check3 (ATTACH path): ${{ steps.check3.outcome }}"
