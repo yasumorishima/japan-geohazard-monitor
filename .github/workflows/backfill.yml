@@ -618,7 +618,13 @@ jobs:
           EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
-          CLOUD_MAX_DATES: "2000"
+          # 900 dates * ~5.5s/date = ~82min, safely under 90min step timeout.
+          # 2000 was causing SIGKILL every run (runs completed ~920/2000),
+          # leaving the DB in a state that passes local integrity_check but
+          # merge rejects with "database disk image is malformed" (verified
+          # run 24619904953 + diag 24623870561 + 9abdde3 verify 24626051376).
+          # Schedule fires 8x/day, so 900 dates/run = 7200/day of progress.
+          CLOUD_MAX_DATES: "900"
         run: python3 -u scripts/fetch_cloud_fraction.py
 
       - name: Snapshot DB
