@@ -626,7 +626,7 @@ jobs:
         if: always()
         run: |
           python3 -c "
-          import sqlite3, sys
+          import sqlite3, sys, os, subprocess
           try:
               src = sqlite3.connect('data/geohazard.db')
               src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
@@ -639,18 +639,27 @@ jobs:
               src.backup(dst)
               dst.close()
               src.close()
-              # Post-backup verification: the source integrity_check above
-              # doesn't guarantee the dst copy is intact. 2026-04-19 diag run
-              # proved src.backup(dst) can silently emit a page-corrupt file
-              # (invalid page number refs) that merge later rejects as
-              # 'database disk image is malformed'. Re-open dst and check.
-              verify = sqlite3.connect('data/geohazard_snapshot.db')
-              r2 = verify.execute('PRAGMA integrity_check').fetchone()[0]
-              verify.close()
-              if r2 != 'ok':
-                  print(f'REFUSING to upload corrupt snapshot (post-backup): {r2[:200]}')
+              # Post-backup verification via sqlite3 CLI subprocess after os.sync().
+              # 2026-04-19 diag run 24623870561 proved the in-process Python
+              # sqlite3 integrity_check on dst can return 'ok' while the
+              # on-disk artifact is actually malformed (merge later rejects it
+              # with 'database disk image is malformed'). Cause likely OS page
+              # cache / writer-side view. Force flush + fresh subprocess +
+              # SELECT COUNT on the populated table catches the real state.
+              os.sync()
+              r2 = subprocess.run(
+                  ['sqlite3', 'data/geohazard_snapshot.db',
+                   'PRAGMA integrity_check;\nSELECT COUNT(*) FROM cloud_fraction;'],
+                  capture_output=True, text=True, timeout=600
+              )
+              first = (r2.stdout.strip().split('\n')[0] if r2.stdout.strip() else '').strip()
+              if r2.returncode != 0 or first != 'ok':
+                  print(f'REFUSING to upload corrupt snapshot (post-backup CLI verify):')
+                  print(f'  returncode={r2.returncode}')
+                  print(f'  stdout={r2.stdout[:400]}')
+                  print(f'  stderr={r2.stderr[:400]}')
                   sys.exit(1)
-              print('Snapshot created (post-integrity-check + post-backup verify)')
+              print(f'Snapshot verified (subprocess CLI): {r2.stdout.strip()[:200]}')
           except Exception as e:
               print(f'Snapshot failed: {e}')
               sys.exit(1)
