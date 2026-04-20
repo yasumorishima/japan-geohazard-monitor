@@ -1764,8 +1764,8 @@ jobs:
               color = 3066993
               title = '🎉 Backfill #${{ github.run_number }} -- ≥95% coverage!'
           else:
-              color = 3447003
-              title = '📊 Backfill #${{ github.run_number }}'
+              import sys
+              sys.exit(0)
 
           url = os.environ.get('DISCORD_WEBHOOK_URL', '')
           run_url = 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
