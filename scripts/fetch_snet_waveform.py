@@ -44,6 +44,7 @@ import logging
 import math
 import os
 import struct
+import subprocess
 import sys
 import tempfile
 import time
@@ -944,12 +945,15 @@ async def main() -> None:
         async with safe_connect() as db:
             report = await get_coverage_report(db)
         _log_coverage_report(report)
-        send_discord(
-            "🌊 S-net Multi-Sensor — All Covered",
-            f"{report['total_dates']} dates, {report['total_rows']:,} rows, "
-            f"coverage {report['coverage_pct']}%",
-            color=5763719,
-        )
+        pct = report['coverage_pct']
+        if pct < 100:
+            send_discord(
+                "⚠️ S-net Multi-Sensor — Stalled",
+                f"No new dates fetched. Coverage stuck at {pct}%\n"
+                f"{report['total_dates']} dates, {report['total_rows']:,} rows",
+                color=15105570,  # orange
+            )
+            _create_stall_issue(report, backfill_dates, recent_dates)
         return
 
     # Count by type
@@ -1036,6 +1040,66 @@ async def main() -> None:
         ],
         color=5763719 if report["coverage_pct"] > 80 else 16776960,
     )
+
+
+def _create_stall_issue(report: dict, backfill_dates: list, recent_dates: list) -> None:
+    """Create a GitHub Issue when S-net fetch window is all covered but overall coverage < 100%."""
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    if not repo:
+        logger.info("GITHUB_REPOSITORY not set; skipping stall issue creation")
+        return
+
+    pct = report["coverage_pct"]
+    window_dates = recent_dates + backfill_dates
+    window_start = min(d.strftime("%Y-%m-%d") for d in window_dates) if window_dates else "unknown"
+    window_end = max(d.strftime("%Y-%m-%d") for d in window_dates) if window_dates else "unknown"
+
+    gaps_text = ""
+    if report.get("top_gaps"):
+        gaps_text = "\n### Top coverage gaps in DB\n"
+        for g_start, g_end, g_days in report["top_gaps"]:
+            gaps_text += f"- `{g_start}` → `{g_end}`: {g_days} missing days\n"
+
+    body = (
+        f"## S-net Waveform Fetch Stalled\n\n"
+        f"**Coverage**: {pct}% ({report['total_dates']}/{report['expected_dates']} days,"
+        f" {report['total_rows']:,} rows)\n"
+        f"**DB date range**: {report['first_date']} → {report['last_date']}\n"
+        f"**Checked window this run**: {window_start} → {window_end}\n\n"
+        f"All dates in the current fetch window are already in the DB, "
+        f"but overall coverage is {pct}% (< 100%). "
+        f"Missing dates are likely outside the current backfill window or failed to decode.\n"
+        f"{gaps_text}\n"
+        f"_Auto-created by `fetch_snet_waveform.py`_"
+    )
+    title = f"S-net waveform stalled at {pct}%"
+
+    # Avoid creating duplicate issues
+    check = subprocess.run(
+        ["gh", "issue", "list", "--repo", repo, "--state", "open",
+         "--label", "backfill", "--search", "S-net waveform stalled",
+         "--json", "number", "--limit", "1"],
+        capture_output=True, text=True,
+    )
+    if check.returncode == 0:
+        try:
+            existing = json.loads(check.stdout or "[]")
+            if existing:
+                logger.info("Stall issue already open (#%s); skipping", existing[0]["number"])
+                return
+        except Exception:
+            pass
+
+    result = subprocess.run(
+        ["gh", "issue", "create", "--repo", repo,
+         "--title", title, "--body", body,
+         "--label", "bug", "--label", "backfill"],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        logger.info("Stall issue created: %s", result.stdout.strip())
+    else:
+        logger.warning("Failed to create stall issue: %s", result.stderr.strip())
 
 
 def _log_coverage_report(report: dict) -> None:
