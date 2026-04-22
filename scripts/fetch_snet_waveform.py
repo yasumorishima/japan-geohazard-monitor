@@ -830,11 +830,6 @@ def _fetch_and_save(
                     "Quota limit approaching (%d/%d). Stopping after %d items.",
                     request_count, MAX_REQUESTS_PER_RUN, i,
                 )
-                send_discord(
-                    "⚠️ S-net Quota Limit Reached",
-                    f"Stopped at {request_count} requests ({i}/{total_items} items)",
-                    color=16776960,
-                )
                 break
 
             logger.info(
@@ -854,18 +849,6 @@ def _fetch_and_save(
                 total_inserted += ins
                 total_skipped += skip
                 logger.info("  Saved %d records for %s [%s]", ins, date_str, network_code)
-
-            # Progress notification every 20 items or at end
-            if (i + 1) % 20 == 0 or i + 1 == total_items:
-                send_discord(
-                    "🌊 S-net Multi-Sensor Fetch Progress",
-                    f"Item {i + 1}/{total_items}: {date_str} [{network_code}]",
-                    fields=[
-                        {"name": "Requests used", "value": f"{request_count}/{MAX_REQUESTS_PER_RUN}", "inline": True},
-                        {"name": "Inserted so far", "value": f"{total_inserted:,}", "inline": True},
-                    ],
-                    color=3447003,
-                )
 
             time.sleep(QUOTA_COOLDOWN_SEC)
     finally:
@@ -982,12 +965,6 @@ async def main() -> None:
             "Full scan found %d missing (date, sensor) slots. Fetching oldest-first (budget: %d requests).",
             len(dates_to_fetch), MAX_REQUESTS_PER_RUN,
         )
-        send_discord(
-            "🔍 S-net — Historical Gap Fill Started",
-            f"Found {len(dates_to_fetch) // len(sorted_sensors)} missing dates across full history.\n"
-            f"Coverage: {pct}% — fetching oldest gaps first.",
-            color=3447003,
-        )
         # Fall through to fetch logic below
 
     # Count by type
@@ -1003,16 +980,6 @@ async def main() -> None:
         n_recent, n_backfill, len(dates_to_fetch), est_requests,
     )
     logger.info("  Per code: %s", ", ".join(f"{k}: {v}" for k, v in sorted(code_counts.items())))
-
-    send_discord(
-        "🌊 S-net Multi-Sensor Fetch Starting",
-        f"{len(dates_to_fetch)} items (~{est_requests} requests)",
-        fields=[
-            {"name": "Recent", "value": str(n_recent), "inline": True},
-            {"name": "Backfill", "value": str(n_backfill), "inline": True},
-            {"name": "Codes", "value": ", ".join(f"{k}: {v}" for k, v in sorted(code_counts.items())), "inline": False},
-        ],
-    )
 
     # Incremental fetch + immediate DB save.
     # All HinetPy + DB work runs synchronously in an executor thread.
@@ -1050,29 +1017,9 @@ async def main() -> None:
     logger.info("Coverage report saved to %s", coverage_path)
 
     # Final Discord notification with full coverage
-    gap_text = "None" if not report["top_gaps"] else "\n".join(
-        f"  {g[0]} → {g[1]} ({g[2]}d)" for g in report["top_gaps"][:3]
-    )
-    segment_text = "\n".join(
-        f"  {seg}: {info['stations']} stn, {info['dates']} days"
-        for seg, info in sorted(report["segments"].items())
-    ) if report["segments"] else "No segment data"
-    sensor_text = "\n".join(
-        f"  {st}: {info['rows']:,} rows, {info['dates']} days"
-        for st, info in sorted(report.get("sensor_coverage", {}).items())
-    ) or "—"
-
-    send_discord(
-        "🌊 S-net Multi-Sensor Fetch Complete",
-        f"Inserted {inserted:,} records",
-        fields=[
-            {"name": "Coverage", "value": f"{report['coverage_pct']}% ({report['total_dates']}/{report['expected_dates']} days)", "inline": True},
-            {"name": "Date range", "value": f"{report['first_date']} → {report['last_date']}", "inline": True},
-            {"name": "Total rows", "value": f"{report['total_rows']:,}", "inline": True},
-            {"name": "Sensors", "value": sensor_text, "inline": False},
-            {"name": "Top gaps", "value": gap_text, "inline": False},
-        ],
-        color=5763719 if report["coverage_pct"] > 80 else 16776960,
+    logger.info(
+        "Fetch complete: inserted %d records (coverage %.1f%%)",
+        inserted, report["coverage_pct"],
     )
 
 
