@@ -131,6 +131,7 @@ jobs:
       - name: Restore previous database checkpoint
         id: restore
         continue-on-error: true
+        timeout-minutes: 10
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash {0}
@@ -306,6 +307,7 @@ jobs:
       - name: Restore previous database checkpoint
         id: restore
         continue-on-error: true
+        timeout-minutes: 10
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash {0}
@@ -499,6 +501,7 @@ jobs:
       - name: Restore previous database checkpoint
         id: restore
         continue-on-error: true
+        timeout-minutes: 10
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash {0}
@@ -721,6 +724,7 @@ jobs:
       - name: Restore previous database checkpoint
         id: restore
         continue-on-error: true
+        timeout-minutes: 10
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash {0}
@@ -961,6 +965,7 @@ jobs:
       - name: Restore previous database checkpoint
         id: restore
         continue-on-error: true
+        timeout-minutes: 10
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash {0}
