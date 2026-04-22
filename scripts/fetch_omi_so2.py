@@ -396,9 +396,9 @@ async def main():
     if total_records == 0 and dates_to_fetch:
         logger.info(
             "SO2 fetch complete: 0 records from %d dates. "
-            "Check logs above for root cause: "
-            "Bearer→401 + BasicAuth→HTML = credentials invalid for GES DISC data access "
-            "(EULA not accepted or app not approved at urs.earthdata.nasa.gov)",
+            "Likely cause: no OMI OMSO2G archive files exist for these dates "
+            "(OMI data physically ends ~2025-06-08 due to instrument coverage degradation). "
+            "If auth failed, 'HTTP 4' errors appear in WARNING logs above.",
             len(dates_to_fetch),
         )
     else:
