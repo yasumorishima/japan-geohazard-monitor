@@ -1790,12 +1790,10 @@ jobs:
             needs.light.outputs.fetch_kp == 'failure' ||
             needs.light.outputs.fetch_cmt == 'failure' ||
             needs.fetch-snet.outputs.fetch_snet_waveform == 'failure' ||
-            needs.fetch-snet.outputs.fetch_snet_pressure == 'failure' ||
             needs.light.outputs.fetch_gnss_tec == 'failure' ||
             needs.fetch-modis.outputs.fetch_modis_lst == 'failure' ||
             needs.light.outputs.fetch_ulf == 'failure' ||
             needs.light.outputs.fetch_cosmic_ray == 'failure' ||
-            needs.light.outputs.fetch_lightning == 'failure' ||
             needs.light.outputs.fetch_iss_lis == 'failure' ||
             needs.light.outputs.fetch_wwlln_thunder_hour == 'failure' ||
             needs.light.outputs.fetch_lis_otd_monthly == 'failure' ||
@@ -1829,12 +1827,12 @@ jobs:
           [ "${{ needs.light.outputs.fetch_kp }}" = "failure" ] && FAILED="$FAILED kp"
           [ "${{ needs.light.outputs.fetch_cmt }}" = "failure" ] && FAILED="$FAILED cmt"
           [ "${{ needs.fetch-snet.outputs.fetch_snet_waveform }}" = "failure" ] && FAILED="$FAILED snet_waveform"
-          [ "${{ needs.fetch-snet.outputs.fetch_snet_pressure }}" = "failure" ] && FAILED="$FAILED snet_pressure"
+          # snet_pressure: win32tools not available on Linux -- known permanent failure, excluded from alerts
           [ "${{ needs.light.outputs.fetch_gnss_tec }}" = "failure" ] && FAILED="$FAILED gnss_tec"
           [ "${{ needs.fetch-modis.outputs.fetch_modis_lst }}" = "failure" ] && FAILED="$FAILED modis_lst"
           [ "${{ needs.light.outputs.fetch_ulf }}" = "failure" ] && FAILED="$FAILED ulf"
           [ "${{ needs.light.outputs.fetch_cosmic_ray }}" = "failure" ] && FAILED="$FAILED cosmic_ray"
-          [ "${{ needs.light.outputs.fetch_lightning }}" = "failure" ] && FAILED="$FAILED lightning"
+          # lightning (Blitzortung): archive access restricted -- known permanent failure, excluded from alerts
           [ "${{ needs.light.outputs.fetch_iss_lis }}" = "failure" ] && FAILED="$FAILED iss_lis"
           [ "${{ needs.light.outputs.fetch_wwlln_thunder_hour }}" = "failure" ] && FAILED="$FAILED wwlln_thunder_hour"
           [ "${{ needs.light.outputs.fetch_lis_otd_monthly }}" = "failure" ] && FAILED="$FAILED lis_otd_monthly"
