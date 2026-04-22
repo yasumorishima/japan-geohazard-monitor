@@ -479,7 +479,7 @@ jobs:
       || inputs.target == ''
       || inputs.target == 'cloud'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     outputs:
       fetch_cloud: ${{ steps.fetch_cloud.outcome }}
       snapshot_outcome: ${{ steps.snapshot.outcome }}
@@ -619,6 +619,8 @@ jobs:
         # 24619904953 + diag 24623870561 + verify 24626051376 + 24636570051).
         # cda044f + 9abdde3 snapshot guards cannot detect this corruption,
         # so preventing SIGKILL is the only reliable fix.
+        # NOTE: Job timeout is 150m (not 120m) to allow setup+snapshot overhead
+        # on top of this step's 120m budget.
         timeout-minutes: 120
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
