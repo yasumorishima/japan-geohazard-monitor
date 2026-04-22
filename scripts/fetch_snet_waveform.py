@@ -249,12 +249,15 @@ async def get_coverage_report(db: aiosqlite.Connection) -> dict:
         "GROUP BY cable_segment ORDER BY cable_segment"
     )
 
-    # Gap analysis
+    # Gap analysis — expected_days uses snet_start as anchor so that
+    # filling old gaps doesn't expand the denominator and stall coverage %.
+    snet_start_str = "2016-08-15"
     if dates:
         all_dates = sorted([d[0] for d in dates])
         first_date = datetime.strptime(all_dates[0], "%Y-%m-%d")
         last_date = datetime.strptime(all_dates[-1], "%Y-%m-%d")
-        expected_days = (last_date - first_date).days + 1
+        anchor = datetime.strptime(snet_start_str, "%Y-%m-%d")
+        expected_days = (last_date - anchor).days + 1
         actual_days = len(all_dates)
         gap_days = expected_days - actual_days
 
