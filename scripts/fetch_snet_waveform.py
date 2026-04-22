@@ -941,20 +941,51 @@ async def main() -> None:
                 dates_to_fetch.append((target, SEGMENTS_BACKFILL, code, config))
 
     if not dates_to_fetch:
-        logger.info("All dates/sensors already covered. Nothing to fetch.")
+        logger.info("Window scan found nothing. Checking full history for gaps...")
         async with safe_connect() as db:
             report = await get_coverage_report(db)
         _log_coverage_report(report)
         pct = report['coverage_pct']
-        if pct < 100:
+
+        if pct >= 100.0:
+            logger.info("Coverage is 100%%. Backfill complete.")
+            return
+
+        # Full historical gap scan: snet_start → cutoff (oldest-first)
+        cutoff = (now_utc - timedelta(days=RECENT_DAYS + 1)).replace(
+            hour=0, minute=0, second=0, microsecond=0, tzinfo=None
+        )
+        scan_date = snet_start
+        while scan_date <= cutoff:
+            date_str = scan_date.strftime("%Y-%m-%d")
+            for code, config in sorted_sensors:
+                if (date_str, config["sensor_type"]) not in existing:
+                    dates_to_fetch.append((scan_date, SEGMENTS_BACKFILL, code, config))
+            scan_date += timedelta(days=1)
+
+        if not dates_to_fetch:
+            # Gaps exist only in the recent window (already covered by recent_dates check)
+            logger.info("No historical gaps found outside recent window.")
             send_discord(
                 "⚠️ S-net Multi-Sensor — Stalled",
-                f"No new dates fetched. Coverage stuck at {pct}%\n"
+                f"No gaps found in full history scan. Coverage: {pct}%\n"
                 f"{report['total_dates']} dates, {report['total_rows']:,} rows",
-                color=15105570,  # orange
+                color=15105570,
             )
             _create_stall_issue(report, backfill_dates, recent_dates)
-        return
+            return
+
+        logger.info(
+            "Full scan found %d missing (date, sensor) slots. Fetching oldest-first (budget: %d requests).",
+            len(dates_to_fetch), MAX_REQUESTS_PER_RUN,
+        )
+        send_discord(
+            "🔍 S-net — Historical Gap Fill Started",
+            f"Found {len(dates_to_fetch) // len(sorted_sensors)} missing dates across full history.\n"
+            f"Coverage: {pct}% — fetching oldest gaps first.",
+            color=3447003,
+        )
+        # Fall through to fetch logic below
 
     # Count by type
     n_recent = len([d for d in dates_to_fetch if d[1] == SEGMENTS_RECENT])
