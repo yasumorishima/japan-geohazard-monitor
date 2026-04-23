@@ -94,6 +94,16 @@ on:
 permissions:
   contents: read
   issues: write
+  actions: write  # needed for auto-rerun of failed jobs
+
+# Serialise backfill runs so parallel schedule+dispatch instances don't
+# race on the artifact API (2026-04-23: observed fetch-modis / fetch-cloud /
+# light restore step hanging when a prior run overlapped). cancel-in-progress
+# is deliberately false so a long-running run isn't killed by the next
+# schedule tick; the next run queues until this one finishes.
+concurrency:
+  group: backfill-data
+  cancel-in-progress: false
 
 # Reusable shell snippets are inlined per job below; YAML anchors aren't
 # supported by GitHub Actions across step blocks, so duplication is
@@ -115,6 +125,8 @@ jobs:
     outputs:
       fetch_modis_lst: ${{ steps.fetch_modis_lst.outcome }}
       snapshot_outcome: ${{ steps.snapshot.outcome }}
+      restore_outcome: ${{ steps.restore.outcome }}
+      restore_restored: ${{ steps.restore.outputs.restored }}
 
     steps:
       - uses: actions/checkout@v4
@@ -137,61 +149,116 @@ jobs:
         shell: bash {0}
         run: |
           set +e
+          TS() { date -u +"%H:%M:%S"; }
+          log() { echo "[$(TS)] $*"; }
+          log "restore step starting (run_id=${{ github.run_id }}, job=${{ github.job }})"
           mkdir -p data results
           RESTORED=""
-          MAX_TRIES=30
+          MAX_TRIES=5
+
+          # Fetch artifact list with up to 3 attempts and exponential backoff
+          # between attempts (1s, 3s). stderr goes to a temp file so it shows up
+          # in job logs without polluting the parsed run_id list.
+          fetch_artifact_list() {
+            local prefix="$1"
+            local attempt
+            local delay=1
+            local result rc
+            local stderr_file="/tmp/gh_api_stderr_$$.log"
+            for attempt in 1 2 3; do
+              log "gh api artifacts (prefix=${prefix}, attempt=${attempt})"
+              : > "$stderr_file"
+              result=$(timeout 30 gh api \
+                "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+                --jq "[.artifacts[] | select(.name | startswith(\"${prefix}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" \
+                2>"$stderr_file")
+              rc=$?
+              if [ -s "$stderr_file" ]; then
+                log "  gh stderr: $(head -c 500 "$stderr_file" | tr '\n' ' ')"
+              fi
+              if [ $rc -eq 0 ] && [ -n "$result" ]; then
+                rm -f "$stderr_file"
+                echo "$result"
+                return 0
+              fi
+              if [ $rc -eq 124 ]; then
+                log "gh api TIMEOUT (rc=124, 30s exceeded) -- attempt ${attempt}"
+              elif [ $rc -eq 137 ]; then
+                log "gh api SIGKILL (rc=137) -- attempt ${attempt}"
+              else
+                log "gh api attempt ${attempt} failed (rc=${rc}, stdout head: ${result:0:200})"
+              fi
+              if [ $attempt -lt 3 ]; then
+                log "sleeping ${delay}s before retry"
+                sleep $delay
+                delay=$((delay * 3))
+              fi
+            done
+            rm -f "$stderr_file"
+            return 1
+          }
+
           for PREFIX in "backfill-checkpoint-" "database-checkpoint-"; do
             [ -n "$RESTORED" ] && break
-            RUN_IDS=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
-              --jq "[.artifacts[] | select(.name | startswith(\"${PREFIX}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" 2>/dev/null)
+            log "scanning prefix=${PREFIX}"
+            RUN_IDS=$(fetch_artifact_list "$PREFIX")
+            if [ -z "$RUN_IDS" ]; then
+              log "no artifacts found for prefix=${PREFIX}"
+              continue
+            fi
             for PREV_RUN in $RUN_IDS; do
               [ -z "$PREV_RUN" ] && continue
               case "$PREV_RUN" in (*[!0-9]*) continue;; esac
               [ "$PREV_RUN" = "${{ github.run_id }}" ] && continue
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
-              echo "Trying artifact: $ARTIFACT_NAME"
+              log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              gh run download "$PREV_RUN" --repo ${{ github.repository }} \
-                --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>/dev/null
-              if [ $? -ne 0 ]; then
-                echo "  download failed -- skip"
+              timeout 60 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+                --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
+              dl_rc=$?
+              if [ $dl_rc -ne 0 ]; then
+                log "  download failed (rc=${dl_rc}) -- skip"
                 continue
               fi
               DB_FILE="/tmp/db-restore/geohazard.db"
               [ ! -f "$DB_FILE" ] && DB_FILE="/tmp/db-restore/data/geohazard.db"
               if [ ! -f "$DB_FILE" ]; then
-                echo "  no geohazard.db in artifact -- skip"
+                log "  no geohazard.db in artifact -- skip"
                 continue
               fi
               cp "$DB_FILE" data/geohazard.db
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
-              echo "  copied ($DB_SIZE) -- checking integrity"
-              python3 scripts/check_db_integrity.py data/geohazard.db
-              if [ $? -eq 0 ]; then
+              log "  copied (${DB_SIZE}) -- checking integrity"
+              timeout 30 python3 scripts/check_db_integrity.py data/geohazard.db
+              ic_rc=$?
+              if [ $ic_rc -eq 0 ]; then
                 RESTORED="${ARTIFACT_NAME}"
                 echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
-                echo "Restored from $ARTIFACT_NAME"
+                log "Restored from ${ARTIFACT_NAME}"
                 break
               else
-                echo "  corrupted -- attempting per-table salvage"
-                python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
-                if [ $? -eq 0 ] && [ -f /tmp/salvaged.db ]; then
+                log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
+                timeout 120 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
+                sv_rc=$?
+                if [ $sv_rc -eq 0 ] && [ -f /tmp/salvaged.db ]; then
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
                   mv /tmp/salvaged.db data/geohazard.db
                   RESTORED="${ARTIFACT_NAME}-salvaged"
                   echo "restored=${ARTIFACT_NAME}-salvaged" >> "$GITHUB_OUTPUT"
-                  echo "Salvaged via per-table copy from $ARTIFACT_NAME"
+                  log "Salvaged via per-table copy from ${ARTIFACT_NAME}"
                   break
                 fi
-                echo "  salvage failed -- trying next artifact"
+                log "  salvage failed (rc=${sv_rc}) -- trying next artifact"
                 rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm /tmp/salvaged.db
               fi
             done
           done
           if [ -z "$RESTORED" ]; then
-            echo "No usable checkpoint found -- will init fresh DB"
+            log "No usable checkpoint found -- will init fresh DB"
+            echo "restored=none" >> "$GITHUB_OUTPUT"
           fi
+          log "restore step done (RESTORED=${RESTORED:-none})"
           exit 0
 
       - name: Init DB if missing or corrupt
@@ -291,6 +358,8 @@ jobs:
     outputs:
       fetch_so2: ${{ steps.fetch_so2.outcome }}
       snapshot_outcome: ${{ steps.snapshot.outcome }}
+      restore_outcome: ${{ steps.restore.outcome }}
+      restore_restored: ${{ steps.restore.outputs.restored }}
 
     steps:
       - uses: actions/checkout@v4
@@ -313,61 +382,116 @@ jobs:
         shell: bash {0}
         run: |
           set +e
+          TS() { date -u +"%H:%M:%S"; }
+          log() { echo "[$(TS)] $*"; }
+          log "restore step starting (run_id=${{ github.run_id }}, job=${{ github.job }})"
           mkdir -p data results
           RESTORED=""
-          MAX_TRIES=30
+          MAX_TRIES=5
+
+          # Fetch artifact list with up to 3 attempts and exponential backoff
+          # between attempts (1s, 3s). stderr goes to a temp file so it shows up
+          # in job logs without polluting the parsed run_id list.
+          fetch_artifact_list() {
+            local prefix="$1"
+            local attempt
+            local delay=1
+            local result rc
+            local stderr_file="/tmp/gh_api_stderr_$$.log"
+            for attempt in 1 2 3; do
+              log "gh api artifacts (prefix=${prefix}, attempt=${attempt})"
+              : > "$stderr_file"
+              result=$(timeout 30 gh api \
+                "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+                --jq "[.artifacts[] | select(.name | startswith(\"${prefix}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" \
+                2>"$stderr_file")
+              rc=$?
+              if [ -s "$stderr_file" ]; then
+                log "  gh stderr: $(head -c 500 "$stderr_file" | tr '\n' ' ')"
+              fi
+              if [ $rc -eq 0 ] && [ -n "$result" ]; then
+                rm -f "$stderr_file"
+                echo "$result"
+                return 0
+              fi
+              if [ $rc -eq 124 ]; then
+                log "gh api TIMEOUT (rc=124, 30s exceeded) -- attempt ${attempt}"
+              elif [ $rc -eq 137 ]; then
+                log "gh api SIGKILL (rc=137) -- attempt ${attempt}"
+              else
+                log "gh api attempt ${attempt} failed (rc=${rc}, stdout head: ${result:0:200})"
+              fi
+              if [ $attempt -lt 3 ]; then
+                log "sleeping ${delay}s before retry"
+                sleep $delay
+                delay=$((delay * 3))
+              fi
+            done
+            rm -f "$stderr_file"
+            return 1
+          }
+
           for PREFIX in "backfill-checkpoint-" "database-checkpoint-"; do
             [ -n "$RESTORED" ] && break
-            RUN_IDS=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
-              --jq "[.artifacts[] | select(.name | startswith(\"${PREFIX}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" 2>/dev/null)
+            log "scanning prefix=${PREFIX}"
+            RUN_IDS=$(fetch_artifact_list "$PREFIX")
+            if [ -z "$RUN_IDS" ]; then
+              log "no artifacts found for prefix=${PREFIX}"
+              continue
+            fi
             for PREV_RUN in $RUN_IDS; do
               [ -z "$PREV_RUN" ] && continue
               case "$PREV_RUN" in (*[!0-9]*) continue;; esac
               [ "$PREV_RUN" = "${{ github.run_id }}" ] && continue
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
-              echo "Trying artifact: $ARTIFACT_NAME"
+              log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              gh run download "$PREV_RUN" --repo ${{ github.repository }} \
-                --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>/dev/null
-              if [ $? -ne 0 ]; then
-                echo "  download failed -- skip"
+              timeout 60 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+                --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
+              dl_rc=$?
+              if [ $dl_rc -ne 0 ]; then
+                log "  download failed (rc=${dl_rc}) -- skip"
                 continue
               fi
               DB_FILE="/tmp/db-restore/geohazard.db"
               [ ! -f "$DB_FILE" ] && DB_FILE="/tmp/db-restore/data/geohazard.db"
               if [ ! -f "$DB_FILE" ]; then
-                echo "  no geohazard.db in artifact -- skip"
+                log "  no geohazard.db in artifact -- skip"
                 continue
               fi
               cp "$DB_FILE" data/geohazard.db
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
-              echo "  copied ($DB_SIZE) -- checking integrity"
-              python3 scripts/check_db_integrity.py data/geohazard.db
-              if [ $? -eq 0 ]; then
+              log "  copied (${DB_SIZE}) -- checking integrity"
+              timeout 30 python3 scripts/check_db_integrity.py data/geohazard.db
+              ic_rc=$?
+              if [ $ic_rc -eq 0 ]; then
                 RESTORED="${ARTIFACT_NAME}"
                 echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
-                echo "Restored from $ARTIFACT_NAME"
+                log "Restored from ${ARTIFACT_NAME}"
                 break
               else
-                echo "  corrupted -- attempting per-table salvage"
-                python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
-                if [ $? -eq 0 ] && [ -f /tmp/salvaged.db ]; then
+                log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
+                timeout 120 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
+                sv_rc=$?
+                if [ $sv_rc -eq 0 ] && [ -f /tmp/salvaged.db ]; then
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
                   mv /tmp/salvaged.db data/geohazard.db
                   RESTORED="${ARTIFACT_NAME}-salvaged"
                   echo "restored=${ARTIFACT_NAME}-salvaged" >> "$GITHUB_OUTPUT"
-                  echo "Salvaged via per-table copy from $ARTIFACT_NAME"
+                  log "Salvaged via per-table copy from ${ARTIFACT_NAME}"
                   break
                 fi
-                echo "  salvage failed -- trying next artifact"
+                log "  salvage failed (rc=${sv_rc}) -- trying next artifact"
                 rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm /tmp/salvaged.db
               fi
             done
           done
           if [ -z "$RESTORED" ]; then
-            echo "No usable checkpoint found -- will init fresh DB"
+            log "No usable checkpoint found -- will init fresh DB"
+            echo "restored=none" >> "$GITHUB_OUTPUT"
           fi
+          log "restore step done (RESTORED=${RESTORED:-none})"
           exit 0
 
       - name: Init DB if missing or corrupt
@@ -485,6 +609,8 @@ jobs:
     outputs:
       fetch_cloud: ${{ steps.fetch_cloud.outcome }}
       snapshot_outcome: ${{ steps.snapshot.outcome }}
+      restore_outcome: ${{ steps.restore.outcome }}
+      restore_restored: ${{ steps.restore.outputs.restored }}
 
     steps:
       - uses: actions/checkout@v4
@@ -507,61 +633,116 @@ jobs:
         shell: bash {0}
         run: |
           set +e
+          TS() { date -u +"%H:%M:%S"; }
+          log() { echo "[$(TS)] $*"; }
+          log "restore step starting (run_id=${{ github.run_id }}, job=${{ github.job }})"
           mkdir -p data results
           RESTORED=""
-          MAX_TRIES=30
+          MAX_TRIES=5
+
+          # Fetch artifact list with up to 3 attempts and exponential backoff
+          # between attempts (1s, 3s). stderr goes to a temp file so it shows up
+          # in job logs without polluting the parsed run_id list.
+          fetch_artifact_list() {
+            local prefix="$1"
+            local attempt
+            local delay=1
+            local result rc
+            local stderr_file="/tmp/gh_api_stderr_$$.log"
+            for attempt in 1 2 3; do
+              log "gh api artifacts (prefix=${prefix}, attempt=${attempt})"
+              : > "$stderr_file"
+              result=$(timeout 30 gh api \
+                "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+                --jq "[.artifacts[] | select(.name | startswith(\"${prefix}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" \
+                2>"$stderr_file")
+              rc=$?
+              if [ -s "$stderr_file" ]; then
+                log "  gh stderr: $(head -c 500 "$stderr_file" | tr '\n' ' ')"
+              fi
+              if [ $rc -eq 0 ] && [ -n "$result" ]; then
+                rm -f "$stderr_file"
+                echo "$result"
+                return 0
+              fi
+              if [ $rc -eq 124 ]; then
+                log "gh api TIMEOUT (rc=124, 30s exceeded) -- attempt ${attempt}"
+              elif [ $rc -eq 137 ]; then
+                log "gh api SIGKILL (rc=137) -- attempt ${attempt}"
+              else
+                log "gh api attempt ${attempt} failed (rc=${rc}, stdout head: ${result:0:200})"
+              fi
+              if [ $attempt -lt 3 ]; then
+                log "sleeping ${delay}s before retry"
+                sleep $delay
+                delay=$((delay * 3))
+              fi
+            done
+            rm -f "$stderr_file"
+            return 1
+          }
+
           for PREFIX in "backfill-checkpoint-" "database-checkpoint-"; do
             [ -n "$RESTORED" ] && break
-            RUN_IDS=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
-              --jq "[.artifacts[] | select(.name | startswith(\"${PREFIX}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" 2>/dev/null)
+            log "scanning prefix=${PREFIX}"
+            RUN_IDS=$(fetch_artifact_list "$PREFIX")
+            if [ -z "$RUN_IDS" ]; then
+              log "no artifacts found for prefix=${PREFIX}"
+              continue
+            fi
             for PREV_RUN in $RUN_IDS; do
               [ -z "$PREV_RUN" ] && continue
               case "$PREV_RUN" in (*[!0-9]*) continue;; esac
               [ "$PREV_RUN" = "${{ github.run_id }}" ] && continue
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
-              echo "Trying artifact: $ARTIFACT_NAME"
+              log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              gh run download "$PREV_RUN" --repo ${{ github.repository }} \
-                --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>/dev/null
-              if [ $? -ne 0 ]; then
-                echo "  download failed -- skip"
+              timeout 60 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+                --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
+              dl_rc=$?
+              if [ $dl_rc -ne 0 ]; then
+                log "  download failed (rc=${dl_rc}) -- skip"
                 continue
               fi
               DB_FILE="/tmp/db-restore/geohazard.db"
               [ ! -f "$DB_FILE" ] && DB_FILE="/tmp/db-restore/data/geohazard.db"
               if [ ! -f "$DB_FILE" ]; then
-                echo "  no geohazard.db in artifact -- skip"
+                log "  no geohazard.db in artifact -- skip"
                 continue
               fi
               cp "$DB_FILE" data/geohazard.db
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
-              echo "  copied ($DB_SIZE) -- checking integrity"
-              python3 scripts/check_db_integrity.py data/geohazard.db
-              if [ $? -eq 0 ]; then
+              log "  copied (${DB_SIZE}) -- checking integrity"
+              timeout 30 python3 scripts/check_db_integrity.py data/geohazard.db
+              ic_rc=$?
+              if [ $ic_rc -eq 0 ]; then
                 RESTORED="${ARTIFACT_NAME}"
                 echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
-                echo "Restored from $ARTIFACT_NAME"
+                log "Restored from ${ARTIFACT_NAME}"
                 break
               else
-                echo "  corrupted -- attempting per-table salvage"
-                python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
-                if [ $? -eq 0 ] && [ -f /tmp/salvaged.db ]; then
+                log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
+                timeout 120 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
+                sv_rc=$?
+                if [ $sv_rc -eq 0 ] && [ -f /tmp/salvaged.db ]; then
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
                   mv /tmp/salvaged.db data/geohazard.db
                   RESTORED="${ARTIFACT_NAME}-salvaged"
                   echo "restored=${ARTIFACT_NAME}-salvaged" >> "$GITHUB_OUTPUT"
-                  echo "Salvaged via per-table copy from $ARTIFACT_NAME"
+                  log "Salvaged via per-table copy from ${ARTIFACT_NAME}"
                   break
                 fi
-                echo "  salvage failed -- trying next artifact"
+                log "  salvage failed (rc=${sv_rc}) -- trying next artifact"
                 rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm /tmp/salvaged.db
               fi
             done
           done
           if [ -z "$RESTORED" ]; then
-            echo "No usable checkpoint found -- will init fresh DB"
+            log "No usable checkpoint found -- will init fresh DB"
+            echo "restored=none" >> "$GITHUB_OUTPUT"
           fi
+          log "restore step done (RESTORED=${RESTORED:-none})"
           exit 0
 
       - name: Init DB if missing or corrupt
@@ -708,6 +889,8 @@ jobs:
       fetch_snet_waveform: ${{ steps.fetch_snet_waveform.outcome }}
       fetch_snet_pressure: ${{ steps.fetch_snet_pressure.outcome }}
       snapshot_outcome: ${{ steps.snapshot.outcome }}
+      restore_outcome: ${{ steps.restore.outcome }}
+      restore_restored: ${{ steps.restore.outputs.restored }}
 
     steps:
       - uses: actions/checkout@v4
@@ -730,61 +913,116 @@ jobs:
         shell: bash {0}
         run: |
           set +e
+          TS() { date -u +"%H:%M:%S"; }
+          log() { echo "[$(TS)] $*"; }
+          log "restore step starting (run_id=${{ github.run_id }}, job=${{ github.job }})"
           mkdir -p data results
           RESTORED=""
-          MAX_TRIES=30
+          MAX_TRIES=5
+
+          # Fetch artifact list with up to 3 attempts and exponential backoff
+          # between attempts (1s, 3s). stderr goes to a temp file so it shows up
+          # in job logs without polluting the parsed run_id list.
+          fetch_artifact_list() {
+            local prefix="$1"
+            local attempt
+            local delay=1
+            local result rc
+            local stderr_file="/tmp/gh_api_stderr_$$.log"
+            for attempt in 1 2 3; do
+              log "gh api artifacts (prefix=${prefix}, attempt=${attempt})"
+              : > "$stderr_file"
+              result=$(timeout 30 gh api \
+                "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+                --jq "[.artifacts[] | select(.name | startswith(\"${prefix}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" \
+                2>"$stderr_file")
+              rc=$?
+              if [ -s "$stderr_file" ]; then
+                log "  gh stderr: $(head -c 500 "$stderr_file" | tr '\n' ' ')"
+              fi
+              if [ $rc -eq 0 ] && [ -n "$result" ]; then
+                rm -f "$stderr_file"
+                echo "$result"
+                return 0
+              fi
+              if [ $rc -eq 124 ]; then
+                log "gh api TIMEOUT (rc=124, 30s exceeded) -- attempt ${attempt}"
+              elif [ $rc -eq 137 ]; then
+                log "gh api SIGKILL (rc=137) -- attempt ${attempt}"
+              else
+                log "gh api attempt ${attempt} failed (rc=${rc}, stdout head: ${result:0:200})"
+              fi
+              if [ $attempt -lt 3 ]; then
+                log "sleeping ${delay}s before retry"
+                sleep $delay
+                delay=$((delay * 3))
+              fi
+            done
+            rm -f "$stderr_file"
+            return 1
+          }
+
           for PREFIX in "backfill-checkpoint-" "database-checkpoint-"; do
             [ -n "$RESTORED" ] && break
-            RUN_IDS=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
-              --jq "[.artifacts[] | select(.name | startswith(\"${PREFIX}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" 2>/dev/null)
+            log "scanning prefix=${PREFIX}"
+            RUN_IDS=$(fetch_artifact_list "$PREFIX")
+            if [ -z "$RUN_IDS" ]; then
+              log "no artifacts found for prefix=${PREFIX}"
+              continue
+            fi
             for PREV_RUN in $RUN_IDS; do
               [ -z "$PREV_RUN" ] && continue
               case "$PREV_RUN" in (*[!0-9]*) continue;; esac
               [ "$PREV_RUN" = "${{ github.run_id }}" ] && continue
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
-              echo "Trying artifact: $ARTIFACT_NAME"
+              log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              gh run download "$PREV_RUN" --repo ${{ github.repository }} \
-                --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>/dev/null
-              if [ $? -ne 0 ]; then
-                echo "  download failed -- skip"
+              timeout 60 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+                --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
+              dl_rc=$?
+              if [ $dl_rc -ne 0 ]; then
+                log "  download failed (rc=${dl_rc}) -- skip"
                 continue
               fi
               DB_FILE="/tmp/db-restore/geohazard.db"
               [ ! -f "$DB_FILE" ] && DB_FILE="/tmp/db-restore/data/geohazard.db"
               if [ ! -f "$DB_FILE" ]; then
-                echo "  no geohazard.db in artifact -- skip"
+                log "  no geohazard.db in artifact -- skip"
                 continue
               fi
               cp "$DB_FILE" data/geohazard.db
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
-              echo "  copied ($DB_SIZE) -- checking integrity"
-              python3 scripts/check_db_integrity.py data/geohazard.db
-              if [ $? -eq 0 ]; then
+              log "  copied (${DB_SIZE}) -- checking integrity"
+              timeout 30 python3 scripts/check_db_integrity.py data/geohazard.db
+              ic_rc=$?
+              if [ $ic_rc -eq 0 ]; then
                 RESTORED="${ARTIFACT_NAME}"
                 echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
-                echo "Restored from $ARTIFACT_NAME"
+                log "Restored from ${ARTIFACT_NAME}"
                 break
               else
-                echo "  corrupted -- attempting per-table salvage"
-                python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
-                if [ $? -eq 0 ] && [ -f /tmp/salvaged.db ]; then
+                log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
+                timeout 120 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
+                sv_rc=$?
+                if [ $sv_rc -eq 0 ] && [ -f /tmp/salvaged.db ]; then
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
                   mv /tmp/salvaged.db data/geohazard.db
                   RESTORED="${ARTIFACT_NAME}-salvaged"
                   echo "restored=${ARTIFACT_NAME}-salvaged" >> "$GITHUB_OUTPUT"
-                  echo "Salvaged via per-table copy from $ARTIFACT_NAME"
+                  log "Salvaged via per-table copy from ${ARTIFACT_NAME}"
                   break
                 fi
-                echo "  salvage failed -- trying next artifact"
+                log "  salvage failed (rc=${sv_rc}) -- trying next artifact"
                 rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm /tmp/salvaged.db
               fi
             done
           done
           if [ -z "$RESTORED" ]; then
-            echo "No usable checkpoint found -- will init fresh DB"
+            log "No usable checkpoint found -- will init fresh DB"
+            echo "restored=none" >> "$GITHUB_OUTPUT"
           fi
+          log "restore step done (RESTORED=${RESTORED:-none})"
           exit 0
 
       - name: Init DB if missing or corrupt
@@ -949,6 +1187,8 @@ jobs:
       fetch_dart: ${{ steps.fetch_dart.outcome }}
       fetch_ioc_sealevel: ${{ steps.fetch_ioc_sealevel.outcome }}
       snapshot_outcome: ${{ steps.snapshot.outcome }}
+      restore_outcome: ${{ steps.restore.outcome }}
+      restore_restored: ${{ steps.restore.outputs.restored }}
 
     steps:
       - uses: actions/checkout@v4
@@ -971,61 +1211,116 @@ jobs:
         shell: bash {0}
         run: |
           set +e
+          TS() { date -u +"%H:%M:%S"; }
+          log() { echo "[$(TS)] $*"; }
+          log "restore step starting (run_id=${{ github.run_id }}, job=${{ github.job }})"
           mkdir -p data results
           RESTORED=""
-          MAX_TRIES=30
+          MAX_TRIES=5
+
+          # Fetch artifact list with up to 3 attempts and exponential backoff
+          # between attempts (1s, 3s). stderr goes to a temp file so it shows up
+          # in job logs without polluting the parsed run_id list.
+          fetch_artifact_list() {
+            local prefix="$1"
+            local attempt
+            local delay=1
+            local result rc
+            local stderr_file="/tmp/gh_api_stderr_$$.log"
+            for attempt in 1 2 3; do
+              log "gh api artifacts (prefix=${prefix}, attempt=${attempt})"
+              : > "$stderr_file"
+              result=$(timeout 30 gh api \
+                "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+                --jq "[.artifacts[] | select(.name | startswith(\"${prefix}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" \
+                2>"$stderr_file")
+              rc=$?
+              if [ -s "$stderr_file" ]; then
+                log "  gh stderr: $(head -c 500 "$stderr_file" | tr '\n' ' ')"
+              fi
+              if [ $rc -eq 0 ] && [ -n "$result" ]; then
+                rm -f "$stderr_file"
+                echo "$result"
+                return 0
+              fi
+              if [ $rc -eq 124 ]; then
+                log "gh api TIMEOUT (rc=124, 30s exceeded) -- attempt ${attempt}"
+              elif [ $rc -eq 137 ]; then
+                log "gh api SIGKILL (rc=137) -- attempt ${attempt}"
+              else
+                log "gh api attempt ${attempt} failed (rc=${rc}, stdout head: ${result:0:200})"
+              fi
+              if [ $attempt -lt 3 ]; then
+                log "sleeping ${delay}s before retry"
+                sleep $delay
+                delay=$((delay * 3))
+              fi
+            done
+            rm -f "$stderr_file"
+            return 1
+          }
+
           for PREFIX in "backfill-checkpoint-" "database-checkpoint-"; do
             [ -n "$RESTORED" ] && break
-            RUN_IDS=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
-              --jq "[.artifacts[] | select(.name | startswith(\"${PREFIX}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" 2>/dev/null)
+            log "scanning prefix=${PREFIX}"
+            RUN_IDS=$(fetch_artifact_list "$PREFIX")
+            if [ -z "$RUN_IDS" ]; then
+              log "no artifacts found for prefix=${PREFIX}"
+              continue
+            fi
             for PREV_RUN in $RUN_IDS; do
               [ -z "$PREV_RUN" ] && continue
               case "$PREV_RUN" in (*[!0-9]*) continue;; esac
               [ "$PREV_RUN" = "${{ github.run_id }}" ] && continue
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
-              echo "Trying artifact: $ARTIFACT_NAME"
+              log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              gh run download "$PREV_RUN" --repo ${{ github.repository }} \
-                --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>/dev/null
-              if [ $? -ne 0 ]; then
-                echo "  download failed -- skip"
+              timeout 60 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+                --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
+              dl_rc=$?
+              if [ $dl_rc -ne 0 ]; then
+                log "  download failed (rc=${dl_rc}) -- skip"
                 continue
               fi
               DB_FILE="/tmp/db-restore/geohazard.db"
               [ ! -f "$DB_FILE" ] && DB_FILE="/tmp/db-restore/data/geohazard.db"
               if [ ! -f "$DB_FILE" ]; then
-                echo "  no geohazard.db in artifact -- skip"
+                log "  no geohazard.db in artifact -- skip"
                 continue
               fi
               cp "$DB_FILE" data/geohazard.db
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
-              echo "  copied ($DB_SIZE) -- checking integrity"
-              python3 scripts/check_db_integrity.py data/geohazard.db
-              if [ $? -eq 0 ]; then
+              log "  copied (${DB_SIZE}) -- checking integrity"
+              timeout 30 python3 scripts/check_db_integrity.py data/geohazard.db
+              ic_rc=$?
+              if [ $ic_rc -eq 0 ]; then
                 RESTORED="${ARTIFACT_NAME}"
                 echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
-                echo "Restored from $ARTIFACT_NAME"
+                log "Restored from ${ARTIFACT_NAME}"
                 break
               else
-                echo "  corrupted -- attempting per-table salvage"
-                python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
-                if [ $? -eq 0 ] && [ -f /tmp/salvaged.db ]; then
+                log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
+                timeout 120 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
+                sv_rc=$?
+                if [ $sv_rc -eq 0 ] && [ -f /tmp/salvaged.db ]; then
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
                   mv /tmp/salvaged.db data/geohazard.db
                   RESTORED="${ARTIFACT_NAME}-salvaged"
                   echo "restored=${ARTIFACT_NAME}-salvaged" >> "$GITHUB_OUTPUT"
-                  echo "Salvaged via per-table copy from $ARTIFACT_NAME"
+                  log "Salvaged via per-table copy from ${ARTIFACT_NAME}"
                   break
                 fi
-                echo "  salvage failed -- trying next artifact"
+                log "  salvage failed (rc=${sv_rc}) -- trying next artifact"
                 rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm /tmp/salvaged.db
               fi
             done
           done
           if [ -z "$RESTORED" ]; then
-            echo "No usable checkpoint found -- will init fresh DB"
+            log "No usable checkpoint found -- will init fresh DB"
+            echo "restored=none" >> "$GITHUB_OUTPUT"
           fi
+          log "restore step done (RESTORED=${RESTORED:-none})"
           exit 0
 
       - name: Init DB if missing or corrupt
@@ -1630,6 +1925,16 @@ jobs:
           FETCH_CLOUD_RESULT: ${{ needs.fetch-cloud.result }}
           FETCH_SNET_RESULT: ${{ needs.fetch-snet.result }}
           LIGHT_RESULT: ${{ needs.light.result }}
+          RESTORE_MODIS: ${{ needs.fetch-modis.outputs.restore_outcome }}
+          RESTORE_SO2: ${{ needs.fetch-so2.outputs.restore_outcome }}
+          RESTORE_CLOUD: ${{ needs.fetch-cloud.outputs.restore_outcome }}
+          RESTORE_SNET: ${{ needs.fetch-snet.outputs.restore_outcome }}
+          RESTORE_LIGHT: ${{ needs.light.outputs.restore_outcome }}
+          RESTORED_MODIS: ${{ needs.fetch-modis.outputs.restore_restored }}
+          RESTORED_SO2: ${{ needs.fetch-so2.outputs.restore_restored }}
+          RESTORED_CLOUD: ${{ needs.fetch-cloud.outputs.restore_restored }}
+          RESTORED_SNET: ${{ needs.fetch-snet.outputs.restore_restored }}
+          RESTORED_LIGHT: ${{ needs.light.outputs.restore_restored }}
         run: |
           if [ -z "$DISCORD_WEBHOOK_URL" ]; then exit 0; fi
           # When the merge step failed (e.g. base missing under --require-base),
@@ -1645,11 +1950,18 @@ jobs:
               'fetch-cloud: ' + os.environ.get('FETCH_CLOUD_RESULT', 'unknown') + '\n'
               'fetch-snet:  ' + os.environ.get('FETCH_SNET_RESULT', 'unknown') + '\n'
               'light:       ' + os.environ.get('LIGHT_RESULT', 'unknown') + '\n'
-              'merge:       ' + os.environ.get('MERGE_OUTCOME', 'unknown') + '\n'
+              'merge:       ' + os.environ.get('MERGE_OUTCOME', 'unknown') + '\n\n'
+              'restore modis: ' + os.environ.get('RESTORE_MODIS', '?') + ' (' + os.environ.get('RESTORED_MODIS', '?') + ')\n'
+              'restore so2:   ' + os.environ.get('RESTORE_SO2', '?') + ' (' + os.environ.get('RESTORED_SO2', '?') + ')\n'
+              'restore cloud: ' + os.environ.get('RESTORE_CLOUD', '?') + ' (' + os.environ.get('RESTORED_CLOUD', '?') + ')\n'
+              'restore snet:  ' + os.environ.get('RESTORE_SNET', '?') + ' (' + os.environ.get('RESTORED_SNET', '?') + ')\n'
+              'restore light: ' + os.environ.get('RESTORE_LIGHT', '?') + ' (' + os.environ.get('RESTORED_LIGHT', '?') + ')\n'
               '\nNo merged DB to report coverage from.'
           )
+          attempt = '${{ github.run_attempt }}'
+          rerun_suffix = f' [rerun #{attempt}]' if attempt != '1' else ''
           payload = json.dumps({'embeds': [{
-              'title': '🔴 Backfill #${{ github.run_number }} -- merge skipped/failed',
+              'title': f'🔴 Backfill #${{ github.run_number }}{rerun_suffix} -- merge skipped/failed',
               'color': 15158332,
               'description': body[:4000],
               'footer': {'text': run_url},
@@ -1753,6 +2065,11 @@ jobs:
               'DART': os.environ.get('FETCH_DART', 'skipped'),
               'IOC sea level': os.environ.get('FETCH_IOC_SEALEVEL', 'skipped'),
               'BQ upload': os.environ.get('BQ_UPLOAD', 'skipped'),
+              'Restore modis': os.environ.get('RESTORE_MODIS', 'skipped'),
+              'Restore so2': os.environ.get('RESTORE_SO2', 'skipped'),
+              'Restore cloud': os.environ.get('RESTORE_CLOUD', 'skipped'),
+              'Restore snet': os.environ.get('RESTORE_SNET', 'skipped'),
+              'Restore light': os.environ.get('RESTORE_LIGHT', 'skipped'),
           }
           failed_steps = [k for k, v in step_results.items() if v == 'failure']
           if failed_steps:
@@ -1764,12 +2081,14 @@ jobs:
           if all_95:
               report += '\n\n🎉 ALL ≥95%! Backfill nearly complete'
 
+          attempt = '${{ github.run_attempt }}'
+          rerun_suffix = f' [rerun #{attempt}]' if attempt != '1' else ''
           if alerts or failed_steps:
               color = 15158332
-              title = '🔴 Backfill #${{ github.run_number }} -- issues detected'
+              title = f'🔴 Backfill #${{ github.run_number }}{rerun_suffix} -- issues detected'
           elif all_95:
               color = 3066993
-              title = '🎉 Backfill #${{ github.run_number }} -- ≥95% coverage!'
+              title = f'🎉 Backfill #${{ github.run_number }}{rerun_suffix} -- ≥95% coverage!'
           else:
               import sys
               sys.exit(0)
@@ -1786,9 +2105,54 @@ jobs:
           urllib.request.urlopen(req)
           " 2>/dev/null || echo "Discord notification failed (non-fatal)"
 
+      # Auto-rerun failed fetch jobs at most ONCE (run_attempt==1 guard prevents
+      # infinite loops). Only for scheduled runs -- manual dispatch stays manual.
+      # Does not re-run on cancellations (concurrency-cancelled runs shouldn't
+      # auto-revive; they'll be covered by the next schedule tick).
+      - name: Auto-rerun failed fetch jobs (max 1 attempt)
+        if: >-
+          always()
+          && github.event_name == 'schedule'
+          && github.run_attempt == 1
+          && (
+            needs.fetch-modis.result == 'failure'
+            || needs.fetch-so2.result == 'failure'
+            || needs.fetch-cloud.result == 'failure'
+            || needs.fetch-snet.result == 'failure'
+            || needs.light.result == 'failure'
+          )
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash {0}
+        run: |
+          set +e
+          echo "Auto-rerunning failed fetch jobs (run_id=${{ github.run_id }}, attempt=${{ github.run_attempt }})"
+          echo "  fetch-modis result: ${{ needs.fetch-modis.result }}"
+          echo "  fetch-so2 result:   ${{ needs.fetch-so2.result }}"
+          echo "  fetch-cloud result: ${{ needs.fetch-cloud.result }}"
+          echo "  fetch-snet result:  ${{ needs.fetch-snet.result }}"
+          echo "  light result:       ${{ needs.light.result }}"
+          OUT=$(timeout 30 gh api -X POST \
+            "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/rerun-failed-jobs" \
+            2>&1)
+          rc=$?
+          echo "API response: ${OUT}"
+          if [ $rc -eq 0 ]; then
+            echo "Rerun dispatched successfully"
+          elif [ $rc -eq 124 ]; then
+            echo "::warning::Auto-rerun API call TIMEOUT (rc=124, 30s exceeded)"
+          else
+            echo "::warning::Auto-rerun API call failed (rc=${rc})"
+          fi
+
+      # Skip issue creation on schedule run_attempt == 1 because auto-rerun
+      # will kick in. Only create an issue if (a) manual dispatch, or
+      # (b) schedule but already on attempt >= 2 (rerun didn't fix it).
       - name: Create issue on failure
         if: >-
-          always() && (
+          always()
+          && !(github.event_name == 'schedule' && github.run_attempt == 1)
+          && (
             needs.light.outputs.fetch_earthquakes == 'failure' ||
             needs.light.outputs.fetch_tec_event == 'failure' ||
             needs.light.outputs.fetch_tec_random == 'failure' ||
