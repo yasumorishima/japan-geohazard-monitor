@@ -230,7 +230,7 @@ jobs:
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
               log "  copied (${DB_SIZE}) -- checking integrity"
-              timeout 30 python3 scripts/check_db_integrity.py data/geohazard.db
+              python3 scripts/check_db_integrity.py data/geohazard.db
               ic_rc=$?
               if [ $ic_rc -eq 0 ]; then
                 RESTORED="${ARTIFACT_NAME}"
@@ -239,7 +239,7 @@ jobs:
                 break
               else
                 log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
-                timeout 120 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
+                python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
                 sv_rc=$?
                 if [ $sv_rc -eq 0 ] && [ -f /tmp/salvaged.db ]; then
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
@@ -463,7 +463,7 @@ jobs:
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
               log "  copied (${DB_SIZE}) -- checking integrity"
-              timeout 30 python3 scripts/check_db_integrity.py data/geohazard.db
+              python3 scripts/check_db_integrity.py data/geohazard.db
               ic_rc=$?
               if [ $ic_rc -eq 0 ]; then
                 RESTORED="${ARTIFACT_NAME}"
@@ -472,7 +472,7 @@ jobs:
                 break
               else
                 log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
-                timeout 120 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
+                python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
                 sv_rc=$?
                 if [ $sv_rc -eq 0 ] && [ -f /tmp/salvaged.db ]; then
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
@@ -714,7 +714,7 @@ jobs:
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
               log "  copied (${DB_SIZE}) -- checking integrity"
-              timeout 30 python3 scripts/check_db_integrity.py data/geohazard.db
+              python3 scripts/check_db_integrity.py data/geohazard.db
               ic_rc=$?
               if [ $ic_rc -eq 0 ]; then
                 RESTORED="${ARTIFACT_NAME}"
@@ -723,7 +723,7 @@ jobs:
                 break
               else
                 log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
-                timeout 120 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
+                python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
                 sv_rc=$?
                 if [ $sv_rc -eq 0 ] && [ -f /tmp/salvaged.db ]; then
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
@@ -994,7 +994,7 @@ jobs:
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
               log "  copied (${DB_SIZE}) -- checking integrity"
-              timeout 30 python3 scripts/check_db_integrity.py data/geohazard.db
+              python3 scripts/check_db_integrity.py data/geohazard.db
               ic_rc=$?
               if [ $ic_rc -eq 0 ]; then
                 RESTORED="${ARTIFACT_NAME}"
@@ -1003,7 +1003,7 @@ jobs:
                 break
               else
                 log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
-                timeout 120 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
+                python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
                 sv_rc=$?
                 if [ $sv_rc -eq 0 ] && [ -f /tmp/salvaged.db ]; then
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
@@ -1292,7 +1292,7 @@ jobs:
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
               log "  copied (${DB_SIZE}) -- checking integrity"
-              timeout 30 python3 scripts/check_db_integrity.py data/geohazard.db
+              python3 scripts/check_db_integrity.py data/geohazard.db
               ic_rc=$?
               if [ $ic_rc -eq 0 ]; then
                 RESTORED="${ARTIFACT_NAME}"
@@ -1301,7 +1301,7 @@ jobs:
                 break
               else
                 log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
-                timeout 120 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
+                python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
                 sv_rc=$?
                 if [ $sv_rc -eq 0 ] && [ -f /tmp/salvaged.db ]; then
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
