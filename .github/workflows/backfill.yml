@@ -213,7 +213,7 @@ jobs:
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
               log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              timeout 60 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+              timeout 180 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
                 --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
               dl_rc=$?
               if [ $dl_rc -ne 0 ]; then
@@ -446,7 +446,7 @@ jobs:
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
               log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              timeout 60 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+              timeout 180 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
                 --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
               dl_rc=$?
               if [ $dl_rc -ne 0 ]; then
@@ -697,7 +697,7 @@ jobs:
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
               log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              timeout 60 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+              timeout 180 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
                 --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
               dl_rc=$?
               if [ $dl_rc -ne 0 ]; then
@@ -977,7 +977,7 @@ jobs:
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
               log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              timeout 60 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+              timeout 180 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
                 --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
               dl_rc=$?
               if [ $dl_rc -ne 0 ]; then
@@ -1275,7 +1275,7 @@ jobs:
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
               log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              timeout 60 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+              timeout 180 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
                 --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
               dl_rc=$?
               if [ $dl_rc -ne 0 ]; then
