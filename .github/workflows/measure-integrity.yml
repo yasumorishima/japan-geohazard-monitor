@@ -1,0 +1,201 @@
+name: Measure Integrity Check Performance
+
+on:
+  workflow_dispatch:
+    inputs:
+      memo:
+        description: 'Why this benchmark run'
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: measure-integrity
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install sqlite3 + bc
+        run: sudo apt-get update && sudo apt-get install -y sqlite3 bc
+
+      - name: Download latest backfill-checkpoint artifact (timed)
+        id: download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          mkdir -p artifact
+          PREV_RUN=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+            --jq '[.artifacts[] | select(.name | startswith("backfill-checkpoint-")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0].workflow_run.id')
+          if [ -z "$PREV_RUN" ] || [ "$PREV_RUN" = "null" ]; then
+            echo "::error::No non-expired backfill-checkpoint-* artifact found in last 100 artifacts"
+            exit 1
+          fi
+          ARTIFACT_NAME="backfill-checkpoint-${PREV_RUN}"
+          echo "artifact=$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
+          echo "prev_run=$PREV_RUN" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Download"
+            echo "- memo: ${{ inputs.memo }}"
+            echo "- artifact: $ARTIFACT_NAME"
+            echo "- runner: $(uname -a)"
+            echo "- started at: $(date -u +%H:%M:%S)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          t0=$(date +%s.%N)
+          gh run download "$PREV_RUN" --repo "${{ github.repository }}" --name "$ARTIFACT_NAME" --dir artifact/
+          t1=$(date +%s.%N)
+          dl=$(awk -v a="$t1" -v b="$t0" 'BEGIN{printf "%.2f", a-b}')
+          echo "- download elapsed: ${dl}s" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Locate DB and prepare
+        id: locate
+        run: |
+          set -e
+          DB=$(find artifact -name "geohazard.db" -type f | head -1)
+          if [ -z "$DB" ]; then
+            DB=$(find artifact -name "*.db" -type f | head -1)
+          fi
+          if [ -z "$DB" ]; then
+            echo "::error::No .db file found in artifact"
+            find artifact -type f | head -30
+            exit 1
+          fi
+          # Remove WAL/SHM to match backfill.yml Restore step behavior
+          rm -f "${DB}-wal" "${DB}-shm"
+          echo "db_path=$DB" >> "$GITHUB_OUTPUT"
+          SIZE_H=$(du -h "$DB" | cut -f1)
+          SIZE_B=$(stat -c%s "$DB")
+          {
+            echo ""
+            echo "### DB File"
+            echo "- path: $DB"
+            echo "- size: $SIZE_H ($SIZE_B bytes)"
+            echo "- WAL/SHM removed to match production"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Per-table row counts
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          DB: ${{ steps.locate.outputs.db_path }}
+        run: |
+          set +e
+          # Use trap to ensure code fence closes even on timeout kill
+          trap 'echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"; echo "- (trap fired, may have timed out)" >> "$GITHUB_STEP_SUMMARY"' EXIT
+          {
+            echo ""
+            echo "### Per-table COUNT(*)"
+            echo "- started at: $(date -u +%H:%M:%S)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          sqlite3 "$DB" "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name" | while IFS= read -r tbl; do
+            [ -z "$tbl" ] && continue
+            t0=$(date +%s.%N)
+            cnt=$(sqlite3 "$DB" "SELECT COUNT(*) FROM \"$tbl\"" 2>&1)
+            rc=$?
+            t1=$(date +%s.%N)
+            el=$(awk -v a="$t1" -v b="$t0" 'BEGIN{printf "%.2f", a-b}')
+            if [ "$rc" -eq 0 ]; then
+              printf "%-45s %15s rows  %7ss\n" "$tbl" "$cnt" "$el" >> "$GITHUB_STEP_SUMMARY"
+            else
+              printf "%-45s ERROR (%ss): %s\n" "$tbl" "$el" "$cnt" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+          trap - EXIT
+          {
+            echo '```'
+            echo "- completed at: $(date -u +%H:%M:%S)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: PRAGMA quick_check (CLI)
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          DB: ${{ steps.locate.outputs.db_path }}
+        run: |
+          set +e
+          {
+            echo ""
+            echo "### PRAGMA quick_check (sqlite3 CLI)"
+            echo "- started at: $(date -u +%H:%M:%S)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          t0=$(date +%s.%N)
+          sqlite3 "$DB" "PRAGMA quick_check" > /tmp/quick_check.out 2>&1
+          rc=$?
+          t1=$(date +%s.%N)
+          el=$(awk -v a="$t1" -v b="$t0" 'BEGIN{printf "%.2f", a-b}')
+          r=$(head -5 /tmp/quick_check.out)
+          {
+            echo "- elapsed: ${el}s"
+            echo "- rc: $rc"
+            echo "- result head: $r"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: PRAGMA integrity_check (CLI)
+        continue-on-error: true
+        timeout-minutes: 45
+        env:
+          DB: ${{ steps.locate.outputs.db_path }}
+        run: |
+          set +e
+          {
+            echo ""
+            echo "### PRAGMA integrity_check (sqlite3 CLI)"
+            echo "- started at: $(date -u +%H:%M:%S)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          t0=$(date +%s.%N)
+          sqlite3 "$DB" "PRAGMA integrity_check" > /tmp/integrity_check.out 2>&1
+          rc=$?
+          t1=$(date +%s.%N)
+          el=$(awk -v a="$t1" -v b="$t0" 'BEGIN{printf "%.2f", a-b}')
+          r=$(head -5 /tmp/integrity_check.out)
+          {
+            echo "- elapsed: ${el}s"
+            echo "- rc: $rc"
+            echo "- result head: $r"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: check_db_integrity.py (production script)
+        continue-on-error: true
+        timeout-minutes: 45
+        env:
+          DB: ${{ steps.locate.outputs.db_path }}
+        run: |
+          set +e
+          {
+            echo ""
+            echo "### scripts/check_db_integrity.py (full production run)"
+            echo "- started at: $(date -u +%H:%M:%S)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          t0=$(date +%s.%N)
+          python3 scripts/check_db_integrity.py "$DB" > /tmp/integrity.log 2>&1
+          rc=$?
+          t1=$(date +%s.%N)
+          el=$(awk -v a="$t1" -v b="$t0" 'BEGIN{printf "%.2f", a-b}')
+          {
+            echo "- elapsed: ${el}s"
+            echo "- rc: $rc"
+            echo '```'
+            head -60 /tmp/integrity.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Finalize
+        if: always()
+        run: |
+          {
+            echo ""
+            echo "### Run complete"
+            echo "- ended at: $(date -u +%H:%M:%S)"
+          } >> "$GITHUB_STEP_SUMMARY"
