@@ -1,0 +1,141 @@
+name: Weekly Integrity Audit
+
+on:
+  schedule:
+    - cron: '0 15 * * 0'  # Every Sunday 15:00 UTC = Monday 00:00 JST
+  workflow_dispatch:
+    inputs:
+      memo:
+        description: 'Why this manual audit run'
+        required: false
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: weekly-integrity-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install sqlite3
+        run: sudo apt-get update && sudo apt-get install -y sqlite3
+
+      - name: Download latest backfill-checkpoint artifact
+        id: download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          mkdir -p artifact
+          # Try both prefixes to match backfill.yml Restore step behavior
+          PREFIX=""
+          PREV_RUN=""
+          for P in "backfill-checkpoint-" "database-checkpoint-"; do
+            R=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+              --jq "[.artifacts[] | select(.name | startswith(\"${P}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0].workflow_run.id")
+            if [ -n "$R" ] && [ "$R" != "null" ]; then
+              PREFIX="$P"
+              PREV_RUN="$R"
+              break
+            fi
+          done
+          if [ -z "$PREV_RUN" ]; then
+            echo "::error::No non-expired checkpoint artifact found (tried backfill-checkpoint-*, database-checkpoint-*)"
+            exit 1
+          fi
+          ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
+          echo "artifact=$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
+          echo "prev_run=$PREV_RUN" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Weekly Integrity Audit"
+            echo "- artifact: $ARTIFACT_NAME"
+            echo "- started at: $(date -u +%Y-%m-%d\ %H:%M:%S) UTC"
+          } >> "$GITHUB_STEP_SUMMARY"
+          gh run download "$PREV_RUN" --repo "${{ github.repository }}" --name "$ARTIFACT_NAME" --dir artifact/
+
+      - name: Locate DB
+        id: locate
+        run: |
+          set -e
+          DB=$(find artifact -name "geohazard.db" -type f | head -1)
+          if [ -z "$DB" ]; then
+            DB=$(find artifact -name "*.db" -type f | head -1)
+          fi
+          if [ -z "$DB" ]; then
+            echo "::error::No .db file found in artifact"
+            exit 1
+          fi
+          rm -f "${DB}-wal" "${DB}-shm"
+          echo "db_path=$DB" >> "$GITHUB_OUTPUT"
+          SIZE_H=$(du -h "$DB" | cut -f1)
+          echo "- size: $SIZE_H" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Full integrity check with per-table counts
+        id: check
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          DB: ${{ steps.locate.outputs.db_path }}
+        run: |
+          set +e
+          {
+            echo ""
+            echo "### scripts/check_db_integrity.py --mode=full"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          t0=$(date +%s.%N)
+          python3 scripts/check_db_integrity.py "$DB" --mode=full > /tmp/audit.log 2>&1
+          rc=$?
+          t1=$(date +%s.%N)
+          el=$(awk -v a="$t1" -v b="$t0" 'BEGIN{printf "%.2f", a-b}')
+          cat /tmp/audit.log >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo '```'
+            echo "- elapsed: ${el}s"
+            echo "- rc: $rc"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          echo "elapsed=$el" >> "$GITHUB_OUTPUT"
+
+      - name: Create issue on corruption
+        if: steps.check.outputs.rc != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RC: ${{ steps.check.outputs.rc }}
+          ELAPSED: ${{ steps.check.outputs.elapsed }}
+          ARTIFACT: ${{ steps.download.outputs.artifact }}
+        run: |
+          set -e
+          TITLE="[integrity-audit] DB corruption detected ($(date -u +%Y-%m-%d))"
+          BODY=$(cat <<EOF
+          Weekly integrity audit detected an issue.
+
+          - artifact: $ARTIFACT
+          - rc: $RC
+          - elapsed: ${ELAPSED}s
+          - run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          Check the workflow run summary for full integrity_check output.
+          EOF
+          )
+          gh issue create --repo "${{ github.repository }}" \
+            --title "$TITLE" \
+            --body "$BODY" \
+            --label "integrity-audit"
+
+      - name: Finalize
+        if: always()
+        run: |
+          echo "- completed at: $(date -u +%Y-%m-%d\ %H:%M:%S) UTC" >> "$GITHUB_STEP_SUMMARY"

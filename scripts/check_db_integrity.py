@@ -1,15 +1,36 @@
-"""Run PRAGMA integrity_check on a SQLite DB and print per-table row counts.
+"""Run integrity check on a SQLite DB.
 
-Exit 0 if integrity_check returns 'ok' AND all tables are readable.
-Exit 1 on any corruption or unreadable table.
-Used by backfill.yml restore/init steps.
+Modes:
+    full  (default): PRAGMA integrity_check + per-table COUNT(*). ~107s on 9.9GB.
+    quick:           PRAGMA quick_check only. ~15s on 9.9GB. Used by Restore step.
+
+Exit 0 on ok, Exit 1 on any corruption or unreadable table.
+Used by backfill.yml restore/init/snapshot steps.
 """
 
+import argparse
 import sqlite3
 import sys
 
 
-def main(path: str) -> int:
+def check_quick(path: str) -> int:
+    try:
+        conn = sqlite3.connect(path)
+    except Exception as e:
+        print(f"  DB open failed: {e}")
+        return 1
+    try:
+        r = conn.execute("PRAGMA quick_check").fetchone()[0]
+        if r != "ok":
+            print(f"  DB quick_check FAILED: {r[:200]}")
+            return 1
+        print("  DB quick_check OK")
+        return 0
+    finally:
+        conn.close()
+
+
+def check_full(path: str) -> int:
     try:
         conn = sqlite3.connect(path)
     except Exception as e:
@@ -35,6 +56,20 @@ def main(path: str) -> int:
         conn.close()
 
 
+def main() -> int:
+    p = argparse.ArgumentParser(description="SQLite DB integrity check")
+    p.add_argument("path", nargs="?", default="data/geohazard.db")
+    p.add_argument(
+        "--mode",
+        choices=["full", "quick"],
+        default="full",
+        help="quick=PRAGMA quick_check only (~15s), full=integrity_check + COUNT(*) (~107s)",
+    )
+    args = p.parse_args()
+    if args.mode == "quick":
+        return check_quick(args.path)
+    return check_full(args.path)
+
+
 if __name__ == "__main__":
-    path = sys.argv[1] if len(sys.argv) > 1 else "data/geohazard.db"
-    sys.exit(main(path))
+    sys.exit(main())
