@@ -146,22 +146,32 @@ def _apply_overlay(
                     f'SELECT COUNT(*) FROM overlay."{name}"'
                 ).fetchone()[0]
 
-                # Refuse to wipe base rows with an empty overlay. Observed
-                # regression: fetch job's step failed (continue-on-error),
-                # the fetcher wrote 0 rows for its table, overlay DB had 0
-                # rows for that table, DELETE-then-INSERT left base at 0
-                # and that 0-row state got snapshotted into the next
-                # checkpoint, permanently losing accumulated rows (e.g.
-                # cloud_fraction 523K -> 0 on 2026-04-18 before this guard
-                # was added). If overlay is empty, keep base as-is.
-                if overlay_count == 0 and before > 0:
+                # Refuse to wipe base rows when overlay has fewer rows than
+                # base. All fetchers are append-only: each run restores the
+                # prior checkpoint, then INSERT-OR-IGNOREs new rows. So a
+                # successful run yields overlay_count >= before. Shrink
+                # means restore failed (fetcher started from empty DB and
+                # only wrote new fetches) or init_db reset the table.
+                # Observed regressions:
+                #   - cloud_fraction 523K -> 0 on 2026-04-18 (overlay empty)
+                #   - modis_lst 488 -> 338 -> ... shrink chain on 2026-04-25
+                # Keep base in either case; rely on the next successful run
+                # to grow past base.
+                if overlay_count < before:
+                    deficit = before - overlay_count
+                    if overlay_count == 0:
+                        why = "overlay empty"
+                    else:
+                        why = f"overlay shrunk by {deficit:,} rows"
                     print(
-                        f"  {name}: overlay empty (0 rows) but base has "
-                        f"{before:,} rows -- KEEPING base "
-                        f"(guard against wipe-and-reset from failed fetch)"
+                        f"  {name}: overlay has {overlay_count:,} rows but "
+                        f"base has {before:,} rows ({why}) -- KEEPING base "
+                        f"(append-only fetchers should never produce a "
+                        f"smaller overlay; likely cause: checkpoint restore "
+                        f"failure or fetcher init_db reset)"
                     )
                     skipped.append(
-                        (name, f"overlay empty; base preserved ({before:,} rows)")
+                        (name, f"{why}; base preserved ({before:,} rows)")
                     )
                     continue
 
