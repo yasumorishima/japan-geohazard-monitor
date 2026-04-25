@@ -349,19 +349,6 @@ TABLES = {
             {"name": "received_at", "type": "STRING"},
         ],
     },
-    "snet_pressure": {
-        "query": "SELECT station_id, observed_at, pressure_mean_hpa, pressure_std_hpa, latitude, longitude, n_samples, received_at FROM snet_pressure",
-        "schema": [
-            {"name": "station_id", "type": "STRING"},
-            {"name": "observed_at", "type": "STRING"},
-            {"name": "pressure_mean_hpa", "type": "FLOAT"},
-            {"name": "pressure_std_hpa", "type": "FLOAT"},
-            {"name": "latitude", "type": "FLOAT"},
-            {"name": "longitude", "type": "FLOAT"},
-            {"name": "n_samples", "type": "INTEGER"},
-            {"name": "received_at", "type": "STRING"},
-        ],
-    },
     "snet_waveform": {
         "query": "SELECT station_id, date_str, segment_hour, sensor_type, rms_z, rms_h, hv_ratio, lf_power, hf_power, spectral_slope, vlf_power, vlf_hv_ratio, n_samples, latitude, longitude, cable_segment, received_at FROM snet_waveform",
         "schema": [
