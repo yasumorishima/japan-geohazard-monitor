@@ -51,7 +51,7 @@ focal_mechanisms 3,498   rows 2,222 days   39.8%                    ✅
 | soil_moisture fetch step missing | ✅ RESOLVED — fetch step was never added to backfill.yml. Added fetch_soil_moisture (CPC monthly + SMOPS daily, no auth). |
 | lightning daily data | ⬜ WONTFIX — no free daily source exists (GLD360/ENTLN=paid, Blitzortung=restricted, Bonn=EU only). Monthly coverage via WWLLN+LIS/OTD (Phase 20) is sufficient. Features auto-excluded. |
 | satellite_em (CSES) | open — Swarm EFI/MAG via ESA (no registration) as interim |
-| snet_pressure | open — HinetPy rejects every date; S-net station catalog needs verification |
+| snet_pressure | deprecated 2026-04-25 — HinetPy code 0120A is acceleration, not pressure. HinetPy exposes no S-net BPR (bottom pressure) network code. Fetcher stubbed to no-op; table removed from coverage report and BQ upload list. Source data accessible only via NIED direct data request. |
 
 ## validate_data.py / diagnose_data_gaps.py known bugs
 

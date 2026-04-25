@@ -59,7 +59,6 @@ on:
           - kp
           - cmt
           - snet_waveform
-          - snet_pressure
           - gnss_tec
           - modis_lst
           - ulf
@@ -881,13 +880,11 @@ jobs:
       || inputs.target == 'all'
       || inputs.target == ''
       || inputs.target == 'snet_waveform'
-      || inputs.target == 'snet_pressure'
     runs-on: ubuntu-latest
     timeout-minutes: 240
     outputs:
       install_win32tools: ${{ steps.install_win32tools.outcome }}
       fetch_snet_waveform: ${{ steps.fetch_snet_waveform.outcome }}
-      fetch_snet_pressure: ${{ steps.fetch_snet_pressure.outcome }}
       snapshot_outcome: ${{ steps.snapshot.outcome }}
       restore_outcome: ${{ steps.restore.outcome }}
       restore_restored: ${{ steps.restore.outputs.restored }}
@@ -1059,7 +1056,7 @@ jobs:
 
       - name: Install win32tools for S-net (catwin32 + win2sac_32)
         id: install_win32tools
-        if: inputs.target == 'all' || inputs.target == 'snet_waveform' || inputs.target == 'snet_pressure' || inputs.target == ''
+        if: inputs.target == 'all' || inputs.target == 'snet_waveform' || inputs.target == ''
         continue-on-error: true
         timeout-minutes: 5
         env:
@@ -1095,19 +1092,6 @@ jobs:
             mkdir -p results/midrun
             cp results/snet_coverage.json results/midrun/
           fi
-
-      - name: Fetch S-net seafloor pressure data (HinetPy)
-        id: fetch_snet_pressure
-        if: inputs.target == 'all' || inputs.target == 'snet_pressure' || inputs.target == ''
-        continue-on-error: true
-        timeout-minutes: 30
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-          HINET_USER: ${{ secrets.HINET_USER }}
-          HINET_PASS: ${{ secrets.HINET_PASS }}
-        run: |
-          pip install HinetPy 2>/dev/null || true
-          python3 scripts/fetch_snet_pressure.py || echo "S-net pressure fetch failed (non-fatal)"
 
       - name: Snapshot DB
         id: snapshot
@@ -1778,7 +1762,7 @@ jobs:
             --overlay /tmp/modis/geohazard.db:modis_lst \
             --overlay /tmp/so2/geohazard.db:so2_column \
             --overlay /tmp/cloud/geohazard.db:cloud_fraction \
-            --overlay /tmp/snet/geohazard.db:snet_waveform,snet_pressure \
+            --overlay /tmp/snet/geohazard.db:snet_waveform \
             --dst data/geohazard.db \
             --require-base
 
@@ -1830,7 +1814,7 @@ jobs:
               'so2_column', 'cloud_fraction', 'nightlight',
               'goes_xray', 'goes_proton', 'tidal_stress', 'particle_flux',
               'dart_pressure', 'ioc_sea_level', 'tide_gauge', 'ocean_color',
-              'soil_moisture', 'snet_pressure', 'snet_waveform',
+              'soil_moisture', 'snet_waveform',
           ]
           for t in tables:
               try:
@@ -1892,7 +1876,6 @@ jobs:
           FETCH_KP: ${{ needs.light.outputs.fetch_kp }}
           FETCH_CMT: ${{ needs.light.outputs.fetch_cmt }}
           FETCH_SNET_WAVEFORM: ${{ needs.fetch-snet.outputs.fetch_snet_waveform }}
-          FETCH_SNET_PRESSURE: ${{ needs.fetch-snet.outputs.fetch_snet_pressure }}
           FETCH_GNSS_TEC: ${{ needs.light.outputs.fetch_gnss_tec }}
           FETCH_MODIS_LST: ${{ needs.fetch-modis.outputs.fetch_modis_lst }}
           FETCH_ULF: ${{ needs.light.outputs.fetch_ulf }}
@@ -2009,7 +1992,6 @@ jobs:
               'tide_gauge': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM tide_gauge WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
               'ocean_color': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM ocean_color WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
               'soil_moisture': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM soil_moisture WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
-              'snet_pressure': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM snet_pressure WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
               'snet_waveform': 'SELECT COUNT(DISTINCT date_str) FROM snet_waveform WHERE date_str >= \"2011-01-01\"',
           }
 
@@ -2196,7 +2178,6 @@ jobs:
           [ "${{ needs.light.outputs.fetch_kp }}" = "failure" ] && FAILED="$FAILED kp"
           [ "${{ needs.light.outputs.fetch_cmt }}" = "failure" ] && FAILED="$FAILED cmt"
           [ "${{ needs.fetch-snet.outputs.fetch_snet_waveform }}" = "failure" ] && FAILED="$FAILED snet_waveform"
-          # snet_pressure: win32tools not available on Linux -- known permanent failure, excluded from alerts
           [ "${{ needs.light.outputs.fetch_gnss_tec }}" = "failure" ] && FAILED="$FAILED gnss_tec"
           [ "${{ needs.fetch-modis.outputs.fetch_modis_lst }}" = "failure" ] && FAILED="$FAILED modis_lst"
           [ "${{ needs.light.outputs.fetch_ulf }}" = "failure" ] && FAILED="$FAILED ulf"
@@ -2263,7 +2244,6 @@ jobs:
               'tide_gauge': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM tide_gauge WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
               'ocean_color': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM ocean_color WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
               'soil_moisture': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM soil_moisture WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
-              'snet_pressure': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM snet_pressure WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
               'snet_waveform': 'SELECT COUNT(DISTINCT date_str) FROM snet_waveform WHERE date_str >= \"2011-01-01\"',
           }
           for t, sql in tables.items():

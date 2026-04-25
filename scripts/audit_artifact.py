@@ -63,7 +63,6 @@ EXPECTED = {
     "particle_flux":     "observed_at",
     "dart_pressure":     "observed_at",
     "ioc_sea_level":     "observed_at",
-    "snet_pressure":     "observed_at",
 }
 
 

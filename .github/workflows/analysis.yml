@@ -196,8 +196,7 @@ jobs:
           HINET_PASS: ${{ secrets.HINET_PASS }}
         run: |
           pip install HinetPy 2>/dev/null || true
-          python3 scripts/fetch_snet_pressure.py || echo "S-net pressure fetch failed (non-fatal)"
-
+          
       - name: Fetch GNSS-TEC high-resolution data (Nagoya University ISEE)
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
