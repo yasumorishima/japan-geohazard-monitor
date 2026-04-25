@@ -325,16 +325,22 @@ def test_empty_overlay_preserves_base(tmp: str) -> None:
     print("PASS: empty overlay preserves base accumulated rows (regression guard)")
 
 
-def test_nonempty_overlay_still_replaces(tmp: str) -> None:
-    """Verify the empty-overlay guard doesn't block normal overlay
-    application when overlay has >=1 row.
+def test_grown_overlay_replaces_base(tmp: str) -> None:
+    """Verify the shrink-protection guard does not block legitimate growth.
+
+    Append-only fetchers grow the overlay by restoring base rows and
+    INSERT-OR-IGNOREing new fetches. overlay_count >= before is the
+    normal happy path and must apply.
     """
     base = os.path.join(tmp, "base.db")
     overlay = os.path.join(tmp, "ov.db")
     dst = os.path.join(tmp, "dst.db")
 
-    make_db(base, {"cloud_fraction": [(1, "old"), (2, "old2")]})
-    make_db(overlay, {"cloud_fraction": [(1, "new")]})
+    make_db(base, {"cloud_fraction": [(1, "row-1"), (2, "row-2")]})
+    make_db(
+        overlay,
+        {"cloud_fraction": [(1, "row-1"), (2, "row-2"), (3, "row-3-new")]},
+    )
 
     rc, out, _ = run_merge(
         [
@@ -345,15 +351,66 @@ def test_nonempty_overlay_still_replaces(tmp: str) -> None:
         ]
     )
     assert rc == 0, out
-    # 1 fresh row replaces base's 2 rows (even though fewer, overlay is the
-    # authority when it has >=1 row).
-    assert fetch_vals(dst, "cloud_fraction") == ["new"], (
-        f"overlay with 1 row should replace base; got {fetch_vals(dst, 'cloud_fraction')}"
-    )
+    assert fetch_vals(dst, "cloud_fraction") == [
+        "row-1",
+        "row-2",
+        "row-3-new",
+    ], "grown overlay should apply"
     assert "KEEPING base" not in out, (
-        "guard should NOT trigger when overlay has rows"
+        "guard should NOT trigger when overlay grows"
     )
-    print("PASS: non-empty overlay replaces base normally")
+    print("PASS: grown overlay applies normally")
+
+
+def test_shrunk_overlay_preserves_base(tmp: str) -> None:
+    """Regression guard: if overlay has fewer rows than base, the merge
+    must KEEP base. Caused modis_lst 488 -> 338 -> ... shrink chain on
+    2026-04-25 when fetch_modis_lst.py started from a failed checkpoint
+    restore (effectively empty DB) and wrote only newly fetched rows
+    into the overlay. Append-only fetchers must produce
+    overlay_count >= base_count; a shrink signals restore/init failure.
+    """
+    base = os.path.join(tmp, "base.db")
+    overlay = os.path.join(tmp, "ov.db")
+    dst = os.path.join(tmp, "dst.db")
+
+    make_db(
+        base,
+        {
+            "modis_lst": [(i, f"row-{i}") for i in range(1, 11)],
+            "earthquakes": [(1, "a")],
+        },
+    )
+    make_db(
+        overlay,
+        {
+            "modis_lst": [
+                (100, "fresh-1"),
+                (101, "fresh-2"),
+                (102, "fresh-3"),
+            ]
+        },
+    )
+
+    rc, out, _ = run_merge(
+        [
+            "--base", base,
+            "--overlay", f"{overlay}:modis_lst",
+            "--dst", dst,
+            "--require-base",
+        ]
+    )
+    assert rc == 0, out
+    assert count_rows(dst, "modis_lst") == 10, (
+        "base rows wiped by shrunk overlay"
+    )
+    assert "KEEPING base" in out, (
+        "expected shrink-protection log message"
+    )
+    assert "shrunk" in out, (
+        "expected shrunk wording in skip reason"
+    )
+    print("PASS: shrunk overlay preserves base accumulated rows (regression guard)")
 
 
 def test_all_overlays_missing(tmp: str) -> None:
@@ -394,7 +451,8 @@ def main() -> int:
             test_overlay_creates_table_new_in_base,
             test_injection_name_rejected,
             test_empty_overlay_preserves_base,
-            test_nonempty_overlay_still_replaces,
+            test_grown_overlay_replaces_base,
+            test_shrunk_overlay_preserves_base,
             test_all_overlays_missing,
         ]
         for t in tests:
@@ -411,7 +469,7 @@ def main() -> int:
             finally:
                 shutil.rmtree(sub, ignore_errors=True)
     print()
-    print("ALL 10 SMOKE TESTS PASSED")
+    print("ALL 11 SMOKE TESTS PASSED")
     return 0
 
 
