@@ -42,7 +42,6 @@ EXPECTED_TABLES = {
     "modis_lst":         {"min_rows": 10,    "time_col": "observed_date", "critical": False, "expected_range": None},  # event-based
     "cosmic_ray":        {"min_rows": 100,   "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
     "gnss_tec":          {"min_rows": 10,    "time_col": "epoch",       "critical": False, "expected_range": FULL_RANGE},
-    "lightning":         {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": None},  # event-based
     "iss_lis_lightning": {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": (2017, 2023)},
     # Phase 9: INTERMAGNET, CSES, Movebank
     "geomag_hourly":     {"min_rows": 100,   "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
@@ -314,7 +313,6 @@ def _gap_reason(table: str) -> str:
         "so2_column": "Earthdata auth (OMI OPeNDAP)",
         "nightlight": "Earthdata auth (VIIRS LAADS)",
         "iss_lis_lightning": "Earthdata auth (GHRC DAAC)",
-        "lightning": "Blitzortung archive restricted",
         "insar_deformation": "LiCSAR: no Japan frames returned",
         "satellite_em": "CSES: registration required",
         "snet_waveform": "NIED: S-net waveform features (Phase 18, backfilling)",

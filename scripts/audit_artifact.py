@@ -43,7 +43,6 @@ EXPECTED = {
     # Default: observed_at
     "ulf_magnetic":      "observed_at",
     "cosmic_ray":        "observed_at",
-    "lightning":         "observed_at",
     "iss_lis_lightning": "observed_at",
     "geomag_hourly":     "observed_at",
     "satellite_em":      "observed_at",

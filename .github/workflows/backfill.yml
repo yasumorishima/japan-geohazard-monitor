@@ -63,7 +63,6 @@ on:
           - modis_lst
           - ulf
           - cosmic_ray
-          - lightning
           - iss_lis
           - wwlln_thunder_hour
           - lis_otd_monthly
@@ -1151,7 +1150,6 @@ jobs:
       fetch_gnss_tec: ${{ steps.fetch_gnss_tec.outcome }}
       fetch_ulf: ${{ steps.fetch_ulf.outcome }}
       fetch_cosmic_ray: ${{ steps.fetch_cosmic_ray.outcome }}
-      fetch_lightning: ${{ steps.fetch_lightning.outcome }}
       fetch_iss_lis: ${{ steps.fetch_iss_lis.outcome }}
       fetch_wwlln_thunder_hour: ${{ steps.fetch_wwlln_thunder_hour.outcome }}
       fetch_lis_otd_monthly: ${{ steps.fetch_lis_otd_monthly.outcome }}
@@ -1437,17 +1435,6 @@ jobs:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
           python3 scripts/fetch_nmdb_cosmicray.py || echo "NMDB fetch failed (non-fatal)"
-
-      - name: Fetch Blitzortung lightning data
-        id: fetch_lightning
-        if: inputs.target == 'all' || inputs.target == 'lightning' || inputs.target == ''
-        continue-on-error: true
-        timeout-minutes: 10
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-          LIGHTNING_MAX_DATES: "200"
-        run: |
-          python3 scripts/fetch_blitzortung.py || echo "Lightning fetch failed (non-fatal)"
 
       - name: Fetch ISS LIS lightning data (Earthdata auth, 2017-2023)
         id: fetch_iss_lis
@@ -1809,7 +1796,7 @@ jobs:
           tables = [
               'earthquakes', 'tec', 'geomag_kp', 'focal_mechanisms',
               'gnss_tec', 'modis_lst', 'ulf_magnetic', 'cosmic_ray',
-              'lightning', 'iss_lis_lightning', 'lightning_thunder_hour', 'lightning_lis_otd', 'geomag_hourly', 'satellite_em',
+              'iss_lis_lightning', 'lightning_thunder_hour', 'lightning_lis_otd', 'geomag_hourly', 'satellite_em',
               'olr', 'earth_rotation', 'solar_wind', 'gravity_mascon',
               'so2_column', 'cloud_fraction', 'nightlight',
               'goes_xray', 'goes_proton', 'tidal_stress', 'particle_flux',
@@ -1880,7 +1867,6 @@ jobs:
           FETCH_MODIS_LST: ${{ needs.fetch-modis.outputs.fetch_modis_lst }}
           FETCH_ULF: ${{ needs.light.outputs.fetch_ulf }}
           FETCH_COSMIC_RAY: ${{ needs.light.outputs.fetch_cosmic_ray }}
-          FETCH_LIGHTNING: ${{ needs.light.outputs.fetch_lightning }}
           FETCH_ISS_LIS: ${{ needs.light.outputs.fetch_iss_lis }}
           FETCH_WWLLN_TH: ${{ needs.light.outputs.fetch_wwlln_thunder_hour }}
           FETCH_LIS_OTD: ${{ needs.light.outputs.fetch_lis_otd_monthly }}
@@ -1970,7 +1956,6 @@ jobs:
               'modis_lst': 'SELECT COUNT(DISTINCT observed_date) FROM modis_lst WHERE observed_date >= \"2011-01-01\"',
               'ulf_magnetic': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM ulf_magnetic WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
               'cosmic_ray': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM cosmic_ray WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
-              'lightning': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM lightning WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
               'iss_lis_lightning': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM iss_lis_lightning WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
               'lightning_thunder_hour': 'SELECT COUNT(DISTINCT substr(observed_at,1,7)) * 30 FROM lightning_thunder_hour WHERE substr(observed_at,1,7) >= \"2011-01\"',
               'lightning_lis_otd': 'SELECT COUNT(DISTINCT substr(observed_at,1,7)) * 30 FROM lightning_lis_otd WHERE substr(observed_at,1,7) >= \"2011-01\"',
@@ -2025,7 +2010,6 @@ jobs:
               'MODIS LST': os.environ.get('FETCH_MODIS_LST', 'skipped'),
               'ULF': os.environ.get('FETCH_ULF', 'skipped'),
               'Cosmic ray': os.environ.get('FETCH_COSMIC_RAY', 'skipped'),
-              'Lightning': os.environ.get('FETCH_LIGHTNING', 'skipped'),
               'ISS LIS': os.environ.get('FETCH_ISS_LIS', 'skipped'),
               'WWLLN ThunderHour': os.environ.get('FETCH_WWLLN_TH', 'skipped'),
               'LIS/OTD Monthly': os.environ.get('FETCH_LIS_OTD', 'skipped'),
@@ -2182,7 +2166,6 @@ jobs:
           [ "${{ needs.fetch-modis.outputs.fetch_modis_lst }}" = "failure" ] && FAILED="$FAILED modis_lst"
           [ "${{ needs.light.outputs.fetch_ulf }}" = "failure" ] && FAILED="$FAILED ulf"
           [ "${{ needs.light.outputs.fetch_cosmic_ray }}" = "failure" ] && FAILED="$FAILED cosmic_ray"
-          # lightning (Blitzortung): archive access restricted -- known permanent failure, excluded from alerts
           [ "${{ needs.light.outputs.fetch_iss_lis }}" = "failure" ] && FAILED="$FAILED iss_lis"
           [ "${{ needs.light.outputs.fetch_wwlln_thunder_hour }}" = "failure" ] && FAILED="$FAILED wwlln_thunder_hour"
           [ "${{ needs.light.outputs.fetch_lis_otd_monthly }}" = "failure" ] && FAILED="$FAILED lis_otd_monthly"
@@ -2222,7 +2205,6 @@ jobs:
               'modis_lst': 'SELECT COUNT(DISTINCT observed_date) FROM modis_lst WHERE observed_date >= \"2011-01-01\"',
               'ulf_magnetic': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM ulf_magnetic WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
               'cosmic_ray': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM cosmic_ray WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
-              'lightning': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM lightning WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
               'iss_lis_lightning': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM iss_lis_lightning WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
               'lightning_thunder_hour': 'SELECT COUNT(DISTINCT substr(observed_at,1,7)) * 30 FROM lightning_thunder_hour WHERE substr(observed_at,1,7) >= \"2011-01\"',
               'lightning_lis_otd': 'SELECT COUNT(DISTINCT substr(observed_at,1,7)) * 30 FROM lightning_lis_otd WHERE substr(observed_at,1,7) >= \"2011-01\"',

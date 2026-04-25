@@ -164,17 +164,6 @@ TABLES = {
             {"name": "received_at", "type": "STRING"},
         ],
     },
-    "lightning": {
-        "query": "SELECT observed_at, cell_lat, cell_lon, stroke_count, mean_intensity, received_at FROM lightning",
-        "schema": [
-            {"name": "observed_at", "type": "STRING"},
-            {"name": "cell_lat", "type": "FLOAT"},
-            {"name": "cell_lon", "type": "FLOAT"},
-            {"name": "stroke_count", "type": "INTEGER"},
-            {"name": "mean_intensity", "type": "FLOAT"},
-            {"name": "received_at", "type": "STRING"},
-        ],
-    },
     "iss_lis_lightning": {
         "query": "SELECT observed_at, cell_lat, cell_lon, flash_count, mean_radiance, received_at FROM iss_lis_lightning",
         "schema": [
