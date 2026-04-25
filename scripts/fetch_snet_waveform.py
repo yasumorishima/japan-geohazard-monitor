@@ -84,6 +84,26 @@ MAX_BACKFILL_DAYS_PER_RUN = 5  # 5 days × 3 codes = 15 backfill requests (reduc
 QUOTA_COOLDOWN_SEC = 2         # Pause between requests to respect quota
 MAX_REQUESTS_PER_RUN = int(os.environ.get("SNET_MAX_REQUESTS", "120"))
 
+
+class HinetQuotaError(Exception):
+    """Raised when HinetPy reports daily quota exceeded.
+
+    Carries partial_results so callers can persist any records that were
+    successfully fetched in earlier segments before the quota hit.
+    """
+
+    def __init__(self, message: str, partial_results: list[dict] | None = None):
+        super().__init__(message)
+        self.partial_results = partial_results or []
+
+
+class HinetAuthError(Exception):
+    """Raised when HinetPy reports an authentication failure mid-run."""
+
+    def __init__(self, message: str, partial_results: list[dict] | None = None):
+        super().__init__(message)
+        self.partial_results = partial_results or []
+
 # S-net cable segments for spatial analysis
 SNET_CABLE_SEGMENTS = {
     "S1": {"lat_range": (39.5, 42.0), "lon_range": (142.5, 145.5), "desc": "Off Tokachi",    "order": 0},
@@ -208,6 +228,23 @@ async def ensure_table(db: aiosqlite.Connection) -> None:
         )
         logger.info("Migration: unique index updated to include sensor_type")
 
+    # Failed-date marker table: dates that returned zero records get retry_count++,
+    # and once retry_count >= MAX_RETRIES_BEFORE_SKIP they are permanently skipped.
+    # Why: NIED Hi-net data has structural gaps (cable outages, station downtime,
+    # pre-deployment dates) that have always returned no data. Without this marker
+    # every backfill run re-tries these same dates, wasting ~40% of the request
+    # quota and slowing real coverage growth.
+    await db.execute(
+        "CREATE TABLE IF NOT EXISTS snet_failed_dates ("
+        "  date_str TEXT NOT NULL, "
+        "  sensor_type TEXT NOT NULL, "
+        "  last_failed_at TEXT NOT NULL, "
+        "  retry_count INTEGER NOT NULL DEFAULT 1, "
+        "  reason TEXT, "
+        "  PRIMARY KEY (date_str, sensor_type)"
+        ")"
+    )
+
     await db.commit()
 
 
@@ -221,6 +258,61 @@ async def get_existing_dates(db: aiosqlite.Connection) -> set[tuple[str, str]]:
         "SELECT DISTINCT date_str, sensor_type FROM snet_waveform"
     )
     return {(r[0], r[1]) for r in rows}
+
+
+# Permanent-skip threshold: a (date, sensor) pair that returned zero records
+# this many times in a row is treated as structurally unavailable and excluded
+# from future backfill scans. 3 was chosen so transient HinetPy hiccups do not
+# permanently exclude valid data; 3 schedule attempts span ~9-12 hours.
+MAX_RETRIES_BEFORE_SKIP = 3
+
+
+async def get_failed_dates(
+    db: aiosqlite.Connection, threshold: int = MAX_RETRIES_BEFORE_SKIP
+) -> set[tuple[str, str]]:
+    """Return (date_str, sensor_type) pairs that have hit the skip threshold.
+
+    Threshold defaults to MAX_RETRIES_BEFORE_SKIP (3) — pairs at or above this
+    count are excluded from future backfill scans by main().
+
+    To re-investigate a date that was wrongly skipped (e.g. NIED maintenance
+    coincided with three consecutive schedule runs), reset its retry_count:
+
+        UPDATE snet_failed_dates SET retry_count = 0
+            WHERE date_str = '2018-09-15' AND sensor_type = 'velocity';
+
+    or wipe the marker entirely:
+
+        DELETE FROM snet_failed_dates WHERE date_str = '2018-09-15';
+    """
+    rows = await db.execute_fetchall(
+        "SELECT date_str, sensor_type FROM snet_failed_dates WHERE retry_count >= ?",
+        (threshold,),
+    )
+    return {(r[0], r[1]) for r in rows}
+
+
+def _mark_failed_sync(conn, date_str: str, sensor_type: str, reason: str = "no_records") -> None:
+    """Increment retry_count for a (date, sensor) pair that returned zero records.
+
+    Uses synchronous sqlite3 connection because callers run inside the executor
+    thread used by HinetPy. INSERT OR IGNORE inserts a fresh row at retry_count=1;
+    the UPDATE then bumps it (covers both fresh-insert and pre-existing cases).
+    """
+    now_str = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT OR IGNORE INTO snet_failed_dates "
+        "(date_str, sensor_type, last_failed_at, retry_count, reason) "
+        "VALUES (?, ?, ?, 0, ?)",
+        (date_str, sensor_type, now_str, reason),
+    )
+    conn.execute(
+        "UPDATE snet_failed_dates "
+        "SET retry_count = retry_count + 1, last_failed_at = ?, reason = ? "
+        "WHERE date_str = ? AND sensor_type = ?",
+        (now_str, reason, date_str, sensor_type),
+    )
+    conn.commit()
 
 
 async def get_coverage_report(db: aiosqlite.Connection) -> dict:
@@ -690,10 +782,21 @@ def _fetch_day(
             exc_str = str(exc).lower()
             if "quota" in exc_str or "limit" in exc_str:
                 logger.error("Hi-net quota exceeded: %s", exc)
-                return results  # Return what we have
+                # Cleanup before raising so the temp dir does not leak
+                try:
+                    import shutil
+                    shutil.rmtree(work_dir, ignore_errors=True)
+                except Exception:
+                    pass
+                raise HinetQuotaError(str(exc), partial_results=results)
             elif "auth" in exc_str or "login" in exc_str or "401" in exc_str:
                 logger.error("Hi-net authentication error: %s", exc)
-                return results
+                try:
+                    import shutil
+                    shutil.rmtree(work_dir, ignore_errors=True)
+                except Exception:
+                    pass
+                raise HinetAuthError(str(exc), partial_results=results)
             else:
                 logger.warning("Error fetching %s %02d:00: %s", date_str, hour, exc)
         finally:
@@ -823,6 +926,7 @@ def _fetch_and_save(
     try:
         for i, (target_date, n_segments, network_code, sensor_config) in enumerate(dates_to_fetch):
             date_str = target_date.strftime("%Y-%m-%d")
+            sensor_type = sensor_config["sensor_type"]
 
             # Quota check
             if request_count + n_segments > MAX_REQUESTS_PER_RUN:
@@ -837,10 +941,29 @@ def _fetch_and_save(
                 i + 1, total_items, date_str, network_code, n_segments,
             )
 
-            day_records = _fetch_day(
-                client, station_coords, target_date, n_segments,
-                network_code=network_code, sensor_config=sensor_config,
-            )
+            try:
+                day_records = _fetch_day(
+                    client, station_coords, target_date, n_segments,
+                    network_code=network_code, sensor_config=sensor_config,
+                )
+            except HinetQuotaError as exc:
+                request_count += n_segments
+                if exc.partial_results:
+                    ins, skip = _save_records_sync(conn, exc.partial_results, now_str)
+                    total_inserted += ins
+                    total_skipped += skip
+                    logger.info("  Saved %d partial records before quota hit", ins)
+                logger.error("Quota hit mid-fetch, stopping run: %s", exc)
+                break
+            except HinetAuthError as exc:
+                request_count += n_segments
+                if exc.partial_results:
+                    ins, skip = _save_records_sync(conn, exc.partial_results, now_str)
+                    total_inserted += ins
+                    total_skipped += skip
+                logger.error("Auth failure mid-fetch, stopping run: %s", exc)
+                break
+
             request_count += n_segments
 
             # Save immediately — survives timeout kills
@@ -849,6 +972,14 @@ def _fetch_and_save(
                 total_inserted += ins
                 total_skipped += skip
                 logger.info("  Saved %d records for %s [%s]", ins, date_str, network_code)
+            else:
+                # Zero records returned but no quota/auth error: this (date, sensor)
+                # pair is structurally empty (cable outage, station offline, pre-deploy).
+                # Increment retry_count; once it reaches MAX_RETRIES_BEFORE_SKIP it
+                # will be filtered out of future scans by get_failed_dates().
+                _mark_failed_sync(conn, date_str, sensor_type, reason="no_records")
+                logger.info("  Marked %s [%s] as failed (no records returned)",
+                            date_str, network_code)
 
             time.sleep(QUOTA_COOLDOWN_SEC)
     finally:
@@ -880,8 +1011,18 @@ async def main() -> None:
     async with safe_connect() as db:
         await ensure_table(db)
         existing = await get_existing_dates(db)
+        failed = await get_failed_dates(db)
 
-    logger.info("Existing coverage: %d (date, sensor_type) pairs in DB", len(existing))
+    # Treat failed-out pairs as if they exist: they are excluded from every
+    # window so the limited request budget goes to dates that can still yield
+    # data. Without this, ~40% of each run is spent re-trying the same
+    # structurally empty dates (cable outage windows, pre-deploy dates, etc.).
+    skip_pairs = existing | failed
+
+    logger.info(
+        "Existing coverage: %d pairs, failed-out: %d pairs, skip total: %d",
+        len(existing), len(failed), len(skip_pairs),
+    )
 
     # Build fetch schedule: for each sensor code, build recent + backfill list
     now_utc = datetime.now(timezone.utc)
@@ -916,14 +1057,14 @@ async def main() -> None:
     for target in recent_dates:
         date_str = target.strftime("%Y-%m-%d")
         for code, config in sorted_sensors:
-            if (date_str, config["sensor_type"]) not in existing:
+            if (date_str, config["sensor_type"]) not in skip_pairs:
                 dates_to_fetch.append((target, SEGMENTS_RECENT, code, config))
 
     # Backfill: all codes for each date
     for target in backfill_dates:
         date_str = target.strftime("%Y-%m-%d")
         for code, config in sorted_sensors:
-            if (date_str, config["sensor_type"]) not in existing:
+            if (date_str, config["sensor_type"]) not in skip_pairs:
                 dates_to_fetch.append((target, SEGMENTS_BACKFILL, code, config))
 
     if not dates_to_fetch:
@@ -945,7 +1086,7 @@ async def main() -> None:
         while scan_date <= cutoff:
             date_str = scan_date.strftime("%Y-%m-%d")
             for code, config in sorted_sensors:
-                if (date_str, config["sensor_type"]) not in existing:
+                if (date_str, config["sensor_type"]) not in skip_pairs:
                     dates_to_fetch.append((scan_date, SEGMENTS_BACKFILL, code, config))
             scan_date += timedelta(days=1)
 
