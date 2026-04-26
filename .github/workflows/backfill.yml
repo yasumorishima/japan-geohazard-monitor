@@ -1100,7 +1100,7 @@ jobs:
 
       - name: Fetch F-net broadband waveform features (Step 5c)
         id: fetch_fnet_waveform
-        if: always() && (inputs.target == 'all' || inputs.target == 'fnet_waveform' || inputs.target == '')
+        if: ${{ !cancelled() && (inputs.target == 'all' || inputs.target == 'fnet_waveform' || inputs.target == '') }}
         continue-on-error: true
         timeout-minutes: 75
         env:
@@ -1108,8 +1108,8 @@ jobs:
           HINET_USER: ${{ secrets.HINET_USER }}
           HINET_PASS: ${{ secrets.HINET_PASS }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          FNET_MAX_REQUESTS: "60"
-          FNET_MAX_STATIONS: "15"
+          FNET_MAX_REQUESTS: ${{ vars.FNET_MAX_REQUESTS || '60' }}
+          FNET_MAX_STATIONS: ${{ vars.FNET_MAX_STATIONS || '15' }}
         run: |
           pip install HinetPy 2>/dev/null || true
           python3 scripts/fetch_fnet_waveform.py || echo "F-net waveform fetch failed (non-fatal)"
