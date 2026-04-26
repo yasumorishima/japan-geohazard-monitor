@@ -67,6 +67,7 @@ on:
           - wwlln_thunder_hour
           - lis_otd_monthly
           - geomag
+          - swarm_em
           - olr
           - iers
           - solar_wind
@@ -1154,6 +1155,7 @@ jobs:
       fetch_wwlln_thunder_hour: ${{ steps.fetch_wwlln_thunder_hour.outcome }}
       fetch_lis_otd_monthly: ${{ steps.fetch_lis_otd_monthly.outcome }}
       fetch_geomag: ${{ steps.fetch_geomag.outcome }}
+      fetch_swarm_em: ${{ steps.fetch_swarm_em.outcome }}
       fetch_olr: ${{ steps.fetch_olr.outcome }}
       fetch_iers: ${{ steps.fetch_iers.outcome }}
       fetch_solar_wind: ${{ steps.fetch_solar_wind.outcome }}
@@ -1181,7 +1183,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install aiohttp aiosqlite numpy scipy netCDF4 google-cloud-bigquery pyarrow scikit-learn h5py
+          pip install aiohttp aiosqlite numpy scipy netCDF4 google-cloud-bigquery pyarrow scikit-learn h5py viresclient
           sudo apt-get install -y ncompress
 
       - name: Restore previous database checkpoint
@@ -1475,7 +1477,7 @@ jobs:
         run: |
           python3 scripts/fetch_lis_otd_monthly.py || echo "LIS/OTD monthly fetch failed (non-fatal)"
 
-      - name: Fetch INTERMAGNET hourly + CSES satellite EM data
+      - name: Fetch INTERMAGNET hourly geomagnetic (CSES portion deprecated 2026-04-26, see fetch_swarm_em)
         id: fetch_geomag
         if: inputs.target == 'all' || inputs.target == 'geomag' || inputs.target == ''
         continue-on-error: true
@@ -1485,6 +1487,18 @@ jobs:
           GEOMAG_MAX_DAYS: "2000"
         run: |
           python3 -u scripts/fetch_cses_satellite.py
+
+      - name: Fetch ESA Swarm EM (satellite ionosphere + magnetic, replaces CSES)
+        id: fetch_swarm_em
+        if: inputs.target == 'all' || inputs.target == 'swarm_em' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          SWARM_TOKEN: ${{ secrets.SWARM_TOKEN }}
+          SWARM_MAX_DAYS: "90"
+        run: |
+          python3 -u scripts/fetch_swarm_em.py || echo "Swarm EM fetch failed (non-fatal)"
 
       - name: Fetch NOAA OLR daily (thermal anomaly)
         id: fetch_olr
@@ -1796,7 +1810,7 @@ jobs:
           tables = [
               'earthquakes', 'tec', 'geomag_kp', 'focal_mechanisms',
               'gnss_tec', 'modis_lst', 'ulf_magnetic', 'cosmic_ray',
-              'iss_lis_lightning', 'lightning_thunder_hour', 'lightning_lis_otd', 'geomag_hourly', 'satellite_em',
+              'iss_lis_lightning', 'lightning_thunder_hour', 'lightning_lis_otd', 'geomag_hourly', 'swarm_em',
               'olr', 'earth_rotation', 'solar_wind', 'gravity_mascon',
               'so2_column', 'cloud_fraction', 'nightlight',
               'goes_xray', 'goes_proton', 'tidal_stress', 'particle_flux',
@@ -1871,6 +1885,7 @@ jobs:
           FETCH_WWLLN_TH: ${{ needs.light.outputs.fetch_wwlln_thunder_hour }}
           FETCH_LIS_OTD: ${{ needs.light.outputs.fetch_lis_otd_monthly }}
           FETCH_GEOMAG: ${{ needs.light.outputs.fetch_geomag }}
+          FETCH_SWARM_EM: ${{ needs.light.outputs.fetch_swarm_em }}
           FETCH_OLR: ${{ needs.light.outputs.fetch_olr }}
           FETCH_IERS: ${{ needs.light.outputs.fetch_iers }}
           FETCH_SOLAR_WIND: ${{ needs.light.outputs.fetch_solar_wind }}
@@ -1960,7 +1975,7 @@ jobs:
               'lightning_thunder_hour': 'SELECT COUNT(DISTINCT substr(observed_at,1,7)) * 30 FROM lightning_thunder_hour WHERE substr(observed_at,1,7) >= \"2011-01\"',
               'lightning_lis_otd': 'SELECT COUNT(DISTINCT substr(observed_at,1,7)) * 30 FROM lightning_lis_otd WHERE substr(observed_at,1,7) >= \"2011-01\"',
               'geomag_hourly': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM geomag_hourly WHERE station=\"KAK\" AND substr(observed_at,1,10) >= \"2011-01-01\"',
-              'satellite_em': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM satellite_em WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
+              'swarm_em': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM swarm_em WHERE substr(observed_at,1,10) >= \"2014-01-01\"',
               'olr': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM olr WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
               'earth_rotation': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM earth_rotation WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
               'solar_wind': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM solar_wind WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
@@ -2014,6 +2029,7 @@ jobs:
               'WWLLN ThunderHour': os.environ.get('FETCH_WWLLN_TH', 'skipped'),
               'LIS/OTD Monthly': os.environ.get('FETCH_LIS_OTD', 'skipped'),
               'Geomag': os.environ.get('FETCH_GEOMAG', 'skipped'),
+              'Swarm EM': os.environ.get('FETCH_SWARM_EM', 'skipped'),
               'OLR': os.environ.get('FETCH_OLR', 'skipped'),
               'IERS': os.environ.get('FETCH_IERS', 'skipped'),
               'Solar wind': os.environ.get('FETCH_SOLAR_WIND', 'skipped'),
@@ -2209,7 +2225,7 @@ jobs:
               'lightning_thunder_hour': 'SELECT COUNT(DISTINCT substr(observed_at,1,7)) * 30 FROM lightning_thunder_hour WHERE substr(observed_at,1,7) >= \"2011-01\"',
               'lightning_lis_otd': 'SELECT COUNT(DISTINCT substr(observed_at,1,7)) * 30 FROM lightning_lis_otd WHERE substr(observed_at,1,7) >= \"2011-01\"',
               'geomag_hourly': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM geomag_hourly WHERE station=\"KAK\" AND substr(observed_at,1,10) >= \"2011-01-01\"',
-              'satellite_em': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM satellite_em WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
+              'swarm_em': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM swarm_em WHERE substr(observed_at,1,10) >= \"2014-01-01\"',
               'olr': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM olr WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
               'earth_rotation': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM earth_rotation WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
               'solar_wind': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM solar_wind WHERE substr(observed_at,1,10) >= \"2011-01-01\"',

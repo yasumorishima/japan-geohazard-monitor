@@ -1,19 +1,20 @@
-"""Fetch satellite electromagnetic and continuous hourly geomagnetic data.
+"""Fetch continuous hourly geomagnetic data (INTERMAGNET).
 
-Downloads two complementary datasets for earthquake precursor analysis:
+DEPRECATION (2026-04-26): the CSES-01 portion of this fetcher is stubbed
+to no-op. CSES-Limadou (limadou.ssdc.asi.it) requires CNSA/INFN portal
+registration; the previously hardcoded API endpoints were speculative
+guesses that returned 404/HTML for every queried month. The replacement
+satellite-EM source is `fetch_swarm_em.py` (ESA Swarm A via VirES,
+Bearer-token auth) which writes to the new `swarm_em` table.
 
-1. INTERMAGNET hourly geomagnetic data (primary, no auth required)
+Active path: INTERMAGNET hourly geomagnetic data (no auth required)
    - Continuous hourly-resolution H/D/Z/F for KAK, MMB, KNY (2011-2026)
    - Unlike fetch_kakioka_ulf.py (±7 days around M6+), this fetches ALL days
    - Enables spectral analysis (Fourier, wavelet) at 0.01-0.1 Hz ULF band
    - Source: BGS GIN REST API (SamplesPerDay=24)
 
-2. CSES-01 (Zhangheng-1) satellite data (best effort, may require auth)
-   - Launched Feb 2018 by CNSA/INFN, sun-synchronous orbit ~507 km
-   - EFD (Electric Field Detector): DC-3.5 MHz
-   - SCM (Search Coil Magnetometer): 10 Hz-20 kHz
-   - PAP (Plasma Analyzer Package): electron density, ion temperature
-   - Source: CSES-Limadou Italian portal (limadou.ssdc.asi.it)
+Deprecated path (kept as no-op tombstones to preserve git history):
+   - fetch_cses_data / _parse_cses_json / fetch_cses_satellite
 
 Physical basis:
     CSES-01 and its predecessor DEMETER (2004-2010) detected ionospheric
@@ -84,32 +85,8 @@ MAX_DAYS_PER_STATION = int(os.environ.get("GEOMAG_MAX_DAYS", "500"))
 
 
 async def init_satellite_tables():
-    """Create satellite_em and geomag_hourly tables."""
+    """Create geomag_hourly table (satellite_em deprecated, see fetch_swarm_em.py)."""
     async with safe_connect() as db:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS satellite_em (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source TEXT NOT NULL,
-                observed_at TEXT NOT NULL,
-                latitude REAL,
-                longitude REAL,
-                elf_power_db REAL,
-                vlf_power_db REAL,
-                electron_density REAL,
-                ion_temperature REAL,
-                received_at TEXT NOT NULL,
-                UNIQUE(source, observed_at, latitude, longitude)
-            )
-        """)
-        await db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_sat_em_time
-            ON satellite_em(observed_at)
-        """)
-        await db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_sat_em_source
-            ON satellite_em(source)
-        """)
-
         await db.execute("""
             CREATE TABLE IF NOT EXISTS geomag_hourly (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -285,121 +262,13 @@ async def fetch_intermagnet_hourly_day(session: aiohttp.ClientSession,
 async def fetch_cses_data(session: aiohttp.ClientSession,
                            start_date: datetime,
                            end_date: datetime) -> list[tuple]:
-    """Attempt to fetch CSES-Limadou satellite data.
-
-    CSES data access typically requires registration at limadou.ssdc.asi.it.
-    This function attempts known API patterns; if authentication is required,
-    it logs clearly and returns empty.
-
-    Returns list of (source, observed_at, lat, lon, elf_db, vlf_db,
-                     electron_density, ion_temp) tuples.
-    """
-    # Try known CSES API endpoints
-    # The Limadou portal may expose data catalogs or summary products
-    api_endpoints = [
-        # Catalog/metadata endpoint (common pattern for ASI/SSDC services)
-        (f"{CSES_LIMADOU_BASE}/api/v1/data/catalog"
-         f"?start={start_date.strftime('%Y-%m-%dT00:00:00Z')}"
-         f"&end={end_date.strftime('%Y-%m-%dT00:00:00Z')}"
-         f"&product=EFD_L2"),
-        # Alternative: REST data access
-        (f"{CSES_LIMADOU_BASE}/data/products"
-         f"?from={start_date.strftime('%Y-%m-%d')}"
-         f"&to={end_date.strftime('%Y-%m-%d')}"
-         f"&type=SCM"),
-    ]
-
-    for url in api_endpoints:
-        for attempt in range(1, MAX_RETRIES + 1):
-            try:
-                async with session.get(url, timeout=TIMEOUT) as resp:
-                    if resp.status == 200:
-                        content_type = resp.headers.get("Content-Type", "")
-                        if "json" in content_type:
-                            data = await resp.json()
-                            rows = _parse_cses_json(data)
-                            if rows:
-                                logger.info("CSES: retrieved %d records", len(rows))
-                                return rows
-                        elif "html" in content_type:
-                            # Likely a login page redirect
-                            logger.info(
-                                "CSES endpoint returned HTML (likely auth required): %s",
-                                url.split("?")[0],
-                            )
-                            break
-                    elif resp.status == 401 or resp.status == 403:
-                        logger.info(
-                            "CSES access denied (registration required): HTTP %d",
-                            resp.status,
-                        )
-                        return []
-                    elif resp.status == 404:
-                        break  # Try next endpoint
-                    else:
-                        if attempt == MAX_RETRIES:
-                            break
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                if attempt == MAX_RETRIES:
-                    logger.warning("CSES fetch failed: %s", type(e).__name__)
-                    break
-                await asyncio.sleep(2 ** attempt)
-
-    logger.info(
-        "CSES data not available via public API. "
-        "Registration at %s may be required for direct data access.",
-        CSES_LIMADOU_BASE,
-    )
+    """Deprecated 2026-04-26 — see module docstring. Always returns []."""
     return []
 
 
-def _parse_cses_json(data: dict | list) -> list[tuple]:
-    """Parse CSES JSON response into satellite_em rows.
-
-    Expected structure varies by endpoint. This handles common patterns
-    from ASI/SSDC-style data services.
-    """
-    rows = []
-    now = datetime.now(timezone.utc).isoformat()
-
-    # Handle list of records
-    records = data if isinstance(data, list) else data.get("data", data.get("records", []))
-    if not isinstance(records, list):
-        return []
-
-    for rec in records:
-        try:
-            observed_at = rec.get("time") or rec.get("datetime") or rec.get("timestamp")
-            if not observed_at:
-                continue
-
-            lat = rec.get("latitude") or rec.get("lat")
-            lon = rec.get("longitude") or rec.get("lon")
-
-            # EM field data (various possible key names)
-            elf_power = rec.get("elf_power_db") or rec.get("elf_power") or rec.get("efd_elf")
-            vlf_power = rec.get("vlf_power_db") or rec.get("vlf_power") or rec.get("scm_vlf")
-            electron_density = (rec.get("electron_density") or rec.get("ne")
-                                or rec.get("plasma_density"))
-            ion_temp = (rec.get("ion_temperature") or rec.get("ti")
-                        or rec.get("ion_temp"))
-
-            # Convert to float, allowing None
-            lat = float(lat) if lat is not None else None
-            lon = float(lon) if lon is not None else None
-            elf_power = float(elf_power) if elf_power is not None else None
-            vlf_power = float(vlf_power) if vlf_power is not None else None
-            electron_density = float(electron_density) if electron_density is not None else None
-            ion_temp = float(ion_temp) if ion_temp is not None else None
-
-            rows.append((
-                "CSES", str(observed_at), lat, lon,
-                elf_power, vlf_power, electron_density, ion_temp,
-            ))
-        except (ValueError, TypeError, AttributeError):
-            continue
-
-    return rows
+def _parse_cses_json(data) -> list[tuple]:
+    """Deprecated 2026-04-26 — see module docstring. Always returns []."""
+    return []
 
 
 def _generate_all_dates(start_year: int, end_year: int) -> list[datetime]:
@@ -543,68 +412,16 @@ async def fetch_intermagnet_hourly(session: aiohttp.ClientSession, now: str):
 
 
 async def fetch_cses_satellite(session: aiohttp.ClientSession, now: str):
-    """Fetch CSES satellite electromagnetic data (best effort).
+    """Deprecated 2026-04-26 — see module docstring. No fetch performed.
 
-    CSES-01 (Zhangheng-1) operates since Feb 2018. Data access may
-    require registration at limadou.ssdc.asi.it. This function attempts
-    public API access and gracefully handles auth requirements.
+    Replaced by fetch_swarm_em.py (ESA Swarm via VirES Bearer token).
+    Returns 0 to keep the main() summary line working without behavior change.
     """
-    # CSES data starts from Feb 2018
-    cses_start = datetime(2018, 2, 1, tzinfo=timezone.utc)
-    today = datetime.now(timezone.utc)
-
-    # Check what we already have
-    async with safe_connect() as db:
-        existing = await db.execute_fetchall(
-            "SELECT MAX(observed_at) FROM satellite_em WHERE source = 'CSES'"
-        )
-    last_date = existing[0][0] if existing and existing[0][0] else None
-
-    if last_date:
-        start_date = datetime.fromisoformat(last_date.replace("Z", "+00:00"))
-        logger.info("CSES: resuming from %s", last_date)
-    else:
-        start_date = cses_start
-        logger.info("CSES: starting from %s", start_date.strftime("%Y-%m-%d"))
-
-    # Try fetching in monthly batches
-    total_records = 0
-    current = start_date
-    consecutive_failures = 0
-    max_consecutive_failures = 3
-
-    while current < today and consecutive_failures < max_consecutive_failures:
-        batch_end = min(current + timedelta(days=30), today)
-
-        rows = await fetch_cses_data(session, current, batch_end)
-        if rows:
-            async with safe_connect() as db:
-                await db.executemany(
-                    """INSERT OR IGNORE INTO satellite_em
-                       (source, observed_at, latitude, longitude,
-                        elf_power_db, vlf_power_db, electron_density,
-                        ion_temperature, received_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    [(*row, now) for row in rows],
-                )
-                await db.commit()
-            total_records += len(rows)
-            consecutive_failures = 0
-        else:
-            consecutive_failures += 1
-
-        current = batch_end
-        await asyncio.sleep(CSES_DELAY)
-
-    if consecutive_failures >= max_consecutive_failures:
-        logger.info(
-            "CSES: stopped after %d consecutive failures "
-            "(registration likely required at %s)",
-            max_consecutive_failures, CSES_LIMADOU_BASE,
-        )
-
-    logger.info("CSES satellite total: %d records", total_records)
-    return total_records
+    logger.info(
+        "CSES satellite fetch is deprecated (no historical Limadou access). "
+        "See fetch_swarm_em.py for the active satellite-EM source."
+    )
+    return 0
 
 
 async def main():
@@ -635,7 +452,7 @@ async def main():
 
     # Report table sizes
     async with safe_connect() as db:
-        for table in ["geomag_hourly", "satellite_em"]:
+        for table in ["geomag_hourly"]:
             row = await db.execute_fetchall(f"SELECT COUNT(*) FROM {table}")
             logger.info("  Table %s: %d total rows", table, row[0][0])
 

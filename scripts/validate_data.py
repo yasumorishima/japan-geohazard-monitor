@@ -45,7 +45,7 @@ EXPECTED_TABLES = {
     "iss_lis_lightning": {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": (2017, 2023)},
     # Phase 9: INTERMAGNET, CSES, Movebank
     "geomag_hourly":     {"min_rows": 100,   "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
-    "satellite_em":      {"min_rows": 0,     "time_col": "observed_at", "critical": False, "expected_range": (2018, 2026)},
+    "swarm_em":          {"min_rows": 0,     "time_col": "observed_at", "critical": False, "expected_range": (2014, 2026)},
     # Phase 10: Unconventional sources
     "olr":               {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
     "earth_rotation":    {"min_rows": 100,   "time_col": "observed_at", "critical": False, "expected_range": FULL_RANGE},
@@ -314,8 +314,8 @@ def _gap_reason(table: str) -> str:
         "nightlight": "Earthdata auth (VIIRS LAADS)",
         "iss_lis_lightning": "Earthdata auth (GHRC DAAC)",
         "insar_deformation": "LiCSAR: no Japan frames returned",
-        "satellite_em": "CSES: registration required",
         "snet_waveform": "NIED: S-net waveform features (Phase 18, backfilling)",
+        "swarm_em": "ESA Swarm A via VirES (Phase 19, backfilling)",
         "collector_status": "Analysis-derived (RPi5 only)",
     }
     return reasons.get(table, "Unknown")
