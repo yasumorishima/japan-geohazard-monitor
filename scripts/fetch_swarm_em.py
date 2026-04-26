@@ -307,11 +307,11 @@ def insert_passes(conn: sqlite3.Connection, passes: List[dict]) -> int:
     return inserted
 
 
-def get_resume_date(conn: sqlite3.Connection) -> datetime:
-    """Resume from MAX(observed_at) + 1 day. UNIQUE constraint is safety net
-    against any same-day duplicate request."""
+def get_resume_date_for_source(conn: sqlite3.Connection, source: str) -> datetime:
+    """Per-source resume. Prevents one source's progress masking another's gap
+    when a transient request failure inserts only one collection's rows."""
     cur = conn.cursor()
-    cur.execute("SELECT MAX(observed_at) FROM swarm_em")
+    cur.execute("SELECT MAX(observed_at) FROM swarm_em WHERE source = ?", (source,))
     row = cur.fetchone()
     if row and row[0]:
         last_date = datetime.strptime(row[0][:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
@@ -319,25 +319,57 @@ def get_resume_date(conn: sqlite3.Connection) -> datetime:
     return SWARM_START_DATE
 
 
-def fetch_chunk(start: datetime, end: datetime) -> tuple:
-    """Returns (df_mag, df_efi). Either may be None on failure."""
-    df_mag = _fetch_one_collection(
-        collection="SW_OPER_MAGA_LR_1B",
-        measurements=["F", "B_NEC"],
-        models=["CHAOS-Core"],
-        residuals=True,
-        start=start,
-        end=end,
+def _fetch_collection_window(
+    conn: sqlite3.Connection,
+    source: str,
+    collection: str,
+    measurements: List[str],
+    models: Optional[List[str]],
+    residuals: bool,
+    parser,
+) -> tuple:
+    """Run one source's chunk loop. Returns (chunks_processed, rows_inserted)."""
+    resume = get_resume_date_for_source(conn, source)
+    end_total = min(
+        resume + timedelta(days=MAX_DAYS_PER_RUN),
+        datetime.now(timezone.utc) - timedelta(days=LATENCY_BUFFER_DAYS),
     )
-    df_efi = _fetch_one_collection(
-        collection="SW_OPER_EFIA_LP_1B",
-        measurements=["Ne", "Te"],
-        models=None,
-        residuals=False,
-        start=start,
-        end=end,
+    if resume >= end_total:
+        logger.info("[%s] up to date: resume=%s end=%s", source, resume.date(), end_total.date())
+        return 0, 0
+
+    total_days = (end_total - resume).days
+    logger.info(
+        "[%s] window: %s -> %s (%d days, %d-day chunks)",
+        source, resume.date(), end_total.date(), total_days, CHUNK_DAYS,
     )
-    return df_mag, df_efi
+
+    total_inserted = 0
+    chunk_idx = 0
+    cur_start = resume
+    while cur_start < end_total:
+        cur_end = min(cur_start + timedelta(days=CHUNK_DAYS), end_total)
+        chunk_idx += 1
+        df = _fetch_one_collection(
+            collection=collection,
+            measurements=measurements,
+            models=models,
+            residuals=residuals,
+            start=cur_start,
+            end=cur_end,
+        )
+        passes = parser(df) if df is not None else []
+        inserted = insert_passes(conn, passes)
+        total_inserted += inserted
+        logger.info(
+            "  [%s] chunk %d %s -> %s: passes=%d inserted=%d",
+            source, chunk_idx, cur_start.date(), cur_end.date(),
+            len(passes), inserted,
+        )
+        cur_start = cur_end
+        time.sleep(0.5)
+
+    return chunk_idx, total_inserted
 
 
 def fetch_satellite() -> int:
@@ -353,57 +385,32 @@ def fetch_satellite() -> int:
     try:
         init_swarm_table(conn)
 
-        resume = get_resume_date(conn)
-        end_total = min(
-            resume + timedelta(days=MAX_DAYS_PER_RUN),
-            datetime.now(timezone.utc) - timedelta(days=LATENCY_BUFFER_DAYS),
-        )
-
-        if resume >= end_total:
-            logger.info("Already up to date: resume=%s end=%s", resume.date(), end_total.date())
-            return 0
-
-        total_days = (end_total - resume).days
-        logger.info(
-            "Swarm fetch window: %s -> %s (%d days, %d-day chunks)",
-            resume.date(), end_total.date(), total_days, CHUNK_DAYS,
-        )
-
-        total_inserted_mag = 0
-        total_inserted_efi = 0
-        cur_start = resume
-        chunk_idx = 0
-
         try:
-            while cur_start < end_total:
-                cur_end = min(cur_start + timedelta(days=CHUNK_DAYS), end_total)
-                chunk_idx += 1
-                logger.info("Chunk %d: %s -> %s", chunk_idx, cur_start.date(), cur_end.date())
-
-                df_mag, df_efi = fetch_chunk(cur_start, cur_end)
-
-                mag_passes = parse_mag_passes(df_mag) if df_mag is not None else []
-                efi_passes = parse_efi_passes(df_efi) if df_efi is not None else []
-
-                ins_mag = insert_passes(conn, mag_passes)
-                ins_efi = insert_passes(conn, efi_passes)
-                total_inserted_mag += ins_mag
-                total_inserted_efi += ins_efi
-
-                logger.info(
-                    "  MAG passes=%d inserted=%d | EFI passes=%d inserted=%d",
-                    len(mag_passes), ins_mag, len(efi_passes), ins_efi,
-                )
-
-                cur_start = cur_end
-                time.sleep(0.5)
+            mag_chunks, mag_inserted = _fetch_collection_window(
+                conn=conn,
+                source=SOURCE_MAG,
+                collection="SW_OPER_MAGA_LR_1B",
+                measurements=["F", "B_NEC"],
+                models=["CHAOS-Core"],
+                residuals=True,
+                parser=parse_mag_passes,
+            )
+            efi_chunks, efi_inserted = _fetch_collection_window(
+                conn=conn,
+                source=SOURCE_EFI,
+                collection="SW_OPER_EFIA_LP_1B",
+                measurements=["Ne", "Te"],
+                models=None,
+                residuals=False,
+                parser=parse_efi_passes,
+            )
         except SwarmAuthError as exc:
             logger.error("Aborting: VirES authentication failed (%s)", exc)
             return 3
 
         logger.info(
-            "Total inserted: MAG=%d, EFI=%d (across %d chunks)",
-            total_inserted_mag, total_inserted_efi, chunk_idx,
+            "Total inserted: MAG=%d (%d chunks), EFI=%d (%d chunks)",
+            mag_inserted, mag_chunks, efi_inserted, efi_chunks,
         )
         return 0
     finally:
