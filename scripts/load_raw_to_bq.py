@@ -360,6 +360,27 @@ TABLES = {
             {"name": "received_at", "type": "STRING"},
         ],
     },
+    "fnet_waveform": {
+        "query": "SELECT station_id, date_str, segment_hour, rms_z, rms_h, hv_ratio, lf_power, hf_power, spectral_slope, vlf_power, vlf_hv_ratio, n_samples, latitude, longitude, region, received_at FROM fnet_waveform",
+        "schema": [
+            {"name": "station_id", "type": "STRING"},
+            {"name": "date_str", "type": "STRING"},
+            {"name": "segment_hour", "type": "INTEGER"},
+            {"name": "rms_z", "type": "FLOAT"},
+            {"name": "rms_h", "type": "FLOAT"},
+            {"name": "hv_ratio", "type": "FLOAT"},
+            {"name": "lf_power", "type": "FLOAT"},
+            {"name": "hf_power", "type": "FLOAT"},
+            {"name": "spectral_slope", "type": "FLOAT"},
+            {"name": "vlf_power", "type": "FLOAT"},
+            {"name": "vlf_hv_ratio", "type": "FLOAT"},
+            {"name": "n_samples", "type": "INTEGER"},
+            {"name": "latitude", "type": "FLOAT"},
+            {"name": "longitude", "type": "FLOAT"},
+            {"name": "region", "type": "STRING"},
+            {"name": "received_at", "type": "STRING"},
+        ],
+    },
     "swarm_em": {
         "query": "SELECT source, observed_at, pass_id, duration_s, sample_count, lat_min, lat_max, lon_min, lon_max, ne_mean, ne_std, te_mean, b_residual_mean, b_residual_max, received_at FROM swarm_em",
         "schema": [

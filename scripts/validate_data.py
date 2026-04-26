@@ -68,6 +68,7 @@ EXPECTED_TABLES = {
     "dart_pressure":     {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": None},  # rolling recent
     "ioc_sea_level":     {"min_rows": 10,    "time_col": "observed_at", "critical": False, "expected_range": None},  # rolling recent
     "snet_waveform":     {"min_rows": 0,     "time_col": "date_str",    "critical": False, "expected_range": FULL_RANGE},
+    "fnet_waveform":     {"min_rows": 0,     "time_col": "date_str",    "critical": False, "expected_range": FULL_RANGE},
 }
 
 
@@ -315,6 +316,7 @@ def _gap_reason(table: str) -> str:
         "iss_lis_lightning": "Earthdata auth (GHRC DAAC)",
         "insar_deformation": "LiCSAR: no Japan frames returned",
         "snet_waveform": "NIED: S-net waveform features (Phase 18, backfilling)",
+        "fnet_waveform": "NIED: F-net broadband waveform features (Step 5c, backfilling)",
         "swarm_em": "ESA Swarm A via VirES (Phase 19, backfilling)",
         "collector_status": "Analysis-derived (RPi5 only)",
     }

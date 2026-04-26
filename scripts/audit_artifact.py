@@ -40,6 +40,7 @@ EXPECTED = {
     "geomag_kp":         "time_tag",
     "modis_lst":         "observed_date",
     "snet_waveform":     "date_str",
+    "fnet_waveform":     "date_str",
     # Default: observed_at
     "ulf_magnetic":      "observed_at",
     "cosmic_ray":        "observed_at",
