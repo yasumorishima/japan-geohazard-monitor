@@ -45,7 +45,7 @@ EXPECTED = {
     "cosmic_ray":        "observed_at",
     "iss_lis_lightning": "observed_at",
     "geomag_hourly":     "observed_at",
-    "satellite_em":      "observed_at",
+    "swarm_em":          "observed_at",
     "olr":               "observed_at",
     "earth_rotation":    "observed_at",
     "solar_wind":        "observed_at",
