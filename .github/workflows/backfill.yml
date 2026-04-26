@@ -881,6 +881,7 @@ jobs:
       || inputs.target == 'all'
       || inputs.target == ''
       || inputs.target == 'snet_waveform'
+      || inputs.target == 'fnet_waveform'
     runs-on: ubuntu-latest
     timeout-minutes: 240
     outputs:
@@ -1902,6 +1903,7 @@ jobs:
           FETCH_KP: ${{ needs.light.outputs.fetch_kp }}
           FETCH_CMT: ${{ needs.light.outputs.fetch_cmt }}
           FETCH_SNET_WAVEFORM: ${{ needs.fetch-snet.outputs.fetch_snet_waveform }}
+          FETCH_FNET_WAVEFORM: ${{ needs.fetch-snet.outputs.fetch_fnet_waveform }}
           FETCH_GNSS_TEC: ${{ needs.light.outputs.fetch_gnss_tec }}
           FETCH_MODIS_LST: ${{ needs.fetch-modis.outputs.fetch_modis_lst }}
           FETCH_ULF: ${{ needs.light.outputs.fetch_ulf }}
@@ -2046,6 +2048,7 @@ jobs:
               'Kp': os.environ.get('FETCH_KP', 'skipped'),
               'CMT': os.environ.get('FETCH_CMT', 'skipped'),
               'S-net waveform': os.environ.get('FETCH_SNET_WAVEFORM', 'skipped'),
+              'F-net waveform': os.environ.get('FETCH_FNET_WAVEFORM', 'skipped'),
               'S-net pressure': os.environ.get('FETCH_SNET_PRESSURE', 'skipped'),
               'GNSS-TEC': os.environ.get('FETCH_GNSS_TEC', 'skipped'),
               'MODIS LST': os.environ.get('FETCH_MODIS_LST', 'skipped'),

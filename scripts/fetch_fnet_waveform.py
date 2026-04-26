@@ -516,9 +516,22 @@ def compute_waveform_features(data_z, data_x, data_y, fs: float) -> dict | None:
 # ---------------------------------------------------------------------------
 
 def classify_region(lat: float, lon: float) -> str | None:
-    """Classify station into geographic region by coordinates."""
+    """Classify station into geographic region by coordinates.
+
+    Boundaries are half-open [lo, hi) so adjacent regions don't double-claim
+    a point on a shared edge. Iteration follows dict insertion order which
+    matches FNET_REGIONS' "order" field, giving deterministic tiebreaks
+    for points outside any half-open window (the upper-most edge of the
+    last region uses an inclusive check below).
+    """
     if lat is None or lon is None:
         return None
+    for region, info in FNET_REGIONS.items():
+        lat_lo, lat_hi = info["lat_range"]
+        lon_lo, lon_hi = info["lon_range"]
+        if lat_lo <= lat < lat_hi and lon_lo <= lon < lon_hi:
+            return region
+    # Fallback for points exactly on the outermost upper edges
     for region, info in FNET_REGIONS.items():
         lat_lo, lat_hi = info["lat_range"]
         lon_lo, lon_hi = info["lon_range"]
@@ -600,6 +613,7 @@ def _fetch_day(
     client, station_coords: dict, target_date: datetime, n_segments: int,
 ) -> list[dict]:
     """Fetch and process one day's F-net waveform data."""
+    import shutil
     results = []
     date_str = target_date.strftime("%Y-%m-%d")
     segment_hours = [h for h in range(0, 24, max(1, 24 // n_segments))][:n_segments]
@@ -716,23 +730,16 @@ def _fetch_day(
 
         except Exception as exc:
             exc_str = str(exc).lower()
-            import shutil
             if "quota" in exc_str or "limit" in exc_str:
                 logger.error("Hi-net quota exceeded: %s", exc)
-                shutil.rmtree(work_dir, ignore_errors=True)
-                raise HinetQuotaError(str(exc), partial_results=results)
+                raise HinetQuotaError(str(exc), partial_results=results) from exc
             elif "auth" in exc_str or "login" in exc_str or "401" in exc_str:
                 logger.error("Hi-net authentication error: %s", exc)
-                shutil.rmtree(work_dir, ignore_errors=True)
-                raise HinetAuthError(str(exc), partial_results=results)
+                raise HinetAuthError(str(exc), partial_results=results) from exc
             else:
                 logger.warning("Error fetching %s %02d:00: %s", date_str, hour, exc)
         finally:
-            try:
-                import shutil
-                shutil.rmtree(work_dir, ignore_errors=True)
-            except Exception:
-                pass
+            shutil.rmtree(work_dir, ignore_errors=True)
 
         time.sleep(QUOTA_COOLDOWN_SEC)
 
@@ -762,7 +769,7 @@ def _save_records_sync(conn, records: list[dict], now_str: str) -> tuple[int, in
     inserted = skipped = 0
     for rec in records:
         try:
-            conn.execute(
+            cursor = conn.execute(
                 """INSERT OR IGNORE INTO fnet_waveform
                    (station_id, date_str, segment_hour,
                     rms_z, rms_h, hv_ratio, lf_power, hf_power,
@@ -779,7 +786,13 @@ def _save_records_sync(conn, records: list[dict], now_str: str) -> tuple[int, in
                     rec["region"], now_str,
                 ),
             )
-            inserted += 1
+            # INSERT OR IGNORE returns rowcount=0 when the row was a duplicate
+            # of the UNIQUE(station_id, date_str, segment_hour) key, so the
+            # original counter would over-report inserts on resume runs.
+            if cursor.rowcount == 1:
+                inserted += 1
+            else:
+                skipped += 1
         except Exception as exc:
             logger.warning("Insert failed for %s/%s: %s",
                            rec["station_id"], rec["date_str"], exc)
@@ -940,10 +953,9 @@ async def main() -> None:
     current = (now_utc - timedelta(days=RECENT_DAYS + 1)).replace(
         hour=0, minute=0, second=0, microsecond=0, tzinfo=None
     )
-    while current >= fnet_start and len(backfill_dates) < MAX_BACKFILL_DAYS_PER_RUN * 3:
+    while current >= fnet_start and len(backfill_dates) < MAX_BACKFILL_DAYS_PER_RUN:
         backfill_dates.append(current)
         current -= timedelta(days=1)
-    backfill_dates = backfill_dates[:MAX_BACKFILL_DAYS_PER_RUN]
 
     dates_to_fetch = []
     for target in recent_dates:
@@ -1001,7 +1013,7 @@ async def main() -> None:
         n_recent, n_backfill, len(dates_to_fetch), est_requests, MAX_REQUESTS_PER_RUN,
     )
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(
         None, _fetch_and_save, user, password, dates_to_fetch,
     )
