@@ -870,10 +870,11 @@ jobs:
           retention-days: 7
 
   # =====================================================================
-  # FETCH-SNET — win32tools install + S-net waveform + S-net pressure.
-  # These three steps share HinetPy tooling and credentials; keeping them
-  # in one job avoids re-installing win32tools twice. Typical combined
-  # runtime ~3h; timeout 240m.
+  # FETCH-SNET — win32tools install + S-net waveform + F-net waveform.
+  # These steps share HinetPy tooling, NIED credentials, and the daily
+  # account quota; keeping them in one job avoids re-installing win32tools
+  # and serialises requests against the shared budget. Per-step timeouts
+  # 75m + 75m; job timeout 240m leaves slack for setup/snapshot/upload.
   # =====================================================================
   fetch-snet:
     if: >-
@@ -1057,9 +1058,9 @@ jobs:
             fi
           fi
 
-      - name: Install win32tools for S-net (catwin32 + win2sac_32)
+      - name: Install win32tools for S-net / F-net (catwin32 + win2sac_32)
         id: install_win32tools
-        if: inputs.target == 'all' || inputs.target == 'snet_waveform' || inputs.target == ''
+        if: inputs.target == 'all' || inputs.target == 'snet_waveform' || inputs.target == 'fnet_waveform' || inputs.target == ''
         continue-on-error: true
         timeout-minutes: 5
         env:
