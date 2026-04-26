@@ -118,6 +118,7 @@ class HinetQuotaError(Exception):
     """
 
     def __init__(self, message: str, partial_results: list[dict] | None = None):
+        """Capture the exception message and any records fetched before the cap."""
         super().__init__(message)
         self.partial_results = partial_results or []
 
@@ -126,6 +127,7 @@ class HinetAuthError(Exception):
     """Raised when HinetPy reports an authentication failure mid-run."""
 
     def __init__(self, message: str, partial_results: list[dict] | None = None):
+        """Capture the exception message and any records fetched before auth failed."""
         super().__init__(message)
         self.partial_results = partial_results or []
 
@@ -373,6 +375,11 @@ def read_sac_data(filepath: str) -> tuple:
 # ---------------------------------------------------------------------------
 
 def _compute_psd(z, x, y, fs: float, window_sec: float):
+    """Welch-style PSD for 3-component data using a Hann window.
+
+    Returns (psd_z, psd_x, psd_y, freqs, n_windows) or None when the input
+    is shorter than one full window.
+    """
     import numpy as np
 
     n = len(z)
@@ -412,6 +419,7 @@ def _compute_psd(z, x, y, fs: float, window_sec: float):
 
 
 def _band_power(psd, freqs, f_low, f_high):
+    """Return log10 of integrated PSD power in [f_low, f_high) Hz."""
     import numpy as np
     mask = (freqs >= f_low) & (freqs < f_high)
     if not np.any(mask):
@@ -422,6 +430,7 @@ def _band_power(psd, freqs, f_low, f_high):
 
 
 def _hv_ratio(psd_x, psd_y, psd_z, freqs, f_low, f_high):
+    """Mean horizontal-to-vertical spectral ratio in the [f_low, f_high] band."""
     import numpy as np
     psd_h = psd_x + psd_y
     safe_z = np.where(psd_z > 0, psd_z, 1e-30)
@@ -433,6 +442,10 @@ def _hv_ratio(psd_x, psd_y, psd_z, freqs, f_low, f_high):
 
 
 def _spectral_slope(psd_total, freqs, f_low, f_high):
+    """Spectral slope (beta) by log-log linear fit over [f_low, f_high].
+
+    Returns -2.0 (Brownian default) when there are too few valid bins to fit.
+    """
     import numpy as np
     mask = (freqs >= f_low) & (freqs <= f_high) & (psd_total > 0)
     if np.sum(mask) > 5:
@@ -598,6 +611,7 @@ def select_active_stations(client, max_stations: int) -> tuple[list[str], dict]:
 # ---------------------------------------------------------------------------
 
 def _check_credentials() -> tuple[str, str] | None:
+    """Return (user, password) from env or None when either is unset."""
     user = os.environ.get("HINET_USER", "").strip()
     password = os.environ.get("HINET_PASS", "").strip()
     if not user or not password:
@@ -758,6 +772,7 @@ def _safe_connect_sync(db_path: str = None):
 
 
 def _ensure_table_sync(conn) -> None:
+    """Synchronous variant of ensure_table for use inside the executor thread."""
     conn.execute(TABLE_DDL)
     for idx in INDEX_DDL:
         conn.execute(idx)
@@ -766,6 +781,12 @@ def _ensure_table_sync(conn) -> None:
 
 
 def _save_records_sync(conn, records: list[dict], now_str: str) -> tuple[int, int]:
+    """Insert records into fnet_waveform with INSERT OR IGNORE.
+
+    Returns (inserted, skipped) where inserted counts only rows that actually
+    landed (cursor.rowcount == 1) and skipped covers both UNIQUE-conflict
+    duplicates and rows that raised during execute.
+    """
     inserted = skipped = 0
     for rec in records:
         try:
@@ -1049,6 +1070,7 @@ async def main() -> None:
 
 
 def _log_coverage_report(report: dict) -> None:
+    """Print the coverage report dict (from get_coverage_report) to logger.info."""
     logger.info("=== F-net Waveform Coverage ===")
     logger.info("  Date range: %s → %s", report.get("first_date"), report.get("last_date"))
     logger.info("  Coverage: %s%% (%d/%d days)",
