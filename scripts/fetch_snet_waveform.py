@@ -847,7 +847,7 @@ def _save_records_sync(conn, records: list[dict], now_str: str) -> tuple[int, in
     inserted = skipped = 0
     for rec in records:
         try:
-            conn.execute(
+            cursor = conn.execute(
                 """INSERT OR IGNORE INTO snet_waveform
                    (station_id, date_str, segment_hour, sensor_type,
                     rms_z, rms_h, hv_ratio, lf_power, hf_power,
@@ -865,7 +865,10 @@ def _save_records_sync(conn, records: list[dict], now_str: str) -> tuple[int, in
                     rec["cable_segment"], now_str,
                 ),
             )
-            inserted += 1
+            if cursor.rowcount == 1:
+                inserted += 1
+            else:
+                skipped += 1
         except Exception as exc:
             logger.warning("Insert failed for %s/%s/%s: %s",
                            rec["station_id"], rec["date_str"],
@@ -1044,11 +1047,9 @@ async def main() -> None:
     current = (now_utc - timedelta(days=RECENT_DAYS + 1)).replace(
         hour=0, minute=0, second=0, microsecond=0, tzinfo=None
     )
-    while current >= snet_start and len(backfill_dates) < MAX_BACKFILL_DAYS_PER_RUN * 3:
+    while current >= snet_start and len(backfill_dates) < MAX_BACKFILL_DAYS_PER_RUN:
         backfill_dates.append(current)
         current -= timedelta(days=1)
-    # Most recent gaps first
-    backfill_dates = backfill_dates[:MAX_BACKFILL_DAYS_PER_RUN]
 
     # Build interleaved fetch list: (date, n_segments, code, config)
     dates_to_fetch = []
@@ -1126,7 +1127,7 @@ async def main() -> None:
     # All HinetPy + DB work runs synchronously in an executor thread.
     # Each item's records are committed immediately so data survives timeout kills.
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(
         None, _fetch_and_save, user, password, dates_to_fetch,
     )
