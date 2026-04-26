@@ -56,7 +56,9 @@ logger = logging.getLogger(__name__)
 
 FNET_NETWORK_CODE = "0103"
 FNET_SENSOR_TYPE = "broadband"
-FNET_START_STR = "1995-08-01"
+# Backfill window starts at the practical operational era (2000-01-01)
+# rather than the 1995 network inception, to keep gap_days realistic.
+FNET_START_STR = "2000-01-01"
 
 # HinetPy constraints — shared NIED account quota with S-net.
 # Split: snet 60 + fnet 60 = 120 per run (out of NIED ~150 daily budget).
