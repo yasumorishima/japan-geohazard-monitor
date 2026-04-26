@@ -56,6 +56,7 @@ Usage:
         --overlay /tmp/so2/geohazard.db:so2_column \
         --overlay /tmp/cloud/geohazard.db:cloud_fraction \
         --overlay /tmp/snet/geohazard.db:snet_waveform \
+        --overlay /tmp/snet/geohazard.db:fnet_waveform \
         --dst data/geohazard.db \
         --require-base
 

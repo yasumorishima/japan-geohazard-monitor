@@ -59,6 +59,7 @@ on:
           - kp
           - cmt
           - snet_waveform
+          - fnet_waveform
           - gnss_tec
           - modis_lst
           - ulf
@@ -869,10 +870,11 @@ jobs:
           retention-days: 7
 
   # =====================================================================
-  # FETCH-SNET — win32tools install + S-net waveform + S-net pressure.
-  # These three steps share HinetPy tooling and credentials; keeping them
-  # in one job avoids re-installing win32tools twice. Typical combined
-  # runtime ~3h; timeout 240m.
+  # FETCH-SNET — win32tools install + S-net waveform + F-net waveform.
+  # These steps share HinetPy tooling, NIED credentials, and the daily
+  # account quota; keeping them in one job avoids re-installing win32tools
+  # and serialises requests against the shared budget. Per-step timeouts
+  # 75m + 75m; job timeout 240m leaves slack for setup/snapshot/upload.
   # =====================================================================
   fetch-snet:
     if: >-
@@ -880,11 +882,13 @@ jobs:
       || inputs.target == 'all'
       || inputs.target == ''
       || inputs.target == 'snet_waveform'
+      || inputs.target == 'fnet_waveform'
     runs-on: ubuntu-latest
     timeout-minutes: 240
     outputs:
       install_win32tools: ${{ steps.install_win32tools.outcome }}
       fetch_snet_waveform: ${{ steps.fetch_snet_waveform.outcome }}
+      fetch_fnet_waveform: ${{ steps.fetch_fnet_waveform.outcome }}
       snapshot_outcome: ${{ steps.snapshot.outcome }}
       restore_outcome: ${{ steps.restore.outcome }}
       restore_restored: ${{ steps.restore.outputs.restored }}
@@ -1054,9 +1058,9 @@ jobs:
             fi
           fi
 
-      - name: Install win32tools for S-net (catwin32 + win2sac_32)
+      - name: Install win32tools for S-net / F-net (catwin32 + win2sac_32)
         id: install_win32tools
-        if: inputs.target == 'all' || inputs.target == 'snet_waveform' || inputs.target == ''
+        if: inputs.target == 'all' || inputs.target == 'snet_waveform' || inputs.target == 'fnet_waveform' || inputs.target == ''
         continue-on-error: true
         timeout-minutes: 5
         env:
@@ -1079,18 +1083,39 @@ jobs:
         id: fetch_snet_waveform
         if: inputs.target == 'all' || inputs.target == 'snet_waveform' || inputs.target == ''
         continue-on-error: true
-        timeout-minutes: 150
+        timeout-minutes: 75
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           HINET_USER: ${{ secrets.HINET_USER }}
           HINET_PASS: ${{ secrets.HINET_PASS }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          SNET_MAX_REQUESTS: "60"
         run: |
           pip install HinetPy 2>/dev/null || true
           python3 scripts/fetch_snet_waveform.py || echo "S-net waveform fetch failed (non-fatal)"
           if [ -f results/snet_coverage.json ]; then
             mkdir -p results/midrun
             cp results/snet_coverage.json results/midrun/
+          fi
+
+      - name: Fetch F-net broadband waveform features (Step 5c)
+        id: fetch_fnet_waveform
+        if: ${{ !cancelled() && (inputs.target == 'all' || inputs.target == 'fnet_waveform' || inputs.target == '') }}
+        continue-on-error: true
+        timeout-minutes: 75
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          HINET_USER: ${{ secrets.HINET_USER }}
+          HINET_PASS: ${{ secrets.HINET_PASS }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          FNET_MAX_REQUESTS: ${{ vars.FNET_MAX_REQUESTS || '60' }}
+          FNET_MAX_STATIONS: ${{ vars.FNET_MAX_STATIONS || '15' }}
+        run: |
+          pip install HinetPy 2>/dev/null || true
+          python3 scripts/fetch_fnet_waveform.py || echo "F-net waveform fetch failed (non-fatal)"
+          if [ -f results/fnet_coverage.json ]; then
+            mkdir -p results/midrun
+            cp results/fnet_coverage.json results/midrun/
           fi
 
       - name: Snapshot DB
@@ -1764,6 +1789,7 @@ jobs:
             --overlay /tmp/so2/geohazard.db:so2_column \
             --overlay /tmp/cloud/geohazard.db:cloud_fraction \
             --overlay /tmp/snet/geohazard.db:snet_waveform \
+            --overlay /tmp/snet/geohazard.db:fnet_waveform \
             --dst data/geohazard.db \
             --require-base
 
@@ -1806,6 +1832,7 @@ jobs:
               'earthquakes': 'occurred_at', 'tec': 'epoch', 'geomag_kp': 'time_tag',
               'focal_mechanisms': 'occurred_at', 'gnss_tec': 'epoch',
               'modis_lst': 'observed_date', 'snet_waveform': 'date_str',
+              'fnet_waveform': 'date_str',
           }
           tables = [
               'earthquakes', 'tec', 'geomag_kp', 'focal_mechanisms',
@@ -1815,7 +1842,7 @@ jobs:
               'so2_column', 'cloud_fraction', 'nightlight',
               'goes_xray', 'goes_proton', 'tidal_stress', 'particle_flux',
               'dart_pressure', 'ioc_sea_level', 'tide_gauge', 'ocean_color',
-              'soil_moisture', 'snet_waveform',
+              'soil_moisture', 'snet_waveform', 'fnet_waveform',
           ]
           for t in tables:
               try:
@@ -1877,6 +1904,7 @@ jobs:
           FETCH_KP: ${{ needs.light.outputs.fetch_kp }}
           FETCH_CMT: ${{ needs.light.outputs.fetch_cmt }}
           FETCH_SNET_WAVEFORM: ${{ needs.fetch-snet.outputs.fetch_snet_waveform }}
+          FETCH_FNET_WAVEFORM: ${{ needs.fetch-snet.outputs.fetch_fnet_waveform }}
           FETCH_GNSS_TEC: ${{ needs.light.outputs.fetch_gnss_tec }}
           FETCH_MODIS_LST: ${{ needs.fetch-modis.outputs.fetch_modis_lst }}
           FETCH_ULF: ${{ needs.light.outputs.fetch_ulf }}
@@ -1993,6 +2021,7 @@ jobs:
               'ocean_color': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM ocean_color WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
               'soil_moisture': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM soil_moisture WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
               'snet_waveform': 'SELECT COUNT(DISTINCT date_str) FROM snet_waveform WHERE date_str >= \"2011-01-01\"',
+              'fnet_waveform': 'SELECT COUNT(DISTINCT date_str) FROM fnet_waveform WHERE date_str >= \"2011-01-01\"',
           }
 
           lines = []
@@ -2020,6 +2049,7 @@ jobs:
               'Kp': os.environ.get('FETCH_KP', 'skipped'),
               'CMT': os.environ.get('FETCH_CMT', 'skipped'),
               'S-net waveform': os.environ.get('FETCH_SNET_WAVEFORM', 'skipped'),
+              'F-net waveform': os.environ.get('FETCH_FNET_WAVEFORM', 'skipped'),
               'S-net pressure': os.environ.get('FETCH_SNET_PRESSURE', 'skipped'),
               'GNSS-TEC': os.environ.get('FETCH_GNSS_TEC', 'skipped'),
               'MODIS LST': os.environ.get('FETCH_MODIS_LST', 'skipped'),
@@ -2141,6 +2171,7 @@ jobs:
             needs.light.outputs.fetch_kp == 'failure' ||
             needs.light.outputs.fetch_cmt == 'failure' ||
             needs.fetch-snet.outputs.fetch_snet_waveform == 'failure' ||
+            needs.fetch-snet.outputs.fetch_fnet_waveform == 'failure' ||
             needs.light.outputs.fetch_gnss_tec == 'failure' ||
             needs.fetch-modis.outputs.fetch_modis_lst == 'failure' ||
             needs.light.outputs.fetch_ulf == 'failure' ||
@@ -2178,6 +2209,7 @@ jobs:
           [ "${{ needs.light.outputs.fetch_kp }}" = "failure" ] && FAILED="$FAILED kp"
           [ "${{ needs.light.outputs.fetch_cmt }}" = "failure" ] && FAILED="$FAILED cmt"
           [ "${{ needs.fetch-snet.outputs.fetch_snet_waveform }}" = "failure" ] && FAILED="$FAILED snet_waveform"
+          [ "${{ needs.fetch-snet.outputs.fetch_fnet_waveform }}" = "failure" ] && FAILED="$FAILED fnet_waveform"
           [ "${{ needs.light.outputs.fetch_gnss_tec }}" = "failure" ] && FAILED="$FAILED gnss_tec"
           [ "${{ needs.fetch-modis.outputs.fetch_modis_lst }}" = "failure" ] && FAILED="$FAILED modis_lst"
           [ "${{ needs.light.outputs.fetch_ulf }}" = "failure" ] && FAILED="$FAILED ulf"
@@ -2243,6 +2275,7 @@ jobs:
               'ocean_color': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM ocean_color WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
               'soil_moisture': 'SELECT COUNT(DISTINCT substr(observed_at,1,10)) FROM soil_moisture WHERE substr(observed_at,1,10) >= \"2011-01-01\"',
               'snet_waveform': 'SELECT COUNT(DISTINCT date_str) FROM snet_waveform WHERE date_str >= \"2011-01-01\"',
+              'fnet_waveform': 'SELECT COUNT(DISTINCT date_str) FROM fnet_waveform WHERE date_str >= \"2011-01-01\"',
           }
           for t, sql in tables.items():
               try:
