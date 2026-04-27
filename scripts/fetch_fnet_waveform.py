@@ -670,17 +670,14 @@ def _fetch_day(
                 station_id = parts[1]
                 channel = parts[3] if len(parts) > 3 else parts[-1]
 
-                # F-net distributes both BH (broadband 100Hz) and LH (long-period
-                # 1Hz) for some stations. Filter to BH only — mixing fs in the
-                # PSD path would corrupt feature values (Opus review C1).
-                if not channel or not channel.upper().startswith("BH"):
+                # HinetPy extract_sac outputs N.STATION.{U,N,E}.SAC — single-char
+                # component, instrument-specific codes (UB/NB/UA/NA/...) already
+                # normalized. fs consistency check below rejects mixed-rate.
+                ch_up = channel.upper() if channel else ""
+                comp = {"U": "Z", "N": "X", "E": "Y"}.get(ch_up)
+                if comp is None:
                     continue
-
-                suffix = channel[-1].upper()
-                if suffix in ("Z", "X", "Y", "N", "E"):
-                    # Map N→X (north) and E→Y (east) for F-net naming variant
-                    comp = {"N": "X", "E": "Y"}.get(suffix, suffix)
-                    station_files.setdefault(station_id, {})[comp] = str(sac_path)
+                station_files.setdefault(station_id, {})[comp] = str(sac_path)
 
             for station_id, comps in station_files.items():
                 if len(comps) < 3:
