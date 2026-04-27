@@ -690,8 +690,9 @@ def _fetch_day(
                 if data_z is None or data_x is None or data_y is None:
                     continue
 
-                # fs consistency check: BH* should all be 100 Hz, but a misclassified
-                # SAC of a different sample rate would silently corrupt the PSD.
+                # fs consistency check: HinetPy normalizes per (station, component) to
+                # one SAC, but a mixed-rate triplet (broadband 100Hz vs long-period 1Hz)
+                # would silently corrupt PSD — reject if any pair disagrees.
                 fs_z = info_z.get("fs", EXPECTED_FS) if info_z else EXPECTED_FS
                 fs_x = info_x.get("fs", EXPECTED_FS) if info_x else EXPECTED_FS
                 fs_y = info_y.get("fs", EXPECTED_FS) if info_y else EXPECTED_FS
