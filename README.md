@@ -466,7 +466,7 @@ gh workflow run "Earthquake Correlation Analysis" \
 | `earthdata_auth.py` | — | Shared NASA Earthdata auth: Bearer token (primary, LAADS DAAC) + Basic Auth redirect fallback (OPeNDAP) |
 | `fetch_dart_pressure.py` | NOAA NDBC | DART ocean bottom pressure: 5 Japan-area stations, historical + realtime (no auth) |
 | `fetch_ioc_sealevel.py` | IOC/VLIZ | Sea level monitoring: Japan coastal stations, REST API (no auth, 1 req/min) |
-| `fetch_snet_pressure.py` | NIED Hi-net | S-net seafloor water pressure via HinetPy (NIED credentials required) |
+| ~~`fetch_snet_pressure.py`~~ | ~~NIED Hi-net~~ | **[DEPRECATED 2026-04-25, Phase 1 Step 4aa]** S-net BPR is unavailable via HinetPy; tombstone stub retained. See [Phase 1 Step 4aa](#data-completeness-initiative). |
 | `validate_data.py` | Local DB | **Data completeness validation**: checks all 30 tables for existence, row count, date range coverage. Outputs JSON report + human-readable summary. Runs twice per workflow (post-fetch + final) |
 | `load_raw_to_bq.py` | Local DB → BQ | **Raw data BQ loader**: SQLite → BigQuery (全31テーブル). Chunked upload (50K rows), WRITE_TRUNCATE + APPEND. Min 1000 rows guard. テーブル不在時graceful skip |
 
@@ -816,7 +816,7 @@ The seafloor is the highest-sensitivity domain for detecting pre-seismic deforma
 |---|---|---|---|
 | **NOAA DART** | Seafloor vertical displacement → bottom pressure change (sub-Pa) | NDBC HTTP, **no auth** | dart_pressure_anomaly, dart_pressure_rate |
 | **IOC Sea Level** | Slow-slip → coastal sea level anomaly | IOC REST API, **no auth** | ioc_sealevel_anomaly |
-| **NIED S-net** | Sub-Pa pressure at Japan Trench subduction zone (150 stations) | HinetPy, **NIED registration** | snet_pressure_anomaly |
+| ~~**NIED S-net**~~ | ~~Sub-Pa pressure at Japan Trench subduction zone (150 stations)~~ | ~~HinetPy, **NIED registration**~~ | ~~snet_pressure_anomaly~~ **[DEPRECATED 2026-04-25, Phase 1 Step 4aa]** — HinetPy code `0120A` is acceleration, not pressure; no BPR access path exists. Active S-net contribution comes from `snet_waveform` (Phase 18+). |
 
 DART stations near Japan: 21413 (Izu-Bonin, 30.5°N), 21418 (Japan Trench/Tohoku, 38.7°N), 21419 (Kuril, 44.4°N), 21416 (Kuril N, 48.1°N), 52404 (Philippine Sea/Ryukyu, 20.6°N).
 
@@ -894,7 +894,7 @@ Phase 13 revealed that 15 out of 27 data sources had been silently failing (only
 |---|---|
 | ✅ OK (25) | earthquakes, focal_mechanisms, tec, gnss_tec, geomag_kp, geomag_hourly, cosmic_ray, olr, earth_rotation, solar_wind, gravity_mascon, soil_moisture, ocean_color, goes_xray, goes_proton, tidal_stress, particle_flux, dart_pressure, ioc_sea_level, modis_lst, ulf_magnetic, cloud_fraction, iss_lis_lightning, **tide_gauge** (2.4M rows), **nightlight** (950 rows) |
 | ❌ EMPTY (4) | so2_column, lightning, satellite_em, collector_status |
-| ❌ MISSING (1) | snet_pressure (NIED approval pending) |
+| ❌ MISSING (1) | snet_pressure (Phase 15g snapshot — later **deprecated 2026-04-25** in Phase 1 Step 4aa: HinetPy has no S-net BPR access path) |
 
 Phase 15h: **SO2 408,351行取得成功** (0→408K, OPeNDAP parser fix + Hyrax approval) but AUC unchanged — **coordinate mismatch bug discovered**: 7 spatial data loaders (OLR, GRACE, SO2, soil moisture, ocean color, cloud fraction, nightlight) were using raw data source coordinates as lookup keys instead of snapping to the 2° prediction grid via `cell_key()`. All spatial features from these sources were silently zero despite having data in the DB. Fixed in Phase 15i.
 
