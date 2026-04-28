@@ -673,11 +673,12 @@ def _fetch_day(
                 station_id = parts[1]
                 channel = parts[3] if len(parts) > 3 else parts[-1]
 
-                # HinetPy extract_sac outputs N.STATION.{U,N,E}.SAC — single-char
-                # component, instrument-specific codes (UB/NB/UA/NA/...) already
-                # normalized. fs consistency check below rejects mixed-rate.
+                # F-net SAC component is 2-char (verified via PR #104 debug log,
+                # 2026-04-28): second char 'B' = broadband 100Hz (target), 'A' =
+                # long-period 1Hz (reject to avoid fs mismatch in PSD path).
+                # Sample filenames observed: N.ISIF.NB.SAC, N.ADMF.EB.SAC.
                 ch_up = channel.upper() if channel else ""
-                comp = {"U": "Z", "N": "X", "E": "Y"}.get(ch_up)
+                comp = {"UB": "Z", "NB": "X", "EB": "Y"}.get(ch_up)
                 if comp is None:
                     continue
                 station_files.setdefault(station_id, {})[comp] = str(sac_path)
