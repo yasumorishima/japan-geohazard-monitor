@@ -661,6 +661,9 @@ def _fetch_day(
                 logger.warning("No SAC files decoded for %s %02d:00", date_str, hour)
                 continue
 
+            sample_names = [Path(p).name for p in sac_files[:2]]
+            logger.info("  extract_sac -> %d SAC files, sample: %s", len(sac_files), sample_names)
+
             station_files: dict = {}
             for sac_path in sac_files:
                 basename = Path(sac_path).stem
@@ -678,6 +681,13 @@ def _fetch_day(
                 if comp is None:
                     continue
                 station_files.setdefault(station_id, {})[comp] = str(sac_path)
+
+            if station_files:
+                first_st = next(iter(station_files))
+                logger.info("  station_files: %d stations, first=%s comps=%s",
+                            len(station_files), first_st, sorted(station_files[first_st].keys()))
+            else:
+                logger.info("  station_files: 0 stations (channel filter rejected all SACs)")
 
             for station_id, comps in station_files.items():
                 if len(comps) < 3:
