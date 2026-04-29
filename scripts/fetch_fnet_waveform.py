@@ -70,6 +70,12 @@ MAX_BACKFILL_DAYS_PER_RUN = 5
 QUOTA_COOLDOWN_SEC = 2
 MAX_REQUESTS_PER_RUN = int(os.environ.get("FNET_MAX_REQUESTS", "60"))
 
+# Phase D3: graceful partial-save before SIGTERM. The GHA step is killed at
+# timeout-minutes (default 75 = 4500 s); we proactively stop ~5 min earlier
+# so per-item saves and the artifact upload step can run cleanly.
+STEP_BUDGET_SEC = int(os.environ.get("FNET_STEP_BUDGET_SEC", "4200"))
+DEADLINE_MARGIN_SEC = int(os.environ.get("FNET_DEADLINE_MARGIN_SEC", "300"))
+
 # Initial active station count (gradual rollout: 15 → 30 → 73).
 # Geographic stratified sample by latitude (N→S) over all available stations.
 MAX_ACTIVE_STATIONS = int(os.environ.get("FNET_MAX_STATIONS", "15"))
@@ -627,14 +633,30 @@ def _check_credentials() -> tuple[str, str] | None:
 
 def _fetch_day(
     client, station_coords: dict, target_date: datetime, n_segments: int,
+    deadline: float | None = None,
 ) -> list[dict]:
-    """Fetch and process one day's F-net waveform data."""
+    """Fetch and process one day's F-net waveform data.
+
+    If ``deadline`` (a ``time.monotonic()`` value) is provided, the segment
+    loop exits early once it is reached, returning whatever results have been
+    accumulated so far so the caller can persist them before SIGTERM.
+    """
     import shutil
     results = []
     date_str = target_date.strftime("%Y-%m-%d")
     segment_hours = [h for h in range(0, 24, max(1, 24 // n_segments))][:n_segments]
+    requested_segments = len(segment_hours)
+    fetched_segments = 0
 
     for hour in segment_hours:
+        if deadline is not None and time.monotonic() >= deadline:
+            logger.warning(
+                "  Step budget exhausted mid-day at %s %02d:00 — fetched %d/%d "
+                "segments, %d records pending caller persist.",
+                date_str, hour, fetched_segments, requested_segments, len(results),
+            )
+            break
+        fetched_segments += 1
         start = target_date.replace(hour=hour, minute=0, second=0, microsecond=0)
         work_dir = tempfile.mkdtemp(prefix=f"fnet_{date_str}_{hour:02d}_")
 
@@ -766,6 +788,10 @@ def _fetch_day(
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
 
+        # Skip cooldown if it would push us past the deadline (cooldown is
+        # ~QUOTA_COOLDOWN_SEC; SIGTERM during sleep would lose accumulated state).
+        if deadline is not None and time.monotonic() + QUOTA_COOLDOWN_SEC >= deadline:
+            continue
         time.sleep(QUOTA_COOLDOWN_SEC)
 
     return results
@@ -882,8 +908,25 @@ def _fetch_and_save(
     total_items = len(dates_to_fetch)
     request_count = 0
 
+    # Phase D3: graceful exit before SIGTERM. Per-item saves below mean any
+    # data already persisted survives; this loop just stops queueing new items
+    # and the segment loop also bails out via the deadline argument.
+    start_time = time.monotonic()
+    deadline = start_time + STEP_BUDGET_SEC - DEADLINE_MARGIN_SEC
+
     try:
         for i, (target_date, n_segments) in enumerate(dates_to_fetch):
+            now = time.monotonic()
+            if now >= deadline:
+                logger.warning(
+                    "Step budget exhausted at item %d/%d (elapsed %.0fs / "
+                    "budget %ds, margin %ds). Breaking to allow graceful "
+                    "artifact upload.",
+                    i, total_items, now - start_time,
+                    STEP_BUDGET_SEC, DEADLINE_MARGIN_SEC,
+                )
+                break
+
             date_str = target_date.strftime("%Y-%m-%d")
 
             if request_count + n_segments > MAX_REQUESTS_PER_RUN:
@@ -901,6 +944,7 @@ def _fetch_and_save(
             try:
                 day_records = _fetch_day(
                     client, station_coords, target_date, n_segments,
+                    deadline=deadline,
                 )
             except HinetQuotaError as exc:
                 request_count += n_segments
@@ -931,6 +975,9 @@ def _fetch_and_save(
                 _mark_failed_sync(conn, date_str, reason="no_records")
                 logger.info("  Marked %s as failed (no records returned)", date_str)
 
+            # Skip cooldown if it would push us past the deadline.
+            if time.monotonic() + QUOTA_COOLDOWN_SEC >= deadline:
+                continue
             time.sleep(QUOTA_COOLDOWN_SEC)
     finally:
         conn.close()
