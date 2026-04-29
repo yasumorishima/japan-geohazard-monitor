@@ -1200,6 +1200,19 @@ jobs:
       restore_restored: ${{ steps.restore.outputs.restored }}
 
     steps:
+      # Free ~30GB of pre-installed software we never use, to keep the runner's
+      # _diag/Worker_*.log from filling the 14GB default disk during the ~2h
+      # serial fetcher run. Three consecutive runs (16:54/19:42/21:50 UTC on
+      # 2026-04-28) failed at the Snapshot DB step with
+      # "No space left on device : _diag/Worker_*.log" or
+      # "hosted runner lost communication". Removing dotnet/android/ghc/codeql
+      # is a well-known GHA disk-pressure mitigation; this workflow uses none
+      # of them.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
