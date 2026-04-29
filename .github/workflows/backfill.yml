@@ -1090,6 +1090,8 @@ jobs:
           HINET_PASS: ${{ secrets.HINET_PASS }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           SNET_MAX_REQUESTS: "60"
+          # Phase D3: full step budget; script subtracts DEADLINE_MARGIN_SEC=300 (~5min) before SIGTERM at 4500s.
+          SNET_STEP_BUDGET_SEC: "4500"
         run: |
           pip install HinetPy 2>/dev/null || true
           python3 scripts/fetch_snet_waveform.py || echo "S-net waveform fetch failed (non-fatal)"
@@ -1110,6 +1112,8 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           FNET_MAX_REQUESTS: ${{ vars.FNET_MAX_REQUESTS || '60' }}
           FNET_MAX_STATIONS: ${{ vars.FNET_MAX_STATIONS || '15' }}
+          # Phase D3: full step budget; script subtracts DEADLINE_MARGIN_SEC=300 (~5min) before SIGTERM at 4500s.
+          FNET_STEP_BUDGET_SEC: ${{ vars.FNET_STEP_BUDGET_SEC || '4500' }}
         run: |
           pip install HinetPy 2>/dev/null || true
           python3 scripts/fetch_fnet_waveform.py || echo "F-net waveform fetch failed (non-fatal)"

@@ -84,6 +84,12 @@ MAX_BACKFILL_DAYS_PER_RUN = 5  # 5 days × 3 codes = 15 backfill requests (reduc
 QUOTA_COOLDOWN_SEC = 2         # Pause between requests to respect quota
 MAX_REQUESTS_PER_RUN = int(os.environ.get("SNET_MAX_REQUESTS", "120"))
 
+# Phase D3: graceful partial-save before SIGTERM. The GHA step is killed at
+# timeout-minutes (default 75 = 4500 s); we proactively stop ~5 min earlier
+# so per-item saves and the artifact upload step can run cleanly.
+STEP_BUDGET_SEC = int(os.environ.get("SNET_STEP_BUDGET_SEC", "4200"))
+DEADLINE_MARGIN_SEC = int(os.environ.get("SNET_DEADLINE_MARGIN_SEC", "300"))
+
 
 class HinetQuotaError(Exception):
     """Raised when HinetPy reports daily quota exceeded.
@@ -663,6 +669,7 @@ def _check_credentials() -> tuple[str, str] | None:
 def _fetch_day(
     client, station_coords: dict, target_date: datetime, n_segments: int,
     network_code: str = "0120A", sensor_config: dict = None,
+    deadline: float | None = None,
 ) -> list[dict]:
     """Fetch and process one day's S-net waveform data for a single sensor code.
 
@@ -678,8 +685,19 @@ def _fetch_day(
     results = []
     date_str = target_date.strftime("%Y-%m-%d")
     segment_hours = [h for h in range(0, 24, max(1, 24 // n_segments))][:n_segments]
+    requested_segments = len(segment_hours)
+    fetched_segments = 0
 
     for hour in segment_hours:
+        if deadline is not None and time.monotonic() >= deadline:
+            logger.warning(
+                "  Step budget exhausted mid-day at %s [%s] %02d:00 -- "
+                "fetched %d/%d segments, %d records pending caller persist.",
+                date_str, network_code, hour, fetched_segments,
+                requested_segments, len(results),
+            )
+            break
+        fetched_segments += 1
         start = target_date.replace(hour=hour, minute=0, second=0, microsecond=0)
         work_dir = tempfile.mkdtemp(prefix=f"snet_{network_code}_{date_str}_{hour:02d}_")
 
@@ -807,7 +825,9 @@ def _fetch_day(
             except Exception:
                 pass
 
-        # Rate limiting
+        # Rate limiting; skip if it would push us past the deadline.
+        if deadline is not None and time.monotonic() + QUOTA_COOLDOWN_SEC >= deadline:
+            continue
         time.sleep(QUOTA_COOLDOWN_SEC)
 
     return results
@@ -926,8 +946,25 @@ def _fetch_and_save(
     total_items = len(dates_to_fetch)
     request_count = 0
 
+    # Phase D3: graceful exit before SIGTERM. Per-item saves below mean any
+    # data already persisted survives; this loop just stops queueing new items
+    # and the segment loop also bails out via the deadline argument.
+    start_time = time.monotonic()
+    deadline = start_time + STEP_BUDGET_SEC - DEADLINE_MARGIN_SEC
+
     try:
         for i, (target_date, n_segments, network_code, sensor_config) in enumerate(dates_to_fetch):
+            now = time.monotonic()
+            if now >= deadline:
+                logger.warning(
+                    "Step budget exhausted at item %d/%d (elapsed %.0fs / "
+                    "budget %ds, margin %ds). Breaking to allow graceful "
+                    "artifact upload.",
+                    i, total_items, now - start_time,
+                    STEP_BUDGET_SEC, DEADLINE_MARGIN_SEC,
+                )
+                break
+
             date_str = target_date.strftime("%Y-%m-%d")
             sensor_type = sensor_config["sensor_type"]
 
@@ -948,6 +985,7 @@ def _fetch_and_save(
                 day_records = _fetch_day(
                     client, station_coords, target_date, n_segments,
                     network_code=network_code, sensor_config=sensor_config,
+                    deadline=deadline,
                 )
             except HinetQuotaError as exc:
                 request_count += n_segments
@@ -984,6 +1022,9 @@ def _fetch_and_save(
                 logger.info("  Marked %s [%s] as failed (no records returned)",
                             date_str, network_code)
 
+            # Skip cooldown if it would push us past the deadline.
+            if time.monotonic() + QUOTA_COOLDOWN_SEC >= deadline:
+                continue
             time.sleep(QUOTA_COOLDOWN_SEC)
     finally:
         conn.close()
