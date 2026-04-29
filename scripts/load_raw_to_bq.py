@@ -415,7 +415,7 @@ MIN_ROWS_TO_UPLOAD = 1000
 # the data's natural density.
 TABLE_MIN_ROWS_OVERRIDE = {
     # F-net broadband waveform: targeted around M6+ earthquakes, ~14 active
-    # stations × ~3 components × a handful of recent dates → low hundreds
+    # stations x ~3 components x a handful of recent dates -> low hundreds
     # of rows is realistic for the bootstrap phase. Phase D4 / PR #105 (SAC
     # filter fix) + PR #106 (light-job disk fix) confirmed end-to-end pipeline,
     # but cron #25086162850 produced 429 rows < 1000 and was therefore skipped,
