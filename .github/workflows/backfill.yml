@@ -301,7 +301,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_modis_lst.py || echo "MODIS LST discovery completed"
+          python3 scripts/fetch_modis_lst.py
 
       - name: Snapshot DB
         id: snapshot
@@ -1094,7 +1094,7 @@ jobs:
           SNET_STEP_BUDGET_SEC: "4500"
         run: |
           pip install HinetPy 2>/dev/null || true
-          python3 scripts/fetch_snet_waveform.py || echo "S-net waveform fetch failed (non-fatal)"
+          python3 scripts/fetch_snet_waveform.py
           if [ -f results/snet_coverage.json ]; then
             mkdir -p results/midrun
             cp results/snet_coverage.json results/midrun/
@@ -1116,7 +1116,7 @@ jobs:
           FNET_STEP_BUDGET_SEC: ${{ vars.FNET_STEP_BUDGET_SEC || '4500' }}
         run: |
           pip install HinetPy 2>/dev/null || true
-          python3 scripts/fetch_fnet_waveform.py || echo "F-net waveform fetch failed (non-fatal)"
+          python3 scripts/fetch_fnet_waveform.py
           if [ -f results/fnet_coverage.json ]; then
             mkdir -p results/midrun
             cp results/fnet_coverage.json results/midrun/
@@ -1457,7 +1457,7 @@ jobs:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           GNSS_TEC_MAX_DATES: "30"
         run: |
-          python3 scripts/fetch_gnss_tec.py || echo "GNSS-TEC fetch non-fatal failure"
+          python3 scripts/fetch_gnss_tec.py
 
       - name: Fetch Kakioka ULF magnetic data
         id: fetch_ulf
@@ -1468,7 +1468,7 @@ jobs:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           ULF_MAX_DATES: "300"
         run: |
-          python3 scripts/fetch_kakioka_ulf.py || echo "ULF fetch completed"
+          python3 scripts/fetch_kakioka_ulf.py
 
       - name: Fetch NMDB cosmic ray data
         id: fetch_cosmic_ray
@@ -1478,7 +1478,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_nmdb_cosmicray.py || echo "NMDB fetch failed (non-fatal)"
+          python3 scripts/fetch_nmdb_cosmicray.py
 
       - name: Fetch ISS LIS lightning data (Earthdata auth, 2017-2023)
         id: fetch_iss_lis
@@ -1491,7 +1491,7 @@ jobs:
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         run: |
-          python3 scripts/fetch_iss_lis_lightning.py || echo "ISS LIS fetch failed (non-fatal)"
+          python3 scripts/fetch_iss_lis_lightning.py
 
       - name: Fetch WWLLN Monthly Thunder Hour (Earthdata auth, 2013-2025)
         id: fetch_wwlln_thunder_hour
@@ -1504,7 +1504,7 @@ jobs:
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         run: |
-          python3 scripts/fetch_wwlln_thunder_hour.py || echo "WWLLN thunder-hour fetch failed (non-fatal)"
+          python3 scripts/fetch_wwlln_thunder_hour.py
 
       - name: Fetch LIS/OTD Monthly Climatology Time Series (Earthdata auth, 1995-2014)
         id: fetch_lis_otd_monthly
@@ -1517,7 +1517,7 @@ jobs:
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         run: |
-          python3 scripts/fetch_lis_otd_monthly.py || echo "LIS/OTD monthly fetch failed (non-fatal)"
+          python3 scripts/fetch_lis_otd_monthly.py
 
       - name: Fetch INTERMAGNET hourly geomagnetic (CSES portion deprecated 2026-04-26, see fetch_swarm_em)
         id: fetch_geomag
@@ -1540,7 +1540,7 @@ jobs:
           SWARM_TOKEN: ${{ secrets.SWARM_TOKEN }}
           SWARM_MAX_DAYS: "90"
         run: |
-          python3 -u scripts/fetch_swarm_em.py || echo "Swarm EM fetch failed (non-fatal)"
+          python3 -u scripts/fetch_swarm_em.py
 
       - name: Fetch NOAA OLR daily (thermal anomaly)
         id: fetch_olr
@@ -1550,7 +1550,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_olr.py || echo "OLR fetch failed (non-fatal)"
+          python3 scripts/fetch_olr.py
 
       - name: Fetch IERS Earth Orientation Parameters
         id: fetch_iers
@@ -1560,7 +1560,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_iers_eop.py || echo "IERS EOP fetch failed (non-fatal)"
+          python3 scripts/fetch_iers_eop.py
 
       - name: Fetch NASA OMNIWeb solar wind hourly
         id: fetch_solar_wind
@@ -1570,7 +1570,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_solar_wind.py || echo "Solar wind fetch failed (non-fatal)"
+          python3 scripts/fetch_solar_wind.py
 
       - name: Fetch GRACE/GRACE-FO gravity anomaly
         id: fetch_grace
@@ -1583,7 +1583,7 @@ jobs:
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         run: |
-          python3 scripts/fetch_grace_gravity.py || echo "GRACE fetch failed (non-fatal)"
+          python3 scripts/fetch_grace_gravity.py
 
       - name: Fetch UHSLC tide gauge data
         id: fetch_tide_gauge
@@ -1593,7 +1593,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_tide_gauge.py || echo "Tide gauge fetch failed (non-fatal)"
+          python3 scripts/fetch_tide_gauge.py
 
       - name: Fetch soil moisture (NOAA CPC monthly + SMOPS daily)
         id: fetch_soil_moisture
@@ -1603,7 +1603,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_smap_moisture.py || echo "Soil moisture fetch failed (non-fatal)"
+          python3 scripts/fetch_smap_moisture.py
 
       - name: Fetch NASA ocean color chlorophyll-a
         id: fetch_ocean_color
@@ -1616,7 +1616,7 @@ jobs:
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         run: |
-          python3 scripts/fetch_ocean_color.py || echo "Ocean color fetch failed (non-fatal)"
+          python3 scripts/fetch_ocean_color.py
 
       - name: Fetch VIIRS nighttime light/airglow (Earthdata auth)
         id: fetch_nightlight
@@ -1629,7 +1629,7 @@ jobs:
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         run: |
-          python3 scripts/fetch_viirs_nighttime.py || echo "VIIRS fetch failed (non-fatal)"
+          python3 scripts/fetch_viirs_nighttime.py
 
       - name: Fetch GOES X-ray flux (solar flares)
         id: fetch_goes_xray
@@ -1639,7 +1639,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_goes_xray.py || echo "GOES X-ray fetch failed (non-fatal)"
+          python3 scripts/fetch_goes_xray.py
 
       - name: Fetch GOES proton flux (SEP events)
         id: fetch_goes_proton
@@ -1649,7 +1649,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_goes_proton.py || echo "GOES proton fetch failed (non-fatal)"
+          python3 scripts/fetch_goes_proton.py
 
       - name: Compute tidal stress (lunar+solar, pure calculation)
         id: fetch_tidal_stress
@@ -1659,7 +1659,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_tidal_stress.py || echo "Tidal stress computation failed (non-fatal)"
+          python3 scripts/fetch_tidal_stress.py
 
       - name: Fetch GOES electron flux (particle precipitation)
         id: fetch_particle_flux
@@ -1669,7 +1669,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_poes_particles.py || echo "Particle flux fetch failed (non-fatal)"
+          python3 scripts/fetch_poes_particles.py
 
       - name: Fetch NOAA DART ocean bottom pressure
         id: fetch_dart
@@ -1679,7 +1679,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_dart_pressure.py || echo "DART pressure fetch failed (non-fatal)"
+          python3 scripts/fetch_dart_pressure.py
 
       - name: Fetch IOC sea level monitoring
         id: fetch_ioc_sealevel
@@ -1689,7 +1689,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_ioc_sealevel.py || echo "IOC sea level fetch failed (non-fatal)"
+          python3 scripts/fetch_ioc_sealevel.py
 
       - name: Snapshot DB for light artifact
         id: snapshot
@@ -1913,6 +1913,7 @@ jobs:
 
       - name: Notify Discord
         if: always()
+        continue-on-error: true
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           FETCH_EARTHQUAKES: ${{ needs.light.outputs.fetch_earthquakes }}
@@ -1997,7 +1998,7 @@ jobs:
           }]}).encode()
           req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
           urllib.request.urlopen(req)
-          " 2>/dev/null || echo "Discord notification failed (non-fatal)"
+          "
             exit 0
           fi
           python3 -c "
@@ -2132,7 +2133,7 @@ jobs:
           }]}).encode()
           req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
           urllib.request.urlopen(req)
-          " 2>/dev/null || echo "Discord notification failed (non-fatal)"
+          "
 
       # Auto-rerun failed fetch jobs at most ONCE (run_attempt==1 guard prevents
       # infinite loops). Only for scheduled runs -- manual dispatch stays manual.
