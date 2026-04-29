@@ -117,5 +117,24 @@ class TestPhaseD3Deadline(unittest.TestCase):
         self.assertEqual(len(client.calls), 4)
 
 
+    def test_snet_fetch_day_breaks_midloop_when_deadline_reached(self):
+        import fetch_snet_waveform as s
+        fake = FakeMonotonic(1000.0)
+        def time_advancing_call():
+            v = fake.now
+            fake.now += 6.0
+            return v
+        with patch.object(s.time, "monotonic", time_advancing_call):
+            client = FakeClient()
+            target = datetime(2026, 4, 28)
+            results = s._fetch_day(
+                client, {}, target, n_segments=4,
+                network_code="0120A",
+                sensor_config={"sensor_type": "accel", "vlf_analysis": False},
+                deadline=1010.0,
+            )
+        self.assertLess(len(client.calls), 4)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
