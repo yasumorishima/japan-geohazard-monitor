@@ -407,6 +407,22 @@ TABLES = {
 # when the DB is empty or corrupted.
 MIN_ROWS_TO_UPLOAD = 1000
 
+# Per-table override for the minimum-row threshold.
+# Some tables are sparse by design (event-targeted backfill, rare phenomena)
+# and would never reach the global 1000-row floor in their bootstrap phase.
+# These tables still need the threshold > 0 so a corrupt-empty SQLite cannot
+# WRITE_TRUNCATE the BQ data to zero — just at a lower level appropriate for
+# the data's natural density.
+TABLE_MIN_ROWS_OVERRIDE = {
+    # F-net broadband waveform: targeted around M6+ earthquakes, ~14 active
+    # stations × ~3 components × a handful of recent dates → low hundreds
+    # of rows is realistic for the bootstrap phase. Phase D4 / PR #105 (SAC
+    # filter fix) + PR #106 (light-job disk fix) confirmed end-to-end pipeline,
+    # but cron #25086162850 produced 429 rows < 1000 and was therefore skipped,
+    # leaving fnet_waveform absent in BQ despite all upstream steps succeeding.
+    "fnet_waveform": 100,
+}
+
 
 def _sanitize(v):
     # json.dumps emits bare NaN/Infinity tokens which BQ rejects.
@@ -452,9 +468,12 @@ def main():
                 count = conn.execute(
                     "SELECT COUNT(*) FROM " + table_name  # table names are hardcoded above
                 ).fetchone()[0]
-                if count < MIN_ROWS_TO_UPLOAD:
+                threshold = TABLE_MIN_ROWS_OVERRIDE.get(
+                    table_name, MIN_ROWS_TO_UPLOAD
+                )
+                if count < threshold:
                     logger.info("%s: %d rows (< %d minimum) — skipping to protect BQ data",
-                                table_name, count, MIN_ROWS_TO_UPLOAD)
+                                table_name, count, threshold)
                     continue
 
                 logger.info("%s: streaming %d rows to gzip NDJSON...", table_name, count)
