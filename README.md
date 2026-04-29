@@ -314,6 +314,18 @@ F-net `FNET_START_STR` anchor changed 1995-08-01 → 2000-01-01 (PR #99, merge c
 
 F-net SAC channel filter critical fix (PR #100, merge commit `8ff0c4e`) — 🔴 the Step 5c F-net step had been silently producing 0 records since rollout. `channel.upper().startswith("BH")` assumed SEED 3-char component naming (BHU/BHN/BHE), but HinetPy `extract_sac` writes single-char components (`N.STATION.{U,N,E}.SAC`), so every SAC was rejected and each chunk logged `42 SAC data successfully extracted` → `0 stations processed`; BQ `data-platform-490901.geohazard.fnet_waveform` confirmed never created (cron run 24964462897 evidence). Replaced startswith with `{"U": "Z", "N": "X", "E": "Y"}` component-to-axis mapping; fs consistency check across the triplet still rejects mixed broadband/long-period combinations. CodeRabbit round-1 nitpick (stale "BH*" comment refresh) addressed in round 2. Verification of `fnet_waveform` row count > 0 deferred to next cron run after merge.
 
+### Phase 1 Step 5g ✅ (2026-04-28)
+
+F-net SAC channel filter true root-cause fix (PR #105, merge commit `d64f7f6`). After Step 5f (PR #100) replaced `BH*` with single-char `{U, N, E}`, the F-net step still produced 0 records. Debug instrumentation added in PR #104 (`fa6e757`) revealed `extract_sac` actually outputs **2-char component names** (`N.ISIF.NB.SAC`, `N.ADMF.EB.SAC`, ...): trailing `B` = broadband 100 Hz, trailing `A` = long-period 1 Hz. Replaced the single-char filter with `{"UB": "Z", "NB": "X", "EB": "Y"}` to select broadband only (long-period rejected to keep the PSD-path fs consistent). Verified on dispatch run 25086162850: `extract_sac -> 42 SAC files`, `station_files: 14 stations, comps=['X', 'Y', 'Z']`, `~13 stations processed` per date.
+
+### Phase 1 Step 5h ✅ (2026-04-29)
+
+light job `Free disk space` step (PR #106, merge commit `6d685e3d`). Three consecutive cron runs on HEAD `d64f7f6` (16:54 / 19:42 / 21:50 UTC 2026-04-28) failed with `System.IO.IOException: No space left on device : '/home/runner/actions-runner/cached/2.334.0/_diag/Worker_*.log'` during `Snapshot DB for light artifact` -- the runner's own diagnostic log filled the GitHub-hosted runner's 14 GB default disk in ~30 min of serial fetcher output. Added a leading step that removes pre-installed toolchains the workflow does not use (`/usr/share/dotnet`, `/usr/local/lib/android`, `/opt/ghc`, `/opt/hostedtoolcache/CodeQL`) for ~30 GB of headroom. Verified end-to-end on dispatch run 25086162850: light ✅, merge ✅, `merge_checkpoints.py` reported `fnet_waveform: 0 -> 429 rows (overlay applied)`.
+
+### Phase 1 Step 5i ✅ (2026-04-29)
+
+Per-table BQ row-count threshold override (PR #107, merge commit `9c519cf5`). With Steps 5g and 5h merged, dispatch run 25086162850 reached the BQ upload step but logged `fnet_waveform: 429 rows (< 1000 minimum) -- skipping to protect BQ data`. `MIN_ROWS_TO_UPLOAD = 1000` is calibrated to protect populated tables from corrupt-empty SQLite `WRITE_TRUNCATE`, but `fnet_waveform` is event-targeted (M6+ +/-N day windows x ~14 stations x 3 components) and naturally bootstraps in the low hundreds. Added `TABLE_MIN_ROWS_OVERRIDE = {"fnet_waveform": 100}`; the other 30 tables retain the 1000-row floor. CodeRabbit round-1 RUF003 nitpick (Unicode `x` / `->` in comment) addressed by ASCII-only rewrite in round 2. BQ `geohazard.fnet_waveform` table creation verification deferred to the next cron run on HEAD `9c519cf5`.
+
 ### Remaining
 
 Step 7 `|| echo "non-fatal"` pattern elimination
