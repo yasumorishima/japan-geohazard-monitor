@@ -18,11 +18,19 @@ No authentication required.
 Strategy: fetch 1 representative hour per date (12 UT = 21 JST nighttime,
 or 03 UT = 12 JST daytime) to manage data volume. Priority: VTEC for
 absolute values, dTEC for detrended anomaly detection.
+
+Phase 2 (1) acceleration (2026-04-30):
+    - GNSS_TEC_MAX_DATES default 30 -> 200 (6.7x throughput)
+    - Parallel HTTP fetch via asyncio.Semaphore (4 in-flight dates)
+    - Per-date rate-limit sleep 2.0s -> 0.5s
+    - gnss_tec_failed_dates table to skip 0-record dates after 3 retries
+    - 30-day retry reset so archive backfill is not permanently blocked
 """
 
 import asyncio
 import io
 import logging
+import os as _os
 import struct
 import sys
 from datetime import datetime, timedelta, timezone
@@ -52,9 +60,15 @@ TIMEOUT = aiohttp.ClientTimeout(total=120, connect=30)
 # Fetch both for day/night comparison
 FETCH_HOURS = [3, 12]
 
+# Phase 2 (1) acceleration constants
+MAX_RETRIES_BEFORE_SKIP = 3
+FAILED_DATES_RETRY_AFTER_DAYS = 30
+PARALLEL_DATES = int(_os.environ.get("GNSS_TEC_PARALLEL_DATES", "4"))
+RATE_LIMIT_SLEEP = float(_os.environ.get("GNSS_TEC_RATE_LIMIT_SLEEP", "0.5"))
+
 
 async def init_gnss_tec_table():
-    """Create GNSS-TEC table if not exists."""
+    """Create GNSS-TEC data and failure-tracking tables if not exist."""
     async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS gnss_tec (
@@ -78,6 +92,47 @@ async def init_gnss_tec_table():
             CREATE INDEX IF NOT EXISTS idx_gnss_tec_location
             ON gnss_tec(latitude, longitude)
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS gnss_tec_failed_dates (
+                date_str TEXT PRIMARY KEY,
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                last_failed_at TEXT NOT NULL
+            )
+        """)
+        await db.commit()
+
+
+async def get_failed_dates() -> set[str]:
+    """Return date strings to skip (retry_count >= threshold AND recent failure).
+
+    Dates whose last_failed_at is older than FAILED_DATES_RETRY_AFTER_DAYS roll
+    out of the skip set so archive coverage that becomes available later can be
+    re-fetched without manual intervention.
+    """
+    cutoff_iso = (
+        datetime.now(timezone.utc) - timedelta(days=FAILED_DATES_RETRY_AFTER_DAYS)
+    ).isoformat()
+    async with safe_connect() as db:
+        rows = await db.execute_fetchall(
+            "SELECT date_str FROM gnss_tec_failed_dates "
+            "WHERE retry_count >= ? AND last_failed_at > ?",
+            (MAX_RETRIES_BEFORE_SKIP, cutoff_iso),
+        )
+    return {r[0] for r in rows}
+
+
+async def mark_failed_date(date_str: str) -> None:
+    """Record a 0-record fetch for date_str; increment retry_count on conflict."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    async with safe_connect() as db:
+        await db.execute(
+            "INSERT INTO gnss_tec_failed_dates (date_str, retry_count, last_failed_at) "
+            "VALUES (?, 1, ?) "
+            "ON CONFLICT(date_str) DO UPDATE SET "
+            "retry_count = retry_count + 1, "
+            "last_failed_at = excluded.last_failed_at",
+            (date_str, now_iso),
+        )
         await db.commit()
 
 
@@ -294,9 +349,13 @@ async def main():
     now = datetime.now(timezone.utc).isoformat()
 
     # Continuous strategy: all dates 2011-01-01 to yesterday, fetch missing.
-    # Recent-first fill so active-analysis window completes first.
+    # Oldest-first fill so archive coverage gap closes from 2011 forward.
     start_date = datetime(2011, 1, 1)
-    end_date = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+    end_date = (
+        datetime.now(timezone.utc)
+        .replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+        - timedelta(days=1)
+    )
     total_days = (end_date - start_date).days + 1
     all_dates = [start_date + timedelta(days=i) for i in range(total_days)]
 
@@ -305,27 +364,58 @@ async def main():
             "SELECT DISTINCT DATE(epoch) FROM gnss_tec"
         )
 
-    existing_dates = set(datetime.strptime(r[0], "%Y-%m-%d") for r in existing if r[0])
-    # Oldest-first for GNSS-TEC: Nagoya ISEE has sporadic 404s in the last 1-6 months
-    # (publication lag). 2011-early-2026 archive is ~fully populated, so filling
-    # from oldest fastest catches up without wasting cron budget on missing URLs.
-    dates_to_fetch = sorted(d for d in all_dates if d not in existing_dates)
+    existing_date_strs = {r[0] for r in existing if r[0]}
+    failed_skip = await get_failed_dates()
 
-    logger.info("GNSS-TEC: %d missing dates (%d total, %d existing)",
-                len(dates_to_fetch), total_days, len(existing_dates))
+    # Combined skip set: dates that already have data OR have hit retry limit
+    # within the last FAILED_DATES_RETRY_AFTER_DAYS days.
+    skip_date_strs = existing_date_strs | failed_skip
+
+    # Oldest-first for GNSS-TEC: Nagoya ISEE has sporadic 404s in the last 1-6
+    # months (publication lag). 2011-early-2026 archive is mostly populated, so
+    # filling from oldest fastest catches up without wasting cron budget on
+    # recent missing URLs (those eventually become covered).
+    dates_to_fetch = sorted(
+        d for d in all_dates if d.strftime("%Y-%m-%d") not in skip_date_strs
+    )
+
+    logger.info(
+        "GNSS-TEC: %d missing dates (%d total, %d existing, %d failed-skip)",
+        len(dates_to_fetch), total_days, len(existing_date_strs), len(failed_skip),
+    )
 
     if not dates_to_fetch:
         logger.info("No new dates to fetch")
         return
 
+    max_dates = int(_os.environ.get("GNSS_TEC_MAX_DATES", "200"))
+    target_dates = dates_to_fetch[:max_dates]
+    logger.info(
+        "Fetching %d dates with parallelism=%d, rate_limit_sleep=%.2fs",
+        len(target_dates), PARALLEL_DATES, RATE_LIMIT_SLEEP,
+    )
+
+    sem = asyncio.Semaphore(PARALLEL_DATES)
+
+    async def fetch_one(session: aiohttp.ClientSession, date: datetime):
+        async with sem:
+            rows = await fetch_date(session, date)
+            # Per-date rate-limit sleep stays inside semaphore so concurrent
+            # workers each pace at RATE_LIMIT_SLEEP rather than burst-and-stop.
+            await asyncio.sleep(RATE_LIMIT_SLEEP)
+            return date, rows
+
     total_records = 0
-    # Each date fetches 2 hours × ~12MB = ~24MB download.
-    import os as _os
-    max_dates = int(_os.environ.get("GNSS_TEC_MAX_DATES", "30"))
+    inserted_dates = 0
+    failed_dates_count = 0
 
     async with aiohttp.ClientSession() as session:
-        for i, date in enumerate(dates_to_fetch[:max_dates]):
-            rows = await fetch_date(session, date)
+        tasks = [fetch_one(session, d) for d in target_dates]
+        # as_completed lets us write to SQLite incrementally as fetches finish
+        # (HTTP parallel, SQLite sequential to avoid lock contention).
+        for coro in asyncio.as_completed(tasks):
+            date, rows = await coro
+            date_str = date.strftime("%Y-%m-%d")
             if rows:
                 async with safe_connect() as db:
                     await db.executemany(
@@ -336,18 +426,19 @@ async def main():
                     )
                     await db.commit()
                 total_records += len(rows)
-                logger.info("  %s: %d records (total %d)",
-                            date.strftime("%Y-%m-%d"), len(rows), total_records)
+                inserted_dates += 1
+                logger.info("  %s: %d records (cumulative: %d records / %d dates)",
+                            date_str, len(rows), total_records, inserted_dates)
+            else:
+                await mark_failed_date(date_str)
+                failed_dates_count += 1
+                logger.info("  %s: 0 records (marked failed, cumulative failed: %d)",
+                            date_str, failed_dates_count)
 
-            if (i + 1) % 10 == 0:
-                logger.info("  Progress: %d/%d dates, %d records total",
-                            i + 1, min(len(dates_to_fetch), max_dates), total_records)
-
-            # Rate limiting — be polite to Nagoya Univ. servers
-            await asyncio.sleep(2.0)
-
-    logger.info("GNSS-TEC fetch complete: %d records from %d dates",
-                total_records, min(len(dates_to_fetch), max_dates))
+    logger.info(
+        "GNSS-TEC fetch complete: %d records / %d dates inserted, %d dates failed",
+        total_records, inserted_dates, failed_dates_count,
+    )
 
 
 if __name__ == "__main__":
