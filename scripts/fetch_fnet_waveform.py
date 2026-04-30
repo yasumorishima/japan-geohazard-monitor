@@ -66,7 +66,7 @@ REQUEST_DURATION_MIN = 5
 SEGMENTS_RECENT = 4
 SEGMENTS_BACKFILL = 1
 RECENT_DAYS = 7
-MAX_BACKFILL_DAYS_PER_RUN = 5
+MAX_BACKFILL_DAYS_PER_RUN = 30
 QUOTA_COOLDOWN_SEC = 2
 MAX_REQUESTS_PER_RUN = int(os.environ.get("FNET_MAX_REQUESTS", "60"))
 
@@ -116,6 +116,7 @@ VLF_FFT_WINDOW_SEC = 200
 
 EXPECTED_FS = 100.0
 MAX_RETRIES_BEFORE_SKIP = 3
+FAILED_DATES_RETRY_AFTER_DAYS = 30
 
 
 class HinetQuotaError(Exception):
@@ -247,9 +248,13 @@ async def get_failed_dates(
 
         DELETE FROM fnet_failed_dates WHERE date_str = '2018-09-15';
     """
+    cutoff_iso = (
+        datetime.now(timezone.utc) - timedelta(days=FAILED_DATES_RETRY_AFTER_DAYS)
+    ).isoformat()
     rows = await db.execute_fetchall(
-        "SELECT date_str FROM fnet_failed_dates WHERE retry_count >= ?",
-        (threshold,),
+        "SELECT date_str FROM fnet_failed_dates "
+        "WHERE retry_count >= ? AND last_failed_at > ?",
+        (threshold, cutoff_iso),
     )
     return {r[0] for r in rows}
 
@@ -1033,7 +1038,8 @@ async def main() -> None:
         hour=0, minute=0, second=0, microsecond=0, tzinfo=None
     )
     while current >= fnet_start and len(backfill_dates) < MAX_BACKFILL_DAYS_PER_RUN:
-        backfill_dates.append(current)
+        if current.strftime("%Y-%m-%d") not in skip_dates:
+            backfill_dates.append(current)
         current -= timedelta(days=1)
 
     dates_to_fetch = []
@@ -1061,12 +1067,12 @@ async def main() -> None:
         cutoff = (now_utc - timedelta(days=RECENT_DAYS + 1)).replace(
             hour=0, minute=0, second=0, microsecond=0, tzinfo=None
         )
-        scan_date = fnet_start
-        while scan_date <= cutoff:
+        scan_date = cutoff
+        while scan_date >= fnet_start:
             date_str = scan_date.strftime("%Y-%m-%d")
             if date_str not in skip_dates:
                 dates_to_fetch.append((scan_date, SEGMENTS_BACKFILL))
-            scan_date += timedelta(days=1)
+            scan_date -= timedelta(days=1)
 
         if not dates_to_fetch:
             logger.info("No historical gaps found outside recent window.")
