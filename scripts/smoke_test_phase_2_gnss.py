@@ -39,7 +39,12 @@ class TestPhase2Constants(unittest.TestCase):
                       "Phase 2 (1) requires MAX_DATES default literal '200'")
 
     def test_parallel_and_rate_limit_constants(self):
+        # Clear env overrides so the module-level defaults are exercised
+        os.environ.pop("GNSS_TEC_PARALLEL_DATES", None)
+        os.environ.pop("GNSS_TEC_RATE_LIMIT_SLEEP", None)
+        import importlib
         import fetch_gnss_tec as f
+        importlib.reload(f)
         self.assertGreaterEqual(f.PARALLEL_DATES, 2,
                                 "Phase 2 (1) requires parallel HTTP fetch (>= 2)")
         self.assertLessEqual(f.RATE_LIMIT_SLEEP, 1.0,

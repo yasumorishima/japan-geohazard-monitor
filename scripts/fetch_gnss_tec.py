@@ -351,7 +351,11 @@ async def main():
     # Continuous strategy: all dates 2011-01-01 to yesterday, fetch missing.
     # Oldest-first fill so archive coverage gap closes from 2011 forward.
     start_date = datetime(2011, 1, 1)
-    end_date = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+    end_date = (
+        datetime.now(timezone.utc)
+        .replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+        - timedelta(days=1)
+    )
     total_days = (end_date - start_date).days + 1
     all_dates = [start_date + timedelta(days=i) for i in range(total_days)]
 
