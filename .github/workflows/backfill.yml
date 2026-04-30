@@ -1455,7 +1455,7 @@ jobs:
         timeout-minutes: 30
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
-          GNSS_TEC_MAX_DATES: "30"
+          GNSS_TEC_MAX_DATES: ${{ vars.GNSS_TEC_MAX_DATES || '200' }}
         run: |
           python3 scripts/fetch_gnss_tec.py
 
