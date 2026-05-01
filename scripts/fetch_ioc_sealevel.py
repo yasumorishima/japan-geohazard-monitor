@@ -32,7 +32,9 @@ References:
 """
 
 import asyncio
+import json
 import logging
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -57,21 +59,25 @@ JAPAN_LAT_MAX = 50.0
 JAPAN_LON_MIN = 120.0
 JAPAN_LON_MAX = 155.0
 
-# How many days of recent data to fetch per station
-FETCH_DAYS = 45
-
 # Maximum number of stations to process (time budget constraint)
 MAX_STATIONS = 30
+
+# Backfill start date — IOC SLSMF historical data is broadly available from 2011
+BACKFILL_START = datetime(2011, 1, 1)
 
 MAX_RETRIES = 3
 TIMEOUT = aiohttp.ClientTimeout(total=300, connect=60)
 
-# Delay between station data requests (rate limit compliance)
-REQUEST_DELAY_SEC = 1.0
+# Phase 2 (1) acceleration constants (gnss_tec PR #114 と同型)
+MAX_RETRIES_BEFORE_SKIP = 3
+FAILED_DATES_RETRY_AFTER_DAYS = 30
+PARALLEL_FETCHES = int(os.environ.get("IOC_PARALLEL_FETCHES", "2"))
+RATE_LIMIT_SLEEP = float(os.environ.get("IOC_RATE_LIMIT_SLEEP", "1.0"))
+MAX_FETCHES = int(os.environ.get("IOC_MAX_FETCHES", "200"))
 
 
 async def init_ioc_sealevel_table():
-    """Create IOC sea level table and indices."""
+    """Create IOC sea level data and failure-tracking tables and indices."""
     async with safe_connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS ioc_sea_level (
@@ -94,7 +100,65 @@ async def init_ioc_sealevel_table():
             CREATE INDEX IF NOT EXISTS idx_ioc_sealevel_station
             ON ioc_sea_level(station_code)
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS ioc_sealevel_failed_dates (
+                station_code TEXT NOT NULL,
+                date_str TEXT NOT NULL,
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                last_failed_at TEXT NOT NULL,
+                PRIMARY KEY (station_code, date_str)
+            )
+        """)
         await db.commit()
+
+
+async def get_failed_pairs() -> set[tuple[str, str]]:
+    """Return (station_code, date_str) pairs to skip on this run.
+
+    Pairs whose last_failed_at is older than FAILED_DATES_RETRY_AFTER_DAYS roll
+    out of the skip set so previously-empty dates that become available later
+    can be re-fetched without manual intervention.
+    """
+    cutoff_iso = (
+        datetime.now(timezone.utc) - timedelta(days=FAILED_DATES_RETRY_AFTER_DAYS)
+    ).isoformat()
+    async with safe_connect() as db:
+        rows = await db.execute_fetchall(
+            "SELECT station_code, date_str FROM ioc_sealevel_failed_dates "
+            "WHERE retry_count >= ? AND last_failed_at > ?",
+            (MAX_RETRIES_BEFORE_SKIP, cutoff_iso),
+        )
+    return {(r[0], r[1]) for r in rows}
+
+
+async def mark_failed_pair(station_code: str, date_str: str) -> None:
+    """Record a 0-record fetch for (station_code, date_str); increment retry_count."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    async with safe_connect() as db:
+        await db.execute(
+            "INSERT INTO ioc_sealevel_failed_dates "
+            "(station_code, date_str, retry_count, last_failed_at) "
+            "VALUES (?, ?, 1, ?) "
+            "ON CONFLICT(station_code, date_str) DO UPDATE SET "
+            "retry_count = retry_count + 1, "
+            "last_failed_at = excluded.last_failed_at",
+            (station_code, date_str, now_iso),
+        )
+        await db.commit()
+
+
+async def get_existing_dates_per_station() -> dict[str, set[str]]:
+    """Return {station_code: {date_str, ...}} computed from existing rows."""
+    async with safe_connect() as db:
+        rows = await db.execute_fetchall(
+            "SELECT station_code, DATE(observed_at) AS d "
+            "FROM ioc_sea_level GROUP BY station_code, d"
+        )
+    existing: dict[str, set[str]] = {}
+    for code, d in rows:
+        if d:
+            existing.setdefault(code, set()).add(d)
+    return existing
 
 
 async def fetch_station_list(session: aiohttp.ClientSession) -> list[dict]:
@@ -220,7 +284,7 @@ async def fetch_station_data(session: aiohttp.ClientSession,
                               station: dict,
                               time_start: str,
                               time_stop: str) -> list[dict]:
-    """Fetch sea level data for one IOC station.
+    """Fetch sea level data for one IOC station within a time range.
 
     Args:
         session: aiohttp session.
@@ -245,24 +309,15 @@ async def fetch_station_data(session: aiohttp.ClientSession,
                     text = await resp.text()
                     # Handle empty or non-JSON responses
                     if not text.strip() or text.strip().startswith("<"):
-                        logger.info("  %s (%s): empty or HTML response",
-                                    station["code"], station["name"])
                         return []
-                    import json
                     try:
                         data = json.loads(text)
                     except json.JSONDecodeError:
-                        logger.info("  %s (%s): invalid JSON",
-                                    station["code"], station["name"])
                         return []
                     if not isinstance(data, list):
-                        logger.info("  %s (%s): unexpected format",
-                                    station["code"], station["name"])
                         return []
                     return parse_ioc_data(data, station)
                 elif resp.status == 404:
-                    logger.info("  %s (%s): not available (404)",
-                                station["code"], station["name"])
                     return []
                 else:
                     if attempt == MAX_RETRIES:
@@ -277,25 +332,43 @@ async def fetch_station_data(session: aiohttp.ClientSession,
     return []
 
 
+def build_target_pairs(
+    all_dates: list[datetime],
+    stations: list[dict],
+    existing_per_station: dict[str, set[str]],
+    failed_pairs: set[tuple[str, str]],
+    max_fetches: int,
+) -> list[tuple[datetime, dict]]:
+    """Compute oldest-first (date, station) pairs to fetch this run.
+
+    Iterates dates outermost so all stations advance together rather than one
+    station racing ahead. Skips pairs already in existing rows or in the
+    failed-dates retry-skip set.
+    """
+    if max_fetches <= 0:
+        return []
+    target: list[tuple[datetime, dict]] = []
+    for date in all_dates:
+        date_str = date.strftime("%Y-%m-%d")
+        for station in stations:
+            code = station["code"]
+            if date_str in existing_per_station.get(code, set()):
+                continue
+            if (code, date_str) in failed_pairs:
+                continue
+            target.append((date, station))
+            if len(target) >= max_fetches:
+                return target
+    return target
+
+
 async def main():
+    """Backfill IOC sea level data oldest-first from 2011 across all stations."""
     await init_db()
     await init_ioc_sealevel_table()
 
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
-
-    # Time window for data fetch
-    time_start = (now - timedelta(days=FETCH_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
-    time_stop = now.strftime("%Y-%m-%d %H:%M:%S")
-
-    # Check existing data summary
-    async with safe_connect() as db:
-        existing = await db.execute_fetchall(
-            "SELECT station_code, COUNT(*), MAX(observed_at) "
-            "FROM ioc_sea_level GROUP BY station_code"
-        )
-    existing_summary = {r[0]: (r[1], r[2]) for r in existing} if existing else {}
-    logger.info("IOC sea level existing: %d stations", len(existing_summary))
 
     # Fetch station list
     async with aiohttp.ClientSession() as session:
@@ -305,49 +378,94 @@ async def main():
         logger.warning("No IOC stations found in Japan area; aborting")
         return
 
-    # Fetch data for each station
+    existing_per_station = await get_existing_dates_per_station()
+    failed_pairs = await get_failed_pairs()
+
+    # Build target date list (BACKFILL_START .. yesterday UTC)
+    end_date = (
+        datetime.now(timezone.utc)
+        .replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+        - timedelta(days=1)
+    )
+    total_days = (end_date - BACKFILL_START).days + 1
+    all_dates = [BACKFILL_START + timedelta(days=i) for i in range(total_days)]
+
+    target_pairs = build_target_pairs(
+        all_dates, stations, existing_per_station, failed_pairs, MAX_FETCHES,
+    )
+
+    total_existing_pairs = sum(len(s) for s in existing_per_station.values())
+    logger.info(
+        "IOC sea level: %d stations, %d existing (station, date) pairs, %d failed-skip pairs",
+        len(stations), total_existing_pairs, len(failed_pairs),
+    )
+    logger.info(
+        "Fetching %d (date, station) pairs with parallelism=%d, rate_limit_sleep=%.2fs",
+        len(target_pairs), PARALLEL_FETCHES, RATE_LIMIT_SLEEP,
+    )
+
+    if not target_pairs:
+        logger.info("No new (date, station) pairs to fetch")
+        return
+
+    sem = asyncio.Semaphore(PARALLEL_FETCHES)
+
+    async def fetch_one(session: aiohttp.ClientSession,
+                         date: datetime, station: dict):
+        async with sem:
+            date_str = date.strftime("%Y-%m-%d")
+            time_start = f"{date_str} 00:00:00"
+            time_stop = f"{date_str} 23:59:59"
+            rows = await fetch_station_data(
+                session, station, time_start, time_stop,
+            )
+            # Per-fetch rate-limit sleep stays inside semaphore so concurrent
+            # workers each pace at RATE_LIMIT_SLEEP rather than burst-and-stop.
+            await asyncio.sleep(RATE_LIMIT_SLEEP)
+            return date, station, rows
+
     total_records = 0
-    stations_with_data = 0
+    inserted_pairs = 0
+    failed_count = 0
 
     async with aiohttp.ClientSession() as session:
-        for station in stations:
-            logger.info("Fetching %s (%s, %.2f°N %.2f°E)...",
-                        station["code"], station["name"],
-                        station["lat"], station["lon"])
+        tasks = [fetch_one(session, d, s) for d, s in target_pairs]
+        for coro in asyncio.as_completed(tasks):
+            date, station, rows = await coro
+            date_str = date.strftime("%Y-%m-%d")
+            code = station["code"]
+            if rows:
+                async with safe_connect() as db:
+                    await db.executemany(
+                        """INSERT OR IGNORE INTO ioc_sea_level
+                           (station_code, station_name, observed_at,
+                            sea_level_m, latitude, longitude, received_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        [(code, station["name"], r["observed_at"],
+                          r["sea_level_m"], station["lat"], station["lon"],
+                          now_iso) for r in rows],
+                    )
+                    await db.commit()
+                total_records += len(rows)
+                inserted_pairs += 1
+                if inserted_pairs % 20 == 0 or inserted_pairs <= 5:
+                    logger.info(
+                        "  %s/%s: %d records (cumulative: %d records / %d pairs)",
+                        code, date_str, len(rows), total_records, inserted_pairs,
+                    )
+            else:
+                await mark_failed_pair(code, date_str)
+                failed_count += 1
+                if failed_count % 20 == 0 or failed_count <= 5:
+                    logger.info(
+                        "  %s/%s: 0 records (marked failed, cumulative failed: %d)",
+                        code, date_str, failed_count,
+                    )
 
-            rows = await fetch_station_data(
-                session, station, time_start, time_stop
-            )
-
-            if not rows:
-                logger.info("  %s: no data returned", station["code"])
-                await asyncio.sleep(REQUEST_DELAY_SEC)
-                continue
-
-            # Store in database
-            async with safe_connect() as db:
-                await db.executemany(
-                    """INSERT OR IGNORE INTO ioc_sea_level
-                       (station_code, station_name, observed_at,
-                        sea_level_m, latitude, longitude, received_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    [(station["code"], station["name"], r["observed_at"],
-                      r["sea_level_m"], station["lat"], station["lon"],
-                      now_iso) for r in rows],
-                )
-                await db.commit()
-
-            total_records += len(rows)
-            stations_with_data += 1
-            logger.info("  %s: %d records (%.2f - %.2f m)",
-                        station["name"], len(rows),
-                        min(r["sea_level_m"] for r in rows),
-                        max(r["sea_level_m"] for r in rows))
-
-            await asyncio.sleep(REQUEST_DELAY_SEC)
-
-    logger.info("IOC sea level fetch complete: %d records from %d/%d stations",
-                total_records, stations_with_data, len(stations))
+    logger.info(
+        "IOC sea level fetch complete: %d records / %d pairs inserted, %d pairs failed",
+        total_records, inserted_pairs, failed_count,
+    )
 
 
 if __name__ == "__main__":
