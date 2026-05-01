@@ -171,6 +171,14 @@ class TestBuildTargetPairs(unittest.TestCase):
         self.assertEqual(len(pairs), 3,
                          "max_fetches must cap the returned pair count")
 
+    def test_max_fetches_zero_returns_empty(self):
+        import fetch_ioc_sealevel as f
+        all_dates = [datetime(2011, 1, 1)]
+        stations = [{"code": "a", "name": "x", "lat": 0.0, "lon": 0.0}]
+        pairs = f.build_target_pairs(all_dates, stations, {}, set(), max_fetches=0)
+        self.assertEqual(pairs, [],
+                         "max_fetches=0 must short-circuit before any append")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

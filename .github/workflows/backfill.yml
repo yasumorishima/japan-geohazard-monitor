@@ -1688,6 +1688,8 @@ jobs:
         timeout-minutes: 15
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
+          IOC_PARALLEL_FETCHES: ${{ vars.IOC_PARALLEL_FETCHES || '2' }}
+          IOC_RATE_LIMIT_SLEEP: ${{ vars.IOC_RATE_LIMIT_SLEEP || '1.0' }}
           IOC_MAX_FETCHES: ${{ vars.IOC_MAX_FETCHES || '200' }}
         run: |
           python3 scripts/fetch_ioc_sealevel.py

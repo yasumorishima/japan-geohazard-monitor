@@ -345,6 +345,8 @@ def build_target_pairs(
     station racing ahead. Skips pairs already in existing rows or in the
     failed-dates retry-skip set.
     """
+    if max_fetches <= 0:
+        return []
     target: list[tuple[datetime, dict]] = []
     for date in all_dates:
         date_str = date.strftime("%Y-%m-%d")
