@@ -380,6 +380,19 @@ Expected ETA improvement: `ioc_sea_level` 3.5 months → ~10 days (2026-05-12 �
 
 **Downstream double-counting note for `load_phase13_dart_pressure`**: the same physical buoy can appear under two distinct `station_id` values (IOC `dtok` ≈ NDBC `21413`, both ~30.53N 152E). During the NDBC realtime 45-day window the two fetchers will both write the same observation, so a naive `AVG(water_height_m) GROUP BY DATE` across all stations would double-weight overlap days for that buoy. Stage 2.A fixed an analogous DART-into-`ioc_sea_level` AVG contamination; the same class of bias should be considered when `load_phase13_dart_pressure` is implemented (e.g. `AVG` per-station first, then aggregate, or build a `station_id` equivalence map).
 
+### Phase 2 (Stage 3) loader threshold fix for sparse-by-design tables ✅ (2026-05-02)
+
+PR #124 closes a long-standing visibility gap discovered while computing the all-31-table BigQuery coverage view: `modis_lst` and `nightlight` were both **absent from BigQuery despite their fetchers running successfully and writing to SQLite**, because `load_raw_to_bq.py` applies a global `MIN_ROWS_TO_UPLOAD = 1000` protective floor (designed to prevent an empty/corrupted SQLite from `WRITE_TRUNCATE`-ing the BigQuery data to zero on a bad cron). Verified in cron run #25242527288 merge job log:
+
+```
+modis_lst: 341 rows (< 1000 minimum) — skipping to protect BQ data
+nightlight: 950 rows (< 1000 minimum) — skipping to protect BQ data
+```
+
+Both row counts are realistic for the design: `modis_lst` is M5.5+ event-targeted ±14 day windows for 5 km cells (intentionally sparse, 341 rows spanning 2010-09-14 → 2026-03-22), and `nightlight` is the VNP46A4 annual product over Japan tiles `h29v05` / `h29v06` (~70 cells × 14 years = ~950 rows by design, +70/year growth).
+
+Two-axis fix mirroring the existing `fnet_waveform: 100` precedent (low-density-by-design tables that still need a `>0` floor to detect corruption): `TABLE_MIN_ROWS_OVERRIDE` now contains `"modis_lst": 50` (current 341, 6.8x headroom) and `"nightlight": 100` (current 950, 1.4-year safety margin against annual growth). Both thresholds are well above zero so an empty/corrupted SQLite still gets blocked, while legitimate sparse data passes through. After this lands, the next cron run uploads both tables to BigQuery and the all-31-table coverage view becomes complete (modis_lst event-sparse expected ~6%, nightlight annual-grain expected ~24% — both reflecting fetcher design limits, not coverage gaps).
+
 
 
 ## Analysis Results (2011-2026, 28K M3+ earthquakes, 6.2M TEC, 45K Kp, 1.15M GNSS-TEC, 24M ULF, 98 features with dynamic selection)
