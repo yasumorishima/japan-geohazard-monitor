@@ -421,6 +421,18 @@ TABLE_MIN_ROWS_OVERRIDE = {
     # but cron #25086162850 produced 429 rows < 1000 and was therefore skipped,
     # leaving fnet_waveform absent in BQ despite all upstream steps succeeding.
     "fnet_waveform": 100,
+    # MODIS LST thermal anomalies: M5.5+ event-targeted ±14 day windows for
+    # 5 km cells, intentionally sparse by design. Verified 341 rows in cron
+    # #25242527288 covering 2010-09-14 -> 2026-03-22, well below the global
+    # 1000-row floor. 50 still detects empty/corrupted DB without blocking
+    # legitimate sparse data.
+    "modis_lst": 50,
+    # VIIRS nightlight (VNP46A4 annual): 14 years x ~70 cells = ~950 rows by
+    # design (annual cadence, 2 tiles h29v05/h29v06 over Japan). Verified 950
+    # rows in cron #25242527288 spanning 2012-07-01 -> 2025-07-01 -- annual
+    # product so row growth is +1 year worth (~70 rows) per calendar year.
+    # 100 still detects empty/corrupted DB without blocking legitimate data.
+    "nightlight": 100,
 }
 
 
