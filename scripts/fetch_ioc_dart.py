@@ -85,6 +85,14 @@ MAX_RETRIES_BEFORE_SKIP = 3
 FAILED_DATES_RETRY_AFTER_DAYS = 30
 PARALLEL_FETCHES = int(os.environ.get("IOC_DART_PARALLEL_FETCHES", "2"))
 RATE_LIMIT_SLEEP = float(os.environ.get("IOC_DART_RATE_LIMIT_SLEEP", "1.0"))
+
+# Stage 2.C chunk-fetch acceleration (2026-05-02). Same rationale as
+# fetch_ioc_sealevel.py: IOC SLSMF data endpoint accepts arbitrary ranges,
+# so a single 30-day query replaces 30 single-day queries.
+CHUNK_DAYS = int(os.environ.get("IOC_DART_CHUNK_DAYS", "30"))
+MAX_CHUNKS_PER_CRON = int(os.environ.get("IOC_DART_MAX_CHUNKS", "72"))
+# Legacy MAX_FETCHES retained for backward compatibility but unused once
+# chunk fetcher is wired through. New deployments should set IOC_DART_MAX_CHUNKS.
 MAX_FETCHES = int(os.environ.get("IOC_DART_MAX_FETCHES", "200"))
 
 
@@ -142,6 +150,17 @@ async def init_dart_tables():
                 PRIMARY KEY (station_id, date_str)
             )
         """)
+        # Stage 2.C: chunk-grain failure tracking (mirror of
+        # ioc_sealevel_failed_chunks).
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS dart_pressure_failed_chunks (
+                station_id TEXT NOT NULL,
+                chunk_start_str TEXT NOT NULL,
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                last_failed_at TEXT NOT NULL,
+                PRIMARY KEY (station_id, chunk_start_str)
+            )
+        """)
         await db.commit()
 
 
@@ -176,6 +195,36 @@ async def mark_failed_pair(station_id: str, date_str: str) -> None:
             "retry_count = retry_count + 1, "
             "last_failed_at = excluded.last_failed_at",
             (station_id, date_str, now_iso),
+        )
+        await db.commit()
+
+
+async def get_failed_chunks() -> set[tuple[str, str]]:
+    """Return (station_id, chunk_start_str) chunks to skip on this run."""
+    cutoff_iso = (
+        datetime.now(timezone.utc) - timedelta(days=FAILED_DATES_RETRY_AFTER_DAYS)
+    ).isoformat()
+    async with safe_connect() as db:
+        rows = await db.execute_fetchall(
+            "SELECT station_id, chunk_start_str FROM dart_pressure_failed_chunks "
+            "WHERE retry_count >= ? AND last_failed_at > ?",
+            (MAX_RETRIES_BEFORE_SKIP, cutoff_iso),
+        )
+    return {(r[0], r[1]) for r in rows}
+
+
+async def mark_failed_chunk(station_id: str, chunk_start_str: str) -> None:
+    """Record a 0-record chunk fetch; increment retry_count."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    async with safe_connect() as db:
+        await db.execute(
+            "INSERT INTO dart_pressure_failed_chunks "
+            "(station_id, chunk_start_str, retry_count, last_failed_at) "
+            "VALUES (?, ?, 1, ?) "
+            "ON CONFLICT(station_id, chunk_start_str) DO UPDATE SET "
+            "retry_count = retry_count + 1, "
+            "last_failed_at = excluded.last_failed_at",
+            (station_id, chunk_start_str, now_iso),
         )
         await db.commit()
 
@@ -444,6 +493,38 @@ def build_target_pairs(
     return target
 
 
+def build_target_chunks(
+    all_chunk_starts: list[datetime],
+    chunk_days: int,
+    stations: list[dict],
+    existing_per_station: dict[str, set[str]],
+    failed_chunks: set[tuple[str, str]],
+    max_chunks: int,
+) -> list[tuple[datetime, dict]]:
+    """Compute oldest-first (chunk_start, station) chunks (mirror of
+    fetch_ioc_sealevel.build_target_chunks)."""
+    if max_chunks <= 0:
+        return []
+    target: list[tuple[datetime, dict]] = []
+    for chunk_start in all_chunk_starts:
+        chunk_start_str = chunk_start.strftime("%Y-%m-%d")
+        chunk_dates = {
+            (chunk_start + timedelta(days=i)).strftime("%Y-%m-%d")
+            for i in range(chunk_days)
+        }
+        for station in stations:
+            code = station["code"]
+            if (code, chunk_start_str) in failed_chunks:
+                continue
+            existing = existing_per_station.get(code, set())
+            if chunk_dates.issubset(existing):
+                continue
+            target.append((chunk_start, station))
+            if len(target) >= max_chunks:
+                return target
+    return target
+
+
 async def main():
     """Backfill DART OBP from IOC oldest-first from 2011 across all stations."""
     await init_db()
@@ -460,7 +541,7 @@ async def main():
         return
 
     existing_per_station = await get_existing_dates_per_station()
-    failed_pairs = await get_failed_pairs()
+    failed_chunks = await get_failed_chunks()
 
     end_date = (
         datetime.now(timezone.utc)
@@ -468,57 +549,75 @@ async def main():
         - timedelta(days=1)
     )
     total_days = (end_date - BACKFILL_START).days + 1
-    all_dates = [BACKFILL_START + timedelta(days=i) for i in range(total_days)]
+    n_chunks = (total_days + CHUNK_DAYS - 1) // CHUNK_DAYS
+    all_chunk_starts = [
+        BACKFILL_START + timedelta(days=i * CHUNK_DAYS) for i in range(n_chunks)
+    ]
+    # See fetch_ioc_sealevel.py for the future-timestop rationale.
+    last_timestop = all_chunk_starts[-1] + timedelta(days=CHUNK_DAYS - 1)
+    if last_timestop > end_date:
+        logger.info(
+            "Final chunk timestop %s extends past yesterday %s by %d days "
+            "(IOC API tolerates this, future portion returns no records)",
+            last_timestop.strftime("%Y-%m-%d"),
+            end_date.strftime("%Y-%m-%d"),
+            (last_timestop - end_date).days,
+        )
 
-    target_pairs = build_target_pairs(
-        all_dates, stations, existing_per_station, failed_pairs, MAX_FETCHES,
+    target_chunks = build_target_chunks(
+        all_chunk_starts, CHUNK_DAYS, stations,
+        existing_per_station, failed_chunks, MAX_CHUNKS_PER_CRON,
     )
 
     total_existing_pairs = sum(len(s) for s in existing_per_station.values())
     logger.info(
-        "IOC DART: %d stations, %d existing (station, date) pairs, %d failed-skip pairs",
-        len(stations), total_existing_pairs, len(failed_pairs),
+        "IOC DART: %d stations, %d existing (station, date) pairs, "
+        "%d failed-skip chunks",
+        len(stations), total_existing_pairs, len(failed_chunks),
     )
     logger.info(
-        "Fetching %d (date, station) pairs with parallelism=%d, rate_limit_sleep=%.2fs",
-        len(target_pairs), PARALLEL_FETCHES, RATE_LIMIT_SLEEP,
+        "Stage 2.C chunk fetch: %d (chunk_start, station) chunks "
+        "(chunk_days=%d, parallelism=%d, rate_limit_sleep=%.2fs)",
+        len(target_chunks), CHUNK_DAYS, PARALLEL_FETCHES, RATE_LIMIT_SLEEP,
     )
 
-    if not target_pairs:
-        logger.info("No new (date, station) pairs to fetch")
+    if not target_chunks:
+        logger.info("No new (chunk_start, station) chunks to fetch")
         return
 
     sem = asyncio.Semaphore(PARALLEL_FETCHES)
 
-    async def fetch_one(session: aiohttp.ClientSession,
-                         date: datetime, station: dict):
+    async def fetch_one_chunk(session: aiohttp.ClientSession,
+                               chunk_start: datetime, station: dict):
         async with sem:
-            date_str = date.strftime("%Y-%m-%d")
-            time_start = f"{date_str} 00:00:00"
-            time_stop = f"{date_str} 23:59:59"
+            chunk_start_str = chunk_start.strftime("%Y-%m-%d")
+            chunk_end = chunk_start + timedelta(days=CHUNK_DAYS - 1)
+            time_start = f"{chunk_start_str} 00:00:00"
+            time_stop = f"{chunk_end.strftime('%Y-%m-%d')} 23:59:59"
             rows = await fetch_station_data(
                 session, station, time_start, time_stop,
             )
             await asyncio.sleep(RATE_LIMIT_SLEEP)
-            return date, station, rows
+            return chunk_start, station, rows
 
     total_records = 0
-    inserted_pairs = 0
+    inserted_chunks = 0
     failed_count = 0
     transient_skipped = 0
 
     async with aiohttp.ClientSession() as session:
-        tasks = [fetch_one(session, d, s) for d, s in target_pairs]
+        tasks = [fetch_one_chunk(session, c, s) for c, s in target_chunks]
         for coro in asyncio.as_completed(tasks):
-            date, station, rows = await coro
-            date_str = date.strftime("%Y-%m-%d")
+            chunk_start, station, rows = await coro
+            chunk_start_str = chunk_start.strftime("%Y-%m-%d")
             code = station["code"]
             if rows is TRANSIENT_FAILURE:
                 transient_skipped += 1
                 if transient_skipped <= 5 or transient_skipped % 20 == 0:
                     logger.info(
-                        "  %s/%s: transient failure (not marked, cumulative: %d)",
-                        code, date_str, transient_skipped,
+                        "  %s/%s+%dd: transient failure "
+                        "(not marked, cumulative: %d)",
+                        code, chunk_start_str, CHUNK_DAYS, transient_skipped,
                     )
             elif rows:
                 async with safe_connect() as db:
@@ -534,25 +633,28 @@ async def main():
                     )
                     await db.commit()
                 total_records += len(rows)
-                inserted_pairs += 1
-                if inserted_pairs % 20 == 0 or inserted_pairs <= 5:
+                inserted_chunks += 1
+                if inserted_chunks % 20 == 0 or inserted_chunks <= 5:
                     logger.info(
-                        "  %s/%s: %d records (cumulative: %d records / %d pairs)",
-                        code, date_str, len(rows), total_records, inserted_pairs,
+                        "  %s/%s+%dd: %d records "
+                        "(cumulative: %d records / %d chunks)",
+                        code, chunk_start_str, CHUNK_DAYS, len(rows),
+                        total_records, inserted_chunks,
                     )
             else:
-                await mark_failed_pair(code, date_str)
+                await mark_failed_chunk(code, chunk_start_str)
                 failed_count += 1
                 if failed_count % 20 == 0 or failed_count <= 5:
                     logger.info(
-                        "  %s/%s: 0 records (marked failed, cumulative failed: %d)",
-                        code, date_str, failed_count,
+                        "  %s/%s+%dd: 0 records "
+                        "(marked failed, cumulative failed: %d)",
+                        code, chunk_start_str, CHUNK_DAYS, failed_count,
                     )
 
     logger.info(
-        "IOC DART fetch complete: %d records / %d pairs inserted, "
-        "%d pairs failed (definitive), %d pairs transient-skipped",
-        total_records, inserted_pairs, failed_count, transient_skipped,
+        "IOC DART chunk fetch complete: %d records / %d chunks inserted, "
+        "%d chunks failed (definitive), %d chunks transient-skipped",
+        total_records, inserted_chunks, failed_count, transient_skipped,
     )
 
 

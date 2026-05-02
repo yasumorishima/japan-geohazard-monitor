@@ -91,6 +91,16 @@ MAX_RETRIES_BEFORE_SKIP = 3
 FAILED_DATES_RETRY_AFTER_DAYS = 30
 PARALLEL_FETCHES = int(os.environ.get("IOC_PARALLEL_FETCHES", "2"))
 RATE_LIMIT_SLEEP = float(os.environ.get("IOC_RATE_LIMIT_SLEEP", "1.0"))
+
+# Stage 2.C chunk-fetch acceleration (2026-05-02). The IOC SLSMF data
+# endpoint accepts arbitrary [timestart, timestop] ranges, so a single
+# query can return 30 days of 1-min cadence (~43k records / ~3 MB / ~25s)
+# instead of one query per day. Chunk fetch reduces request count 30x
+# and finishes the 5,500-day backfill in days, not months.
+CHUNK_DAYS = int(os.environ.get("IOC_CHUNK_DAYS", "30"))
+MAX_CHUNKS_PER_CRON = int(os.environ.get("IOC_MAX_CHUNKS", "72"))
+# Legacy MAX_FETCHES retained for backward compatibility but unused once
+# chunk fetcher is wired through. New deployments should set IOC_MAX_CHUNKS.
 MAX_FETCHES = int(os.environ.get("IOC_MAX_FETCHES", "200"))
 
 
@@ -146,6 +156,18 @@ async def init_ioc_sealevel_table():
                 PRIMARY KEY (station_code, date_str)
             )
         """)
+        # Stage 2.C: chunk-grain failure tracking. Coexists with the
+        # legacy date_str table (legacy entries roll off via 30-day
+        # retry-after, no migration needed).
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS ioc_sealevel_failed_chunks (
+                station_code TEXT NOT NULL,
+                chunk_start_str TEXT NOT NULL,
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                last_failed_at TEXT NOT NULL,
+                PRIMARY KEY (station_code, chunk_start_str)
+            )
+        """)
         await db.commit()
 
 
@@ -168,6 +190,23 @@ async def get_failed_pairs() -> set[tuple[str, str]]:
     return {(r[0], r[1]) for r in rows}
 
 
+async def get_failed_chunks() -> set[tuple[str, str]]:
+    """Return (station_code, chunk_start_str) pairs to skip on this chunk run.
+
+    Same retry-rollover semantics as get_failed_pairs but at chunk grain.
+    """
+    cutoff_iso = (
+        datetime.now(timezone.utc) - timedelta(days=FAILED_DATES_RETRY_AFTER_DAYS)
+    ).isoformat()
+    async with safe_connect() as db:
+        rows = await db.execute_fetchall(
+            "SELECT station_code, chunk_start_str FROM ioc_sealevel_failed_chunks "
+            "WHERE retry_count >= ? AND last_failed_at > ?",
+            (MAX_RETRIES_BEFORE_SKIP, cutoff_iso),
+        )
+    return {(r[0], r[1]) for r in rows}
+
+
 async def mark_failed_pair(station_code: str, date_str: str) -> None:
     """Record a 0-record fetch for (station_code, date_str); increment retry_count."""
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -180,6 +219,22 @@ async def mark_failed_pair(station_code: str, date_str: str) -> None:
             "retry_count = retry_count + 1, "
             "last_failed_at = excluded.last_failed_at",
             (station_code, date_str, now_iso),
+        )
+        await db.commit()
+
+
+async def mark_failed_chunk(station_code: str, chunk_start_str: str) -> None:
+    """Record a 0-record chunk fetch; increment retry_count."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    async with safe_connect() as db:
+        await db.execute(
+            "INSERT INTO ioc_sealevel_failed_chunks "
+            "(station_code, chunk_start_str, retry_count, last_failed_at) "
+            "VALUES (?, ?, 1, ?) "
+            "ON CONFLICT(station_code, chunk_start_str) DO UPDATE SET "
+            "retry_count = retry_count + 1, "
+            "last_failed_at = excluded.last_failed_at",
+            (station_code, chunk_start_str, now_iso),
         )
         await db.commit()
 
@@ -478,6 +533,44 @@ def build_target_pairs(
     return target
 
 
+def build_target_chunks(
+    all_chunk_starts: list[datetime],
+    chunk_days: int,
+    stations: list[dict],
+    existing_per_station: dict[str, set[str]],
+    failed_chunks: set[tuple[str, str]],
+    max_chunks: int,
+) -> list[tuple[datetime, dict]]:
+    """Compute oldest-first (chunk_start, station) chunks to fetch this run.
+
+    A chunk is skipped only if the failed_chunks table marks it definitively
+    failed (retry-after still active), or if every day inside the chunk is
+    already present in existing_per_station for that station. A chunk with
+    even one missing day is fetched: INSERT OR IGNORE on the data table
+    deduplicates the redundant days at write time.
+    """
+    if max_chunks <= 0:
+        return []
+    target: list[tuple[datetime, dict]] = []
+    for chunk_start in all_chunk_starts:
+        chunk_start_str = chunk_start.strftime("%Y-%m-%d")
+        chunk_dates = {
+            (chunk_start + timedelta(days=i)).strftime("%Y-%m-%d")
+            for i in range(chunk_days)
+        }
+        for station in stations:
+            code = station["code"]
+            if (code, chunk_start_str) in failed_chunks:
+                continue
+            existing = existing_per_station.get(code, set())
+            if chunk_dates.issubset(existing):
+                continue
+            target.append((chunk_start, station))
+            if len(target) >= max_chunks:
+                return target
+    return target
+
+
 async def main():
     """Backfill IOC sea level data oldest-first from 2011 across all stations."""
     await init_db()
@@ -495,69 +588,90 @@ async def main():
         return
 
     existing_per_station = await get_existing_dates_per_station()
-    failed_pairs = await get_failed_pairs()
+    failed_chunks = await get_failed_chunks()
 
-    # Build target date list (BACKFILL_START .. yesterday UTC)
+    # Stage 2.C: chunk-aligned start dates from BACKFILL_START to yesterday.
+    # Each chunk is CHUNK_DAYS long; the last chunk may overrun yesterday's
+    # date but the IOC API tolerates timestop > now.
     end_date = (
         datetime.now(timezone.utc)
         .replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
         - timedelta(days=1)
     )
     total_days = (end_date - BACKFILL_START).days + 1
-    all_dates = [BACKFILL_START + timedelta(days=i) for i in range(total_days)]
+    n_chunks = (total_days + CHUNK_DAYS - 1) // CHUNK_DAYS
+    all_chunk_starts = [
+        BACKFILL_START + timedelta(days=i * CHUNK_DAYS) for i in range(n_chunks)
+    ]
+    # The final chunk's timestop can run up to (CHUNK_DAYS - 1) days past
+    # yesterday because chunk_starts are aligned to BACKFILL_START + i*30.
+    # IOC API tolerates timestop > now and just returns no records for the
+    # future portion, but log it so future-dated entries in the failed
+    # chunks table are not surprising during ops review.
+    last_timestop = all_chunk_starts[-1] + timedelta(days=CHUNK_DAYS - 1)
+    if last_timestop > end_date:
+        logger.info(
+            "Final chunk timestop %s extends past yesterday %s by %d days "
+            "(IOC API tolerates this, future portion returns no records)",
+            last_timestop.strftime("%Y-%m-%d"),
+            end_date.strftime("%Y-%m-%d"),
+            (last_timestop - end_date).days,
+        )
 
-    target_pairs = build_target_pairs(
-        all_dates, stations, existing_per_station, failed_pairs, MAX_FETCHES,
+    target_chunks = build_target_chunks(
+        all_chunk_starts, CHUNK_DAYS, stations,
+        existing_per_station, failed_chunks, MAX_CHUNKS_PER_CRON,
     )
 
     total_existing_pairs = sum(len(s) for s in existing_per_station.values())
     logger.info(
-        "IOC sea level: %d stations, %d existing (station, date) pairs, %d failed-skip pairs",
-        len(stations), total_existing_pairs, len(failed_pairs),
+        "IOC sea level: %d stations, %d existing (station, date) pairs, "
+        "%d failed-skip chunks",
+        len(stations), total_existing_pairs, len(failed_chunks),
     )
     logger.info(
-        "Fetching %d (date, station) pairs with parallelism=%d, rate_limit_sleep=%.2fs",
-        len(target_pairs), PARALLEL_FETCHES, RATE_LIMIT_SLEEP,
+        "Stage 2.C chunk fetch: %d (chunk_start, station) chunks "
+        "(chunk_days=%d, parallelism=%d, rate_limit_sleep=%.2fs)",
+        len(target_chunks), CHUNK_DAYS, PARALLEL_FETCHES, RATE_LIMIT_SLEEP,
     )
 
-    if not target_pairs:
-        logger.info("No new (date, station) pairs to fetch")
+    if not target_chunks:
+        logger.info("No new (chunk_start, station) chunks to fetch")
         return
 
     sem = asyncio.Semaphore(PARALLEL_FETCHES)
 
-    async def fetch_one(session: aiohttp.ClientSession,
-                         date: datetime, station: dict):
+    async def fetch_one_chunk(session: aiohttp.ClientSession,
+                               chunk_start: datetime, station: dict):
         async with sem:
-            date_str = date.strftime("%Y-%m-%d")
-            time_start = f"{date_str} 00:00:00"
-            time_stop = f"{date_str} 23:59:59"
+            chunk_start_str = chunk_start.strftime("%Y-%m-%d")
+            chunk_end = chunk_start + timedelta(days=CHUNK_DAYS - 1)
+            time_start = f"{chunk_start_str} 00:00:00"
+            time_stop = f"{chunk_end.strftime('%Y-%m-%d')} 23:59:59"
             rows = await fetch_station_data(
                 session, station, time_start, time_stop,
             )
-            # Per-fetch rate-limit sleep stays inside semaphore so concurrent
-            # workers each pace at RATE_LIMIT_SLEEP rather than burst-and-stop.
             await asyncio.sleep(RATE_LIMIT_SLEEP)
-            return date, station, rows
+            return chunk_start, station, rows
 
     total_records = 0
-    inserted_pairs = 0
+    inserted_chunks = 0
     failed_count = 0
     transient_skipped = 0
 
     async with aiohttp.ClientSession() as session:
-        tasks = [fetch_one(session, d, s) for d, s in target_pairs]
+        tasks = [fetch_one_chunk(session, c, s) for c, s in target_chunks]
         for coro in asyncio.as_completed(tasks):
-            date, station, rows = await coro
-            date_str = date.strftime("%Y-%m-%d")
+            chunk_start, station, rows = await coro
+            chunk_start_str = chunk_start.strftime("%Y-%m-%d")
             code = station["code"]
             if rows is TRANSIENT_FAILURE:
-                # Don't advance retry_count — next cron retries cleanly.
                 transient_skipped += 1
                 if transient_skipped <= 5 or transient_skipped % 20 == 0:
                     logger.info(
-                        "  %s/%s: transient failure (not marked, cumulative: %d)",
-                        code, date_str, transient_skipped,
+                        "  %s/%s+%dd: transient failure "
+                        "(not marked, cumulative: %d)",
+                        code, chunk_start_str, CHUNK_DAYS, transient_skipped,
                     )
             elif rows:
                 async with safe_connect() as db:
@@ -572,26 +686,28 @@ async def main():
                     )
                     await db.commit()
                 total_records += len(rows)
-                inserted_pairs += 1
-                if inserted_pairs % 20 == 0 or inserted_pairs <= 5:
+                inserted_chunks += 1
+                if inserted_chunks % 20 == 0 or inserted_chunks <= 5:
                     logger.info(
-                        "  %s/%s: %d records (cumulative: %d records / %d pairs)",
-                        code, date_str, len(rows), total_records, inserted_pairs,
+                        "  %s/%s+%dd: %d records "
+                        "(cumulative: %d records / %d chunks)",
+                        code, chunk_start_str, CHUNK_DAYS, len(rows),
+                        total_records, inserted_chunks,
                     )
             else:
-                # Definitive empty list (200 OK + empty body, or 404).
-                await mark_failed_pair(code, date_str)
+                await mark_failed_chunk(code, chunk_start_str)
                 failed_count += 1
                 if failed_count % 20 == 0 or failed_count <= 5:
                     logger.info(
-                        "  %s/%s: 0 records (marked failed, cumulative failed: %d)",
-                        code, date_str, failed_count,
+                        "  %s/%s+%dd: 0 records "
+                        "(marked failed, cumulative failed: %d)",
+                        code, chunk_start_str, CHUNK_DAYS, failed_count,
                     )
 
     logger.info(
-        "IOC sea level fetch complete: %d records / %d pairs inserted, "
-        "%d pairs failed (definitive), %d pairs transient-skipped",
-        total_records, inserted_pairs, failed_count, transient_skipped,
+        "IOC sea level chunk fetch complete: %d records / %d chunks inserted, "
+        "%d chunks failed (definitive), %d chunks transient-skipped",
+        total_records, inserted_chunks, failed_count, transient_skipped,
     )
 
 
