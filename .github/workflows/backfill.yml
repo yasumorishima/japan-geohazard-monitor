@@ -82,6 +82,7 @@ on:
           - particle_flux
           - dart
           - ioc_sealevel
+          - ioc_dart
           - tide_gauge
           - soil_moisture
           - ocean_color
@@ -1199,6 +1200,7 @@ jobs:
       fetch_particle_flux: ${{ steps.fetch_particle_flux.outcome }}
       fetch_dart: ${{ steps.fetch_dart.outcome }}
       fetch_ioc_sealevel: ${{ steps.fetch_ioc_sealevel.outcome }}
+      fetch_ioc_dart: ${{ steps.fetch_ioc_dart.outcome }}
       snapshot_outcome: ${{ steps.snapshot.outcome }}
       restore_outcome: ${{ steps.restore.outcome }}
       restore_restored: ${{ steps.restore.outputs.restored }}
@@ -1694,6 +1696,19 @@ jobs:
         run: |
           python3 scripts/fetch_ioc_sealevel.py
 
+      - name: Fetch IOC DART ocean bottom pressure (Stage 2.B)
+        id: fetch_ioc_dart
+        if: inputs.target == 'all' || inputs.target == 'ioc_dart' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          IOC_DART_PARALLEL_FETCHES: ${{ vars.IOC_DART_PARALLEL_FETCHES || '2' }}
+          IOC_DART_RATE_LIMIT_SLEEP: ${{ vars.IOC_DART_RATE_LIMIT_SLEEP || '1.0' }}
+          IOC_DART_MAX_FETCHES: ${{ vars.IOC_DART_MAX_FETCHES || '200' }}
+        run: |
+          python3 scripts/fetch_ioc_dart.py
+
       - name: Snapshot DB for light artifact
         id: snapshot
         if: always()
@@ -1951,6 +1966,7 @@ jobs:
           FETCH_PARTICLE_FLUX: ${{ needs.light.outputs.fetch_particle_flux }}
           FETCH_DART: ${{ needs.light.outputs.fetch_dart }}
           FETCH_IOC_SEALEVEL: ${{ needs.light.outputs.fetch_ioc_sealevel }}
+          FETCH_IOC_DART: ${{ needs.light.outputs.fetch_ioc_dart }}
           BQ_UPLOAD: ${{ steps.bq_upload.outcome }}
           MERGE_OUTCOME: ${{ steps.merge.outcome }}
           FETCH_MODIS_RESULT: ${{ needs.fetch-modis.result }}
@@ -2217,6 +2233,7 @@ jobs:
             needs.light.outputs.fetch_particle_flux == 'failure' ||
             needs.light.outputs.fetch_dart == 'failure' ||
             needs.light.outputs.fetch_ioc_sealevel == 'failure' ||
+            needs.light.outputs.fetch_ioc_dart == 'failure' ||
             steps.bq_upload.outcome == 'failure' ||
             steps.merge.outcome == 'failure'
           )
@@ -2255,6 +2272,7 @@ jobs:
           [ "${{ needs.light.outputs.fetch_particle_flux }}" = "failure" ] && FAILED="$FAILED particle_flux"
           [ "${{ needs.light.outputs.fetch_dart }}" = "failure" ] && FAILED="$FAILED dart"
           [ "${{ needs.light.outputs.fetch_ioc_sealevel }}" = "failure" ] && FAILED="$FAILED ioc_sealevel"
+          [ "${{ needs.light.outputs.fetch_ioc_dart }}" = "failure" ] && FAILED="$FAILED ioc_dart"
           [ "${{ steps.bq_upload.outcome }}" = "failure" ] && FAILED="$FAILED bq_upload"
           [ "${{ steps.merge.outcome }}" = "failure" ] && FAILED="$FAILED merge"
           FAILED=$(echo "$FAILED" | xargs)
