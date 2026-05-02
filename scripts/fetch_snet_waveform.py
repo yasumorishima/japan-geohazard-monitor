@@ -80,7 +80,9 @@ REQUEST_DURATION_MIN = 5       # Max 5 min per request
 SEGMENTS_RECENT = 4            # 4 segments for recent days (every 6h)
 SEGMENTS_BACKFILL = 1          # 1 segment for backfill days (daily average)
 RECENT_DAYS = 7                # Last 7 days get high-resolution sampling
-MAX_BACKFILL_DAYS_PER_RUN = 5  # 5 days × 3 codes = 15 backfill requests (reduced to fit 6h job limit)
+MAX_BACKFILL_DAYS_PER_RUN = int(os.environ.get("SNET_MAX_BACKFILL_DAYS", "20"))
+# Worst case: 20 backfill × 3 sensors + 7 recent × 4 segments × 3 sensors = 144
+# requests/cron, under HinetPy 200 req/cron budget.
 QUOTA_COOLDOWN_SEC = 2         # Pause between requests to respect quota
 MAX_REQUESTS_PER_RUN = int(os.environ.get("SNET_MAX_REQUESTS", "120"))
 
@@ -1084,13 +1086,23 @@ async def main() -> None:
         )
         recent_dates.append(target)
 
+    # Gap-driven oldest-first scan: pick the earliest calendar dates that still
+    # have at least one missing sensor. A near-today sliding window can never
+    # reach historical gaps because recent_dates keeps the primary fetch list
+    # non-empty.
     backfill_dates = []
-    current = (now_utc - timedelta(days=RECENT_DAYS + 1)).replace(
+    cutoff = (now_utc - timedelta(days=RECENT_DAYS + 1)).replace(
         hour=0, minute=0, second=0, microsecond=0, tzinfo=None
     )
-    while current >= snet_start and len(backfill_dates) < MAX_BACKFILL_DAYS_PER_RUN:
-        backfill_dates.append(current)
-        current -= timedelta(days=1)
+    scan_date = snet_start
+    while scan_date <= cutoff and len(backfill_dates) < MAX_BACKFILL_DAYS_PER_RUN:
+        date_str = scan_date.strftime("%Y-%m-%d")
+        if any(
+            (date_str, config["sensor_type"]) not in skip_pairs
+            for _, config in sorted_sensors
+        ):
+            backfill_dates.append(scan_date)
+        scan_date += timedelta(days=1)
 
     # Build interleaved fetch list: (date, n_segments, code, config)
     dates_to_fetch = []
