@@ -25,6 +25,13 @@ Phase 2 (1) acceleration (2026-04-30):
     - Per-date rate-limit sleep 2.0s -> 0.5s
     - gnss_tec_failed_dates table to skip 0-record dates after 3 retries
     - 30-day retry reset so archive backfill is not permanently blocked
+
+Phase 2 (1) Stage 1 (2026-05-02): transient vs definitive error classification.
+    HTTP 5xx / Timeout / ConnectionError after MAX_RETRIES are now treated as
+    transient (TRANSIENT_FAILURE sentinel) and skipped without marking the
+    date in gnss_tec_failed_dates. Only definitive 200-OK-empty / 404 results
+    increment retry_count. Prevents legitimate dates from getting 30-day
+    blacklisted by transient infra errors.
 """
 
 import asyncio
@@ -65,6 +72,23 @@ MAX_RETRIES_BEFORE_SKIP = 3
 FAILED_DATES_RETRY_AFTER_DAYS = 30
 PARALLEL_DATES = int(_os.environ.get("GNSS_TEC_PARALLEL_DATES", "4"))
 RATE_LIMIT_SLEEP = float(_os.environ.get("GNSS_TEC_RATE_LIMIT_SLEEP", "0.5"))
+
+
+class _TransientFailure:
+    """Sentinel marker for transient HTTP failures (5xx, timeouts, conn errors).
+
+    Distinguished from None (definitive 404 / no-data) so the main loop can
+    skip marking the date in gnss_tec_failed_dates and rely on the next cron
+    to retry without burning a retry_count slot.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<TRANSIENT_FAILURE>"
+
+
+TRANSIENT_FAILURE = _TransientFailure()
 
 
 async def init_gnss_tec_table():
@@ -136,8 +160,18 @@ async def mark_failed_date(date_str: str) -> None:
         await db.commit()
 
 
-async def try_fetch(session: aiohttp.ClientSession, url: str) -> bytes | None:
-    """Try to fetch a URL, return None on failure."""
+async def try_fetch(
+    session: aiohttp.ClientSession, url: str,
+) -> "bytes | None | _TransientFailure":
+    """Try to fetch a URL.
+
+    Returns:
+        bytes:               HTTP 200 with body.
+        None:                HTTP 404 (definitive no-data — archive gap).
+        TRANSIENT_FAILURE:   HTTP 5xx / 429 / timeout / connection error after
+                             MAX_RETRIES retries. Caller should NOT advance
+                             failed_dates retry_count (next cron retries).
+    """
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             async with session.get(url, timeout=TIMEOUT) as resp:
@@ -146,13 +180,18 @@ async def try_fetch(session: aiohttp.ClientSession, url: str) -> bytes | None:
                 elif resp.status == 404:
                     return None
                 else:
+                    # 5xx / 429 / other non-success — backoff and retry,
+                    # surface as transient on final attempt.
                     logger.debug("HTTP %d for %s", resp.status, url.split("/")[-1])
+                    if attempt == MAX_RETRIES:
+                        return TRANSIENT_FAILURE
+                    await asyncio.sleep(2 ** attempt)
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             if attempt == MAX_RETRIES:
-                logger.debug("Failed: %s", e)
-                return None
+                logger.debug("Transient failure: %s", e)
+                return TRANSIENT_FAILURE
             await asyncio.sleep(2 ** attempt)
-    return None
+    return TRANSIENT_FAILURE
 
 
 def parse_netcdf_simple(data: bytes, epoch: str) -> list[tuple]:
@@ -300,11 +339,26 @@ def _grid_to_rows(lats, lons, tec_data, epoch: str) -> list[tuple]:
     return rows
 
 
-async def fetch_date(session: aiohttp.ClientSession, date: datetime,
-                     hours: list[int] | None = None) -> list[tuple]:
-    """Fetch GNSS-TEC data for a specific date.
+async def fetch_date(
+    session: aiohttp.ClientSession, date: datetime,
+    hours: list[int] | None = None,
+) -> "list[tuple] | None | _TransientFailure":
+    """Fetch GNSS-TEC data for a specific date with hour-grain status.
 
-    Tries VTEC (AGRID2) first, then dTEC (GRID2) as fallback.
+    Tries VTEC (AGRID2) first, then dTEC (GRID2) as fallback per hour.
+
+    Returns:
+        list[tuple]:        At least one hour produced records (any partial
+                            success). Definitive 404 hours are silently
+                            skipped — they may be filled by a future archive
+                            update but never block the date from being marked
+                            "fetched" since at least some data was obtained.
+        None:               All hours returned definitive 404 with zero parsed
+                            rows. Caller marks date in gnss_tec_failed_dates
+                            so retry_count can advance.
+        TRANSIENT_FAILURE:  At least one hour saw 5xx/timeout/conn error and
+                            no hour produced records. Caller does NOT mark —
+                            next cron will retry cleanly.
     """
     if hours is None:
         hours = FETCH_HOURS
@@ -313,32 +367,45 @@ async def fetch_date(session: aiohttp.ClientSession, date: datetime,
     doy = date.strftime("%j")
     ymd = date.strftime("%Y%m%d")
 
-    all_rows = []
+    all_rows: list[tuple] = []
+    saw_transient = False
 
     for hour in hours:
         hh = f"{hour:02d}"
         epoch = f"{date.strftime('%Y-%m-%d')} {hh}:00:00"
 
+        hour_rows: list[tuple] = []
+
         # Try VTEC (absolute TEC) — available from 1993
         url = f"{NAGOYA_BASE}/AGRID2/nc/{year}/{doy}/{ymd}{hh}_atec.nc"
         data = await try_fetch(session, url)
-        if data is not None and len(data) > 100:
-            rows = parse_netcdf_simple(data, epoch)
-            if rows:
-                all_rows.extend(rows)
-                logger.info("  %s %s UT: %d VTEC records", date.strftime("%Y-%m-%d"), hh, len(rows))
+        if data is TRANSIENT_FAILURE:
+            saw_transient = True
+        elif data is not None and len(data) > 100:
+            hour_rows = parse_netcdf_simple(data, epoch)
+            if hour_rows:
+                all_rows.extend(hour_rows)
+                logger.info("  %s %s UT: %d VTEC records",
+                            date.strftime("%Y-%m-%d"), hh, len(hour_rows))
                 continue
 
         # Fallback: dTEC (detrended) — available from 2019
         url = f"{NAGOYA_BASE}/GRID2/nc/{year}/{doy}/{ymd}{hh}_dtec.nc"
         data = await try_fetch(session, url)
-        if data is not None and len(data) > 100:
-            rows = parse_netcdf_simple(data, epoch)
-            if rows:
-                all_rows.extend(rows)
-                logger.info("  %s %s UT: %d dTEC records", date.strftime("%Y-%m-%d"), hh, len(rows))
+        if data is TRANSIENT_FAILURE:
+            saw_transient = True
+        elif data is not None and len(data) > 100:
+            hour_rows = parse_netcdf_simple(data, epoch)
+            if hour_rows:
+                all_rows.extend(hour_rows)
+                logger.info("  %s %s UT: %d dTEC records",
+                            date.strftime("%Y-%m-%d"), hh, len(hour_rows))
 
-    return all_rows
+    if all_rows:
+        return all_rows
+    if saw_transient:
+        return TRANSIENT_FAILURE
+    return None
 
 
 async def main():
@@ -408,6 +475,7 @@ async def main():
     total_records = 0
     inserted_dates = 0
     failed_dates_count = 0
+    transient_skipped = 0
 
     async with aiohttp.ClientSession() as session:
         tasks = [fetch_one(session, d) for d in target_dates]
@@ -416,7 +484,15 @@ async def main():
         for coro in asyncio.as_completed(tasks):
             date, rows = await coro
             date_str = date.strftime("%Y-%m-%d")
-            if rows:
+            if rows is TRANSIENT_FAILURE:
+                # Don't advance retry_count — next cron retries cleanly.
+                transient_skipped += 1
+                if transient_skipped <= 5 or transient_skipped % 20 == 0:
+                    logger.info(
+                        "  %s: transient failure (not marked, cumulative: %d)",
+                        date_str, transient_skipped,
+                    )
+            elif rows:
                 async with safe_connect() as db:
                     await db.executemany(
                         """INSERT OR IGNORE INTO gnss_tec
@@ -430,14 +506,17 @@ async def main():
                 logger.info("  %s: %d records (cumulative: %d records / %d dates)",
                             date_str, len(rows), total_records, inserted_dates)
             else:
+                # Definitive no-data (None): all hours returned 404 with no
+                # parsed rows. Advance retry_count.
                 await mark_failed_date(date_str)
                 failed_dates_count += 1
                 logger.info("  %s: 0 records (marked failed, cumulative failed: %d)",
                             date_str, failed_dates_count)
 
     logger.info(
-        "GNSS-TEC fetch complete: %d records / %d dates inserted, %d dates failed",
-        total_records, inserted_dates, failed_dates_count,
+        "GNSS-TEC fetch complete: %d records / %d dates inserted, "
+        "%d dates failed (definitive), %d dates transient-skipped",
+        total_records, inserted_dates, failed_dates_count, transient_skipped,
     )
 
 
