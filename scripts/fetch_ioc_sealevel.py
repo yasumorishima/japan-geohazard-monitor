@@ -76,6 +76,25 @@ RATE_LIMIT_SLEEP = float(os.environ.get("IOC_RATE_LIMIT_SLEEP", "1.0"))
 MAX_FETCHES = int(os.environ.get("IOC_MAX_FETCHES", "200"))
 
 
+class _TransientFailure:
+    """Sentinel marker for transient HTTP failures (5xx, timeouts, conn errors,
+    HTML error pages, JSON decode errors).
+
+    Distinguished from an empty list (definitive 200-OK no-data / 404) so the
+    main loop can skip marking the (station, date) pair in
+    ioc_sealevel_failed_dates and rely on the next cron to retry without
+    burning a retry_count slot.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<TRANSIENT_FAILURE>"
+
+
+TRANSIENT_FAILURE = _TransientFailure()
+
+
 async def init_ioc_sealevel_table():
     """Create IOC sea level data and failure-tracking tables and indices."""
     async with safe_connect() as db:
@@ -280,10 +299,12 @@ def parse_ioc_data(data: list, station: dict) -> list[dict]:
     return rows
 
 
-async def fetch_station_data(session: aiohttp.ClientSession,
-                              station: dict,
-                              time_start: str,
-                              time_stop: str) -> list[dict]:
+async def fetch_station_data(
+    session: aiohttp.ClientSession,
+    station: dict,
+    time_start: str,
+    time_stop: str,
+) -> "list[dict] | _TransientFailure":
     """Fetch sea level data for one IOC station within a time range.
 
     Args:
@@ -292,7 +313,17 @@ async def fetch_station_data(session: aiohttp.ClientSession,
         time_start: start time string (YYYY-MM-DD HH:MM:SS).
         time_stop: end time string (YYYY-MM-DD HH:MM:SS).
 
-    Returns list of parsed records.
+    Returns:
+        list[dict]:        Parsed records (possibly empty for definitive
+                           200-OK no-data or 404). Caller marks the (station,
+                           date) pair in ioc_sealevel_failed_dates only when
+                           the list is empty.
+        TRANSIENT_FAILURE: 5xx / 429 / timeout / connection error after
+                           MAX_RETRIES, or 200-OK with HTML error page /
+                           JSON decode error / non-list payload (IOC SLSMF
+                           returns HTML during overload — treating as
+                           transient avoids 30-day blacklist of legitimate
+                           dates).
     """
     params = {
         "query": "data",
@@ -307,29 +338,65 @@ async def fetch_station_data(session: aiohttp.ClientSession,
             async with session.get(IOC_BASE, params=params, timeout=TIMEOUT) as resp:
                 if resp.status == 200:
                     text = await resp.text()
-                    # Handle empty or non-JSON responses
-                    if not text.strip() or text.strip().startswith("<"):
+                    stripped = text.strip()
+                    if not stripped:
+                        # 200 OK with empty body — IOC convention for genuine
+                        # gaps.
                         return []
+                    if stripped.startswith("<"):
+                        # HTML error page returned with 200 OK (overload /
+                        # gateway error). Transient.
+                        if attempt == MAX_RETRIES:
+                            logger.warning(
+                                "  %s (%s): 200 OK with HTML body (transient)",
+                                station["code"], station["name"],
+                            )
+                            return TRANSIENT_FAILURE
+                        await asyncio.sleep(2 ** attempt)
+                        continue
                     try:
                         data = json.loads(text)
                     except json.JSONDecodeError:
-                        return []
+                        # 200 OK but unparseable — server-side glitch, retry.
+                        if attempt == MAX_RETRIES:
+                            logger.warning(
+                                "  %s (%s): JSON decode error (transient)",
+                                station["code"], station["name"],
+                            )
+                            return TRANSIENT_FAILURE
+                        await asyncio.sleep(2 ** attempt)
+                        continue
                     if not isinstance(data, list):
-                        return []
+                        # Unexpected payload shape — surface as transient so
+                        # we revisit; if the API permanently changes shape,
+                        # ops will see persistent transient_skipped counts.
+                        if attempt == MAX_RETRIES:
+                            logger.warning(
+                                "  %s (%s): non-list payload %s (transient)",
+                                station["code"], station["name"],
+                                type(data).__name__,
+                            )
+                            return TRANSIENT_FAILURE
+                        await asyncio.sleep(2 ** attempt)
+                        continue
                     return parse_ioc_data(data, station)
                 elif resp.status == 404:
                     return []
                 else:
+                    # 5xx / 429 / other — backoff, surface transient on final.
                     if attempt == MAX_RETRIES:
-                        logger.warning("  %s (%s): HTTP %d",
+                        logger.warning("  %s (%s): HTTP %d (transient)",
                                        station["code"], station["name"], resp.status)
+                        return TRANSIENT_FAILURE
+                    await asyncio.sleep(2 ** attempt)
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             if attempt == MAX_RETRIES:
-                logger.warning("  %s (%s): %s",
+                logger.warning("  %s (%s): %s (transient)",
                                station["code"], station["name"], type(e).__name__)
+                return TRANSIENT_FAILURE
             await asyncio.sleep(2 ** attempt)
 
-    return []
+    return TRANSIENT_FAILURE
 
 
 def build_target_pairs(
@@ -427,6 +494,7 @@ async def main():
     total_records = 0
     inserted_pairs = 0
     failed_count = 0
+    transient_skipped = 0
 
     async with aiohttp.ClientSession() as session:
         tasks = [fetch_one(session, d, s) for d, s in target_pairs]
@@ -434,7 +502,15 @@ async def main():
             date, station, rows = await coro
             date_str = date.strftime("%Y-%m-%d")
             code = station["code"]
-            if rows:
+            if rows is TRANSIENT_FAILURE:
+                # Don't advance retry_count — next cron retries cleanly.
+                transient_skipped += 1
+                if transient_skipped <= 5 or transient_skipped % 20 == 0:
+                    logger.info(
+                        "  %s/%s: transient failure (not marked, cumulative: %d)",
+                        code, date_str, transient_skipped,
+                    )
+            elif rows:
                 async with safe_connect() as db:
                     await db.executemany(
                         """INSERT OR IGNORE INTO ioc_sea_level
@@ -454,6 +530,7 @@ async def main():
                         code, date_str, len(rows), total_records, inserted_pairs,
                     )
             else:
+                # Definitive empty list (200 OK + empty body, or 404).
                 await mark_failed_pair(code, date_str)
                 failed_count += 1
                 if failed_count % 20 == 0 or failed_count <= 5:
@@ -463,8 +540,9 @@ async def main():
                     )
 
     logger.info(
-        "IOC sea level fetch complete: %d records / %d pairs inserted, %d pairs failed",
-        total_records, inserted_pairs, failed_count,
+        "IOC sea level fetch complete: %d records / %d pairs inserted, "
+        "%d pairs failed (definitive), %d pairs transient-skipped",
+        total_records, inserted_pairs, failed_count, transient_skipped,
     )
 
 
