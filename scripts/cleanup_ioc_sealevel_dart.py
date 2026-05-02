@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -95,6 +96,14 @@ def _parse_args() -> argparse.Namespace:
         "--skip-bq", action="store_true",
         help="Skip BigQuery DELETE (sqlite-only cleanup).",
     )
+    p.add_argument(
+        "--skip-sqlite", action="store_true",
+        help=(
+            "Skip sqlite inspect/DELETE. Use this when ioc_sea_level only "
+            "exists in BigQuery (e.g. RPi5 host where the IOC fetcher runs "
+            "on a GHA runner and writes to BQ directly)."
+        ),
+    )
     return p.parse_args()
 
 
@@ -123,20 +132,37 @@ def _build_bq_where(codes: list[str], min_date: str | None,
 
 
 async def _sqlite_inspect(codes: list[str], min_date: str | None,
-                          max_date: str | None) -> dict:
+                          max_date: str | None) -> dict | None:
+    """Inspect contaminated rows in sqlite.
+
+    Returns None when ioc_sea_level / ioc_sealevel_failed_dates are absent
+    from this sqlite (e.g. a host where the IOC fetcher never wrote here).
+    Caller treats None as "nothing to do in sqlite — proceed to BQ".
+    """
     where, params = _build_sqlite_where(codes, min_date, max_date)
-    async with safe_connect() as db:
-        rows = await db.execute_fetchall(
-            f"SELECT station_code, COUNT(*) FROM ioc_sea_level "
-            f"WHERE {where} GROUP BY station_code ORDER BY station_code",
-            params,
-        )
-        failed_rows = await db.execute_fetchall(
-            f"SELECT station_code, COUNT(*) FROM ioc_sealevel_failed_dates "
-            f"WHERE station_code IN ({','.join(['?'] * len(codes))}) "
-            f"GROUP BY station_code",
-            list(codes),
-        )
+    try:
+        async with safe_connect() as db:
+            rows = await db.execute_fetchall(
+                f"SELECT station_code, COUNT(*) FROM ioc_sea_level "
+                f"WHERE {where} GROUP BY station_code ORDER BY station_code",
+                params,
+            )
+            failed_rows = await db.execute_fetchall(
+                f"SELECT station_code, COUNT(*) FROM ioc_sealevel_failed_dates "
+                f"WHERE station_code IN ({','.join(['?'] * len(codes))}) "
+                f"GROUP BY station_code",
+                list(codes),
+            )
+    except sqlite3.OperationalError as exc:
+        msg = str(exc)
+        if "no such table" in msg.lower():
+            logger.warning(
+                "sqlite has no ioc_sea_level / ioc_sealevel_failed_dates "
+                "(%s) — skipping sqlite phase. Pass --skip-sqlite to silence.",
+                msg,
+            )
+            return None
+        raise
     return {
         "data_per_station": [(r[0], r[1]) for r in rows],
         "failed_per_station": [(r[0], r[1]) for r in failed_rows],
@@ -144,22 +170,31 @@ async def _sqlite_inspect(codes: list[str], min_date: str | None,
 
 
 async def _sqlite_delete(codes: list[str], min_date: str | None,
-                         max_date: str | None) -> tuple[int, int]:
+                         max_date: str | None) -> tuple[int, int] | None:
+    """Delete contaminated rows from sqlite.
+
+    Returns None when neither table exists (host has no sqlite IOC mirror).
+    """
     where, params = _build_sqlite_where(codes, min_date, max_date)
-    async with safe_connect() as db:
-        # failed_dates first so a concurrent fetcher cannot re-issue the
-        # request between the two DELETEs.
-        cur1 = await db.execute(
-            f"DELETE FROM ioc_sealevel_failed_dates "
-            f"WHERE station_code IN ({','.join(['?'] * len(codes))})",
-            list(codes),
-        )
-        deleted_failed = cur1.rowcount
-        cur2 = await db.execute(
-            f"DELETE FROM ioc_sea_level WHERE {where}", params,
-        )
-        deleted_data = cur2.rowcount
-        await db.commit()
+    try:
+        async with safe_connect() as db:
+            # failed_dates first so a concurrent fetcher cannot re-issue the
+            # request between the two DELETEs.
+            cur1 = await db.execute(
+                f"DELETE FROM ioc_sealevel_failed_dates "
+                f"WHERE station_code IN ({','.join(['?'] * len(codes))})",
+                list(codes),
+            )
+            deleted_failed = cur1.rowcount
+            cur2 = await db.execute(
+                f"DELETE FROM ioc_sea_level WHERE {where}", params,
+            )
+            deleted_data = cur2.rowcount
+            await db.commit()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc).lower():
+            return None
+        raise
     return deleted_data, deleted_failed
 
 
@@ -200,35 +235,50 @@ async def _amain() -> int:
         logger.error("No station codes specified")
         return 2
 
+    if args.skip_sqlite and args.skip_bq:
+        logger.error("--skip-sqlite and --skip-bq together leave nothing to do.")
+        return 2
+
     logger.info(
         "Targeting station_codes=%s, min_date=%s, max_date=%s, "
-        "yes=%s, skip_bq=%s",
+        "yes=%s, skip_bq=%s, skip_sqlite=%s",
         codes, args.min_date, args.max_date, args.yes, args.skip_bq,
+        args.skip_sqlite,
     )
 
-    pre = await _sqlite_inspect(codes, args.min_date, args.max_date)
-    pre_data_total = sum(c for _, c in pre["data_per_station"])
-    pre_failed_total = sum(c for _, c in pre["failed_per_station"])
-    logger.info(
-        "[sqlite pre] ioc_sea_level rows targeted: %d (per-station: %s)",
-        pre_data_total, pre["data_per_station"],
-    )
-    logger.info(
-        "[sqlite pre] ioc_sealevel_failed_dates rows targeted: %d (per-station: %s)",
-        pre_failed_total, pre["failed_per_station"],
-    )
+    if args.skip_sqlite:
+        logger.info("[sqlite] skipped (--skip-sqlite)")
+    else:
+        pre = await _sqlite_inspect(codes, args.min_date, args.max_date)
+        if pre is None:
+            logger.info("[sqlite] tables absent — nothing to inspect or delete.")
+        else:
+            pre_data_total = sum(c for _, c in pre["data_per_station"])
+            pre_failed_total = sum(c for _, c in pre["failed_per_station"])
+            logger.info(
+                "[sqlite pre] ioc_sea_level rows targeted: %d (per-station: %s)",
+                pre_data_total, pre["data_per_station"],
+            )
+            logger.info(
+                "[sqlite pre] ioc_sealevel_failed_dates rows targeted: %d "
+                "(per-station: %s)",
+                pre_failed_total, pre["failed_per_station"],
+            )
 
     if not args.yes:
         logger.warning("DRY RUN — pass --yes to actually delete.")
         return 0
 
-    deleted_data, deleted_failed = await _sqlite_delete(
-        codes, args.min_date, args.max_date,
-    )
-    logger.info(
-        "[sqlite] deleted: %d data rows, %d failed_dates rows",
-        deleted_data, deleted_failed,
-    )
+    if not args.skip_sqlite:
+        result = await _sqlite_delete(codes, args.min_date, args.max_date)
+        if result is None:
+            logger.info("[sqlite] tables absent — DELETE skipped.")
+        else:
+            deleted_data, deleted_failed = result
+            logger.info(
+                "[sqlite] deleted: %d data rows, %d failed_dates rows",
+                deleted_data, deleted_failed,
+            )
 
     if not args.skip_bq:
         _bq_delete(codes, args.min_date, args.max_date)
