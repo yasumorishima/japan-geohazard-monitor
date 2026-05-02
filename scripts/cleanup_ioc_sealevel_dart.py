@@ -165,7 +165,15 @@ async def _sqlite_delete(codes: list[str], min_date: str | None,
 
 def _bq_delete(codes: list[str], min_date: str | None,
                max_date: str | None) -> int:
-    """Issue BigQuery DELETE. Returns affected row count from the job stats."""
+    """Issue BigQuery DELETE for the contaminated DART rows.
+
+    Always returns 0 — `bq query --format=json` does not surface
+    `numDmlAffectedRows` in stdout for DML jobs in a way this script
+    consumes, so the caller should verify by re-running a follow-up
+    SELECT COUNT(*) in the operator console (the helper logs the exact
+    verification query). The returned value is informational only and
+    intentionally not used for control flow.
+    """
     import subprocess
     where = _build_bq_where(codes, min_date, max_date)
     sql = (
@@ -182,8 +190,6 @@ def _bq_delete(codes: list[str], min_date: str | None,
         logger.error("BigQuery DELETE failed: %s", proc.stderr)
         raise RuntimeError(f"bq query exited {proc.returncode}")
     logger.info("BigQuery DELETE stdout: %s", proc.stdout.strip()[:200])
-    # `bq query` for DML returns no row count in stdout JSON, return 0
-    # placeholder; operator should re-run an SELECT COUNT(*) afterwards.
     return 0
 
 
