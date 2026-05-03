@@ -84,7 +84,7 @@ MAX_BACKFILL_DAYS_PER_RUN = int(os.environ.get("SNET_MAX_BACKFILL_DAYS", "20"))
 # Worst case: 20 backfill × 3 sensors + 7 recent × 4 segments × 3 sensors = 144
 # requests/cron, under HinetPy 200 req/cron budget.
 QUOTA_COOLDOWN_SEC = 2         # Pause between requests to respect quota
-MAX_REQUESTS_PER_RUN = int(os.environ.get("SNET_MAX_REQUESTS", "120"))
+MAX_REQUESTS_PER_RUN = int(os.environ.get("SNET_MAX_REQUESTS", "144"))
 
 # Phase D3: graceful partial-save before SIGTERM. The GHA step is killed at
 # timeout-minutes (default 75 = 4500 s); we proactively stop ~5 min earlier
