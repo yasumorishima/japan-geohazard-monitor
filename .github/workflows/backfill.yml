@@ -1165,6 +1165,264 @@ jobs:
           retention-days: 7
 
   # =====================================================================
+  # FETCH-HINET JOB -- Phase 2 (3) snet_waveform 統合の Hi-net 部分.
+  # NIED Hi-net (high-sensitivity 0101) を独立 runner で fetch, HinetPy
+  # 200req/IP quota を fetch-snet と分離して干渉なく動かす. merge job が
+  # backfill-hinet-{run_id} artifact を吸い上げ hinet_waveform overlay を適用.
+  # =====================================================================
+  fetch-hinet:
+    if: >-
+      github.event_name == 'schedule'
+      || inputs.target == 'all'
+      || inputs.target == ''
+      || inputs.target == 'hinet_waveform'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    outputs:
+      install_win32tools: ${{ steps.install_win32tools.outcome }}
+      fetch_hinet_waveform: ${{ steps.fetch_hinet_waveform.outcome }}
+      snapshot_outcome: ${{ steps.snapshot.outcome }}
+      restore_outcome: ${{ steps.restore.outcome }}
+      restore_restored: ${{ steps.restore.outputs.restored }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          pip install aiohttp aiosqlite numpy scipy netCDF4 google-cloud-bigquery pyarrow scikit-learn h5py
+          sudo apt-get install -y ncompress
+      - name: Restore previous database checkpoint
+        id: restore
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash {0}
+        run: |
+          set +e
+          TS() { date -u +"%H:%M:%S"; }
+          log() { echo "[$(TS)] $*"; }
+          log "restore step starting (run_id=${{ github.run_id }}, job=${{ github.job }})"
+          mkdir -p data results
+          RESTORED=""
+          MAX_TRIES=5
+          # Fetch artifact list with up to 3 attempts and exponential backoff
+          # between attempts (1s, 3s). stderr goes to a temp file so it shows up
+          # in job logs without polluting the parsed run_id list.
+          fetch_artifact_list() {
+            local prefix="$1"
+            local attempt
+            local delay=1
+            local result rc
+            local stderr_file="/tmp/gh_api_stderr_$$.log"
+            for attempt in 1 2 3; do
+              log "gh api artifacts (prefix=${prefix}, attempt=${attempt})"
+              : > "$stderr_file"
+              result=$(timeout 30 gh api \
+                "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+                --jq "[.artifacts[] | select(.name | startswith(\"${prefix}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" \
+                2>"$stderr_file")
+              rc=$?
+              if [ -s "$stderr_file" ]; then
+                log "  gh stderr: $(head -c 500 "$stderr_file" | tr '\n' ' ')"
+              fi
+              if [ $rc -eq 0 ] && [ -n "$result" ]; then
+                rm -f "$stderr_file"
+                echo "$result"
+                return 0
+              fi
+              if [ $rc -eq 124 ]; then
+                log "gh api TIMEOUT (rc=124, 30s exceeded) -- attempt ${attempt}"
+              elif [ $rc -eq 137 ]; then
+                log "gh api SIGKILL (rc=137) -- attempt ${attempt}"
+              else
+                log "gh api attempt ${attempt} failed (rc=${rc}, stdout head: ${result:0:200})"
+              fi
+              if [ $attempt -lt 3 ]; then
+                log "sleeping ${delay}s before retry"
+                sleep $delay
+                delay=$((delay * 3))
+              fi
+            done
+            rm -f "$stderr_file"
+            return 1
+          }
+          for PREFIX in "backfill-checkpoint-" "database-checkpoint-"; do
+            [ -n "$RESTORED" ] && break
+            log "scanning prefix=${PREFIX}"
+            RUN_IDS=$(fetch_artifact_list "$PREFIX")
+            if [ -z "$RUN_IDS" ]; then
+              log "no artifacts found for prefix=${PREFIX}"
+              continue
+            fi
+            for PREV_RUN in $RUN_IDS; do
+              [ -z "$PREV_RUN" ] && continue
+              case "$PREV_RUN" in (*[!0-9]*) continue;; esac
+              [ "$PREV_RUN" = "${{ github.run_id }}" ] && continue
+              ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
+              log "trying artifact: ${ARTIFACT_NAME}"
+              rm -rf /tmp/db-restore
+              timeout 180 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+                --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
+              dl_rc=$?
+              if [ $dl_rc -ne 0 ]; then
+                log "  download failed (rc=${dl_rc}) -- skip"
+                continue
+              fi
+              DB_FILE="/tmp/db-restore/geohazard.db"
+              [ ! -f "$DB_FILE" ] && DB_FILE="/tmp/db-restore/data/geohazard.db"
+              if [ ! -f "$DB_FILE" ]; then
+                log "  no geohazard.db in artifact -- skip"
+                continue
+              fi
+              cp "$DB_FILE" data/geohazard.db
+              rm -f data/geohazard.db-wal data/geohazard.db-shm
+              DB_SIZE=$(du -h data/geohazard.db | cut -f1)
+              log "  copied (${DB_SIZE}) -- checking integrity"
+              timeout 60 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
+              ic_rc=$?
+              if [ $ic_rc -eq 0 ]; then
+                RESTORED="${ARTIFACT_NAME}"
+                echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
+                log "Restored from ${ARTIFACT_NAME}"
+                break
+              else
+                log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
+                timeout 300 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
+                sv_rc=$?
+                if [ $sv_rc -eq 0 ] && [ -f /tmp/salvaged.db ]; then
+                  rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                  mv /tmp/salvaged.db data/geohazard.db
+                  RESTORED="${ARTIFACT_NAME}-salvaged"
+                  echo "restored=${ARTIFACT_NAME}-salvaged" >> "$GITHUB_OUTPUT"
+                  log "Salvaged via per-table copy from ${ARTIFACT_NAME}"
+                  break
+                fi
+                log "  salvage failed (rc=${sv_rc}) -- trying next artifact"
+                rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm /tmp/salvaged.db
+              fi
+            done
+          done
+          if [ -z "$RESTORED" ]; then
+            log "No usable checkpoint found -- will init fresh DB"
+            echo "restored=none" >> "$GITHUB_OUTPUT"
+          fi
+          log "restore step done (RESTORED=${RESTORED:-none})"
+          exit 0
+      - name: Init DB if missing or corrupt
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        shell: bash {0}
+        run: |
+          set +e
+          NEEDS_INIT=0
+          if [ ! -f data/geohazard.db ]; then
+            NEEDS_INIT=1
+            echo "No DB file -- will init"
+          else
+            timeout 300 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null
+            if [ $? -ne 0 ]; then
+              echo "Existing DB is corrupt -- removing and re-initialising"
+              rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+              NEEDS_INIT=1
+            fi
+          fi
+          if [ "$NEEDS_INIT" = "1" ]; then
+            python3 -c "
+          import asyncio, sys
+          sys.path.insert(0, 'src')
+          from db import init_db
+          asyncio.run(init_db())
+          print('DB initialised')
+          "
+            if [ $? -ne 0 ]; then
+              echo "::error::init_db failed"
+              exit 1
+            fi
+          fi
+      - name: Install win32tools for Hi-net (catwin32 + win2sac_32)
+        id: install_win32tools
+        if: inputs.target == 'all' || inputs.target == 'hinet_waveform' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          HINET_USER: ${{ secrets.HINET_USER }}
+          HINET_PASS: ${{ secrets.HINET_PASS }}
+        run: |
+          if [ -z "$HINET_USER" ] || [ -z "$HINET_PASS" ]; then
+            echo "HINET credentials not set, skipping win32tools"
+            exit 0
+          fi
+          pip install HinetPy 2>/dev/null || true
+          python3 -c "from HinetPy import Client; Client('${HINET_USER}', '${HINET_PASS}')._get_win32tools()" || exit 0
+          if [ -f win32tools.tar.gz ]; then
+            tar -xf win32tools.tar.gz && rm win32tools.tar.gz
+            cd win32tools && make && mkdir -p bin && mv catwin32.src/catwin32 win2sac.src/win2sac_32 bin/ && cd ..
+            echo "${{ github.workspace }}/win32tools/bin" >> $GITHUB_PATH
+          fi
+      - name: Fetch Hi-net high-sensitivity waveform features (Phase 2 (3))
+        id: fetch_hinet_waveform
+        if: inputs.target == 'all' || inputs.target == 'hinet_waveform' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 75
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          HINET_USER: ${{ secrets.HINET_USER }}
+          HINET_PASS: ${{ secrets.HINET_PASS }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          HINET_MAX_REQUESTS: ${{ vars.HINET_MAX_REQUESTS || '30' }}
+          HINET_MAX_STATIONS: ${{ vars.HINET_MAX_STATIONS || '30' }}
+          HINET_STEP_BUDGET_SEC: ${{ vars.HINET_STEP_BUDGET_SEC || '4500' }}
+        run: |
+          pip install HinetPy 2>/dev/null || true
+          python3 scripts/fetch_hinet_waveform.py
+          if [ -f results/hinet_coverage.json ]; then
+            mkdir -p results/midrun
+            cp results/hinet_coverage.json results/midrun/
+          fi
+      - name: Snapshot DB
+        id: snapshot
+        if: always()
+        run: |
+          python3 -c "
+          import sqlite3, sys
+          try:
+              src = sqlite3.connect('data/geohazard.db')
+              src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+              r = src.execute('PRAGMA integrity_check').fetchone()[0]
+              if r != 'ok':
+                  print(f'REFUSING to snapshot corrupt DB: {r[:200]}')
+                  src.close()
+                  sys.exit(1)
+              dst = sqlite3.connect('data/geohazard_snapshot.db')
+              src.backup(dst)
+              dst.close()
+              src.close()
+              verify = sqlite3.connect('data/geohazard_snapshot.db')
+              r2 = verify.execute('PRAGMA integrity_check').fetchone()[0]
+              verify.close()
+              if r2 != 'ok':
+                  print(f'REFUSING to upload corrupt snapshot (post-backup): {r2[:200]}')
+                  sys.exit(1)
+              print('Snapshot created (post-integrity-check + post-backup verify)')
+          except Exception as e:
+              print(f'Snapshot failed: {e}')
+              sys.exit(1)
+          "
+          if [ -f data/geohazard_snapshot.db ]; then
+            mv data/geohazard_snapshot.db data/geohazard.db
+          fi
+      - name: Upload hinet.db artifact
+        if: always() && steps.snapshot.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backfill-hinet-${{ github.run_id }}
+          path: data/geohazard.db
+          retention-days: 7
+
+  # =====================================================================
   # LIGHT JOB -- all 26 other fetchers. Combined estimated runtime ~1h45m;
   # timeout 200m leaves slack. Serves as the base DB for merge.
   # =====================================================================
@@ -1762,7 +2020,7 @@ jobs:
   # if: always() so single-job failure still triggers BQ upload + reporting.
   # =====================================================================
   merge:
-    needs: [fetch-modis, fetch-so2, fetch-cloud, fetch-snet, light]
+    needs: [fetch-modis, fetch-so2, fetch-cloud, fetch-snet, fetch-hinet, light]
     if: always() && inputs.target != 'diagnostic'
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -1818,6 +2076,14 @@ jobs:
           name: backfill-snet-${{ github.run_id }}
           path: /tmp/snet
 
+      - name: Download hinet.db artifact
+        if: needs.fetch-hinet.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: backfill-hinet-${{ github.run_id }}
+          path: /tmp/hinet
+
       - name: Merge light + 4 overlays
         id: merge
         run: |
@@ -1831,6 +2097,7 @@ jobs:
             --overlay /tmp/cloud/geohazard.db:cloud_fraction \
             --overlay /tmp/snet/geohazard.db:snet_waveform \
             --overlay /tmp/snet/geohazard.db:fnet_waveform \
+            --overlay /tmp/hinet/geohazard.db:hinet_waveform \
             --dst data/geohazard.db \
             --require-base
 
