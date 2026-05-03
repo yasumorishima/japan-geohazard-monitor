@@ -2023,7 +2023,11 @@ jobs:
     needs: [fetch-modis, fetch-so2, fetch-cloud, fetch-snet, fetch-hinet, light]
     if: always() && inputs.target != 'diagnostic'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Bumped 60->150 after Hi-net Stage 1 (PR #127) pushed merge time past
+    # 60min ceiling (run 25276071313 / 25279499629 both cancelled at Snapshot
+    # step). 150min matches fetch-snet/fetch-hinet/light heavy-job tier with
+    # comfortable headroom for 25min BQ upload + 10min merge + ~5min misc.
+    timeout-minutes: 150
 
     steps:
       - uses: actions/checkout@v4
@@ -2104,29 +2108,32 @@ jobs:
       - name: Snapshot merged DB for checkpoint
         id: snapshot
         if: steps.merge.outcome == 'success'
+        # Was: wal_checkpoint + integrity_check + src.backup() (full 2GB DB
+        # copy + page-by-page integrity scan). Removed integrity_check and
+        # src.backup() because:
+        #   - integrity_check is already run by merge_checkpoints.py:_verify()
+        #     before the merge step exits with success, on the same dst file.
+        #   - src.backup() was a 2GB file rewrite intended for compaction +
+        #     WAL flush, but compaction is not required by downstream steps
+        #     (load_raw_to_bq.py reads SQLite -> Pandas -> BQ regardless of
+        #     page fragmentation). Only the WAL flush is needed so that
+        #     Coverage report and Upload checkpoint artifact see committed
+        #     pages.
+        # Combined snapshot step time: ~10min -> ~5sec (run 25276071313 /
+        # 25279499629 exceeded 60min timeout after Hi-net data added; Snapshot is the dominant suspect, blocking
+        # all subsequent BQ uploads).
         run: |
           python3 -c "
           import sqlite3, sys
           try:
-              src = sqlite3.connect('data/geohazard.db')
-              src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-              r = src.execute('PRAGMA integrity_check').fetchone()[0]
-              if r != 'ok':
-                  print(f'REFUSING to snapshot corrupt DB: {r[:200]}')
-                  src.close()
-                  sys.exit(1)
-              dst = sqlite3.connect('data/geohazard_snapshot.db')
-              src.backup(dst)
-              dst.close()
-              src.close()
-              print('Snapshot created (post-integrity-check)')
+              conn = sqlite3.connect('data/geohazard.db')
+              conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+              conn.close()
+              print('WAL checkpoint flushed (integrity already verified by merge_checkpoints.py:_verify)')
           except Exception as e:
-              print(f'Snapshot failed: {e}')
+              print(f'wal_checkpoint failed: {e}')
               sys.exit(1)
           "
-          if [ -f data/geohazard_snapshot.db ]; then
-            mv data/geohazard_snapshot.db data/geohazard.db
-          fi
 
       - name: Coverage report
         if: steps.snapshot.outcome == 'success'
