@@ -156,6 +156,27 @@ def test_size_reduction(tmp: str) -> None:
     print(f"  PASS: size_reduction (src={src_sz} dst={dst_sz} ratio={src_sz/dst_sz:.1f}x)")
 
 
+def test_src_dst_same_path_rejected(tmp: str) -> None:
+    """Guard against --src X --dst X destroying the source via os.remove(dst).
+    """
+    same = os.path.join(tmp, "same.db")
+    conn = sqlite3.connect(same)
+    conn.execute("CREATE TABLE owned (x INTEGER)")
+    conn.execute("INSERT INTO owned VALUES (1)")
+    conn.commit()
+    conn.close()
+
+    res = run_extract(same, same, "owned")
+    assert res.returncode != 0, "expected non-zero on src==dst"
+    assert "must differ" in res.stderr, res.stderr
+    # source must still exist and be readable
+    assert os.path.exists(same), "source DB was destroyed by self-overwrite"
+    check = sqlite3.connect(same)
+    assert check.execute("SELECT x FROM owned").fetchone() == (1,)
+    check.close()
+    print("  PASS: src_dst_same_path_rejected")
+
+
 def test_missing_src_errors(tmp: str) -> None:
     dst = os.path.join(tmp, "dst.db")
     res = run_extract(os.path.join(tmp, "nope.db"), dst, "anything")
@@ -195,13 +216,14 @@ def main() -> None:
             test_missing_table_tolerated,
             test_empty_table,
             test_size_reduction,
+            test_src_dst_same_path_rejected,
             test_missing_src_errors,
             test_overwrites_existing_dst,
         ]:
             # each test gets a fresh subdir to avoid state bleed
             sub = tempfile.mkdtemp(dir=tmp, prefix=fn.__name__ + "_")
             fn(sub)
-        print("\nALL TESTS PASS (7/7)")
+        print("\nALL TESTS PASS (8/8)")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

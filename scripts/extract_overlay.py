@@ -52,6 +52,13 @@ def extract(src_path: str, dst_path: str, tables: list[str]) -> None:
         print(f"ERROR: src not found: {src_path}", file=sys.stderr)
         sys.exit(1)
 
+    # Guard against --src and --dst pointing at the same file: the os.remove
+    # below would unlink the source before ATTACH, losing the live DB. Cheap
+    # check, prevents a destructive accident in CI.
+    if os.path.abspath(src_path) == os.path.abspath(dst_path):
+        print("ERROR: --src and --dst must differ", file=sys.stderr)
+        sys.exit(1)
+
     if os.path.exists(dst_path):
         os.remove(dst_path)
 
@@ -60,9 +67,11 @@ def extract(src_path: str, dst_path: str, tables: list[str]) -> None:
     print(f"dst: {dst_path}")
     print(f"tables: {tables}")
 
-    dst = sqlite3.connect(dst_path)
-    dst.execute("PRAGMA journal_mode = MEMORY")
-    dst.execute(f"ATTACH DATABASE ? AS src", (src_path,))
+    # uri=True enables the read-only ATTACH below. extract_overlay.py only
+    # SELECTs from src, but mode=ro hardens against future edits that might
+    # accidentally write to the live data/geohazard.db during fetch jobs.
+    dst = sqlite3.connect(dst_path, uri=True)
+    dst.execute("ATTACH DATABASE ? AS src", (f"file:{src_path}?mode=ro",))
 
     for table in tables:
         row = dst.execute(
