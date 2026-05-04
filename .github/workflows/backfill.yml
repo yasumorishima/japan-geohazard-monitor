@@ -337,6 +337,17 @@ jobs:
             mv data/geohazard_snapshot.db data/geohazard.db
           fi
 
+      - name: Extract owned-table overlay (PR-2 artifact reduction)
+        id: extract_overlay
+        if: steps.snapshot.outcome == 'success'
+        continue-on-error: true
+        run: |
+          python3 scripts/extract_overlay.py \
+            --src data/geohazard.db \
+            --dst data/geohazard_overlay.db \
+            --tables modis_lst \
+            && mv data/geohazard_overlay.db data/geohazard.db
+
       - name: Upload modis.db artifact
         if: always() && steps.snapshot.outcome == 'success'
         uses: actions/upload-artifact@v4
@@ -587,6 +598,17 @@ jobs:
           if [ -f data/geohazard_snapshot.db ]; then
             mv data/geohazard_snapshot.db data/geohazard.db
           fi
+
+      - name: Extract owned-table overlay (PR-2 artifact reduction)
+        id: extract_overlay
+        if: steps.snapshot.outcome == 'success'
+        continue-on-error: true
+        run: |
+          python3 scripts/extract_overlay.py \
+            --src data/geohazard.db \
+            --dst data/geohazard_overlay.db \
+            --tables so2_column \
+            && mv data/geohazard_overlay.db data/geohazard.db
 
       - name: Upload so2.db artifact
         if: always() && steps.snapshot.outcome == 'success'
@@ -861,6 +883,17 @@ jobs:
           if [ -f data/geohazard_snapshot.db ]; then
             mv data/geohazard_snapshot.db data/geohazard.db
           fi
+
+      - name: Extract owned-table overlay (PR-2 artifact reduction)
+        id: extract_overlay
+        if: steps.snapshot.outcome == 'success'
+        continue-on-error: true
+        run: |
+          python3 scripts/extract_overlay.py \
+            --src data/geohazard.db \
+            --dst data/geohazard_overlay.db \
+            --tables cloud_fraction \
+            && mv data/geohazard_overlay.db data/geohazard.db
 
       - name: Upload cloud.db artifact
         if: always() && steps.snapshot.outcome == 'success'
@@ -1156,6 +1189,17 @@ jobs:
             mv data/geohazard_snapshot.db data/geohazard.db
           fi
 
+      - name: Extract owned-table overlay (PR-2 artifact reduction)
+        id: extract_overlay
+        if: steps.snapshot.outcome == 'success'
+        continue-on-error: true
+        run: |
+          python3 scripts/extract_overlay.py \
+            --src data/geohazard.db \
+            --dst data/geohazard_overlay.db \
+            --tables snet_waveform,fnet_waveform \
+            && mv data/geohazard_overlay.db data/geohazard.db
+
       - name: Upload snet.db artifact
         if: always() && steps.snapshot.outcome == 'success'
         uses: actions/upload-artifact@v4
@@ -1414,6 +1458,17 @@ jobs:
           if [ -f data/geohazard_snapshot.db ]; then
             mv data/geohazard_snapshot.db data/geohazard.db
           fi
+      - name: Extract owned-table overlay (PR-2 artifact reduction)
+        id: extract_overlay
+        if: steps.snapshot.outcome == 'success'
+        continue-on-error: true
+        run: |
+          python3 scripts/extract_overlay.py \
+            --src data/geohazard.db \
+            --dst data/geohazard_overlay.db \
+            --tables hinet_waveform \
+            && mv data/geohazard_overlay.db data/geohazard.db
+
       - name: Upload hinet.db artifact
         if: always() && steps.snapshot.outcome == 'success'
         uses: actions/upload-artifact@v4
