@@ -439,7 +439,7 @@ Each non-light fetch job picks up an `Extract owned-table overlay` step inserted
 Review trail (3 commits squashed into `c0b8e69`): initial `e26f22e` → CodeRabbit nitpicks `2196bf3` (`subprocess.run(timeout=120)` for CI hang prevention; `_qident()` SQL identifier quoting helper, defensive against future callers despite all current production names being simple ASCII) → Opus subagent re-review fixes `c38699d` (the `--src == --dst` guard above as MUST-FIX, URI-form read-only ATTACH and removal of unnecessary `journal_mode = MEMORY` as SHOULD-FIX). Smoke test grew 7 → 8 cases on RPi5 (Python 3.11 / sqlite3 3.40.1) covering schema preservation, multi-table extraction, missing-table tolerance, empty table, size reduction (336x on synthetic data), `--src == --dst` rejection, missing-source error, and `dst` overwrite. CodeRabbit "No actionable comments" on the final state. Production validation (actual artifact size measurement on the next successful cron run) is deferred to a follow-up entry once observed.
 
 
-## Analysis Results (2011-2026, 28K M3+ earthquakes, 6.2M TEC, 45K Kp, 1.15M GNSS-TEC, 24M ULF, 98 features with dynamic selection)
+## Analysis Results (2011-2026, 28K M3+ earthquakes, 6.4M TEC, 45K Kp, 5.3M GNSS-TEC, 24M ULF, 98 features with dynamic selection)
 
 ### Summary
 
