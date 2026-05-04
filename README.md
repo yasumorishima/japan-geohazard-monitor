@@ -445,7 +445,7 @@ PR #132 was validated end-to-end on cron run 25299739664 (the second post-PR-2 c
 
 Artifact sizes measured directly from the cron run's artifact metadata:
 
-| Artifact | Size | vs full DB (~1885 MB) | Projection |
+| Artifact | Size | vs full DB (~1885 MB each) | Projection |
 | --- | --- | --- | --- |
 | `backfill-light` | 1,885 MB | (base, unchanged) | 1,872 MB ✓ |
 | `backfill-modis` | **8.7 KB** | 225,000x smaller | ~30 MB (vastly under) |
@@ -453,9 +453,9 @@ Artifact sizes measured directly from the cron run's artifact metadata:
 | `backfill-cloud` | 111 MB | 17.0x smaller | ~40 MB |
 | `backfill-snet` | 63 MB | 30.0x smaller | ~100 MB |
 | `backfill-hinet` | **91 KB** | 21,250x smaller | ~5 MB (vastly under) |
-| **Total** | **2,358 MB** | **4.8x reduction** | ~2,097 MB / 5.4x |
+| **Total** | **2,358 MB** | **4.8x vs ~11.3 GB (6 jobs)** | ~2,097 MB / 5.4x |
 
-The 4.8x reduction (vs the projected 5.4x) is dominated by `so2_column` running 6x over its projection — the table holds 19.6 M rows (the heaviest non-light table) and the projection underweighted it. The under-projection is the opposite direction: `modis_lst` (343 rows of monthly composites) and `hinet_waveform` (696 rows from Stage 1 deployment) shrink to bytes-class artifacts because their tables are nearly empty in absolute terms. The 4.8x ratio still represents `~9 GB` of GHA artifact storage avoided per cron cycle and a similar reduction in the merge job's 6-artifact download time, which is the dominant goal of PR-2 — the projection miss has no operational consequence beyond updating expectations for follow-up tuning.
+The 4.8x reduction (Total vs ~11.3 GB of 6 full-DB uploads, vs the projected 5.4x) is dominated by `so2_column` running 6x over its projection — the table holds 19.6 M rows (the heaviest non-light table) and the projection underweighted it. The under-projection is the opposite direction: `modis_lst` (343 rows of monthly composites) and `hinet_waveform` (696 rows from Stage 1 deployment) shrink to bytes-class artifacts because their tables are nearly empty in absolute terms. The 4.8x ratio still represents `~9 GB` of GHA artifact storage avoided per cron cycle and a similar reduction in the merge job's 6-artifact download time, which is the dominant goal of PR-2 — the projection miss has no operational consequence beyond updating expectations for follow-up tuning.
 
 BigQuery `snet_waveform` advanced 1,940 → 1,955 distinct_days (+15) on this single cycle, with `max_date` advancing 2026-05-02 → 2026-05-03 — the first front advancement observed since the PR #131 validation entry. The +15 / cycle delta is slightly higher than the +13 norm seen in the prior cycle, reflecting that `MAX_REQUESTS_PER_RUN=144` allocates work over different gap-day clusters as backfill progresses. Catch-up trajectory remains in the `+13–15 / cycle × 8 cycle/day = +104–120 days/day` envelope projected in the PR #131 entry, with the residual snet completeness gap of `1,955 → ~3,500` distinct days now estimated at `~13 days` (i.e. ~2026-05-17), shaving ~2 days off the prior 2026-05-19 projection.
 
