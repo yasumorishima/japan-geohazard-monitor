@@ -10,10 +10,18 @@ Mechanism: crustal stress changes alter geomagnetic field → changes cosmic ray
 deflection patterns. Use daily rate anomalies (deviation from 27-day solar
 rotation mean) as precursor features.
 
-Stations:
-    IRKT (Irkutsk, Russia, 52.47°N, 104.03°E) - closest to Japan, 3.64 GV
-    OULU (Oulu, Finland, 65.05°N, 25.47°E) - reference, longest record, 0.81 GV
-    PSNM (Doi Inthanon, Thailand, 18.59°N, 98.49°E) - equatorial, 16.8 GV
+Stations (9 total, rigidity 0.65-16.80 GV):
+    Core 3 (since project start):
+        IRKT (Irkutsk, Russia)        - 3.64 GV  - closest to Japan
+        OULU (Oulu, Finland)          - 0.81 GV  - reference, longest record
+        PSNM (Doi Inthanon, Thailand) - 16.80 GV - equatorial
+    Stage 3 expansion (2026-05, mid-rigidity fill + global summed-rate density):
+        APTY (Apatity, Russia, polar) - 0.65 GV  - complements OULU
+        JUNG (Jungfraujoch, Swiss)    - 4.49 GV  - high altitude (3570m)
+        ATHN (Athens, Greece)         - 8.53 GV  - mid-Mediterranean
+        ROME (Rome, Italy)            - 6.27 GV  - sea-level European
+        BKSN (Baksan, Russia/Caucasus)- 5.70 GV  - mid-Eurasia
+        AATB (Alma-Ata B, Kazakhstan) - 5.90 GV  - high-altitude central Asia (3340m)
 
 References:
     - Homola et al. (2023) J. Atmos. Sol.-Terr. Phys. 247:106068
@@ -38,9 +46,17 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 STATIONS = {
+    # Core 3 (rigidity diversity: 0.81 / 3.64 / 16.80 GV)
     "IRKT": {"lat": 52.47, "lon": 104.03, "name": "Irkutsk", "rigidity_gv": 3.64},
     "OULU": {"lat": 65.05, "lon": 25.47, "name": "Oulu", "rigidity_gv": 0.81},
     "PSNM": {"lat": 18.59, "lon": 98.49, "name": "Doi Inthanon", "rigidity_gv": 16.8},
+    # Mid-rigidity fill (4-9 GV) + global summed-rate density (Stage 3)
+    "APTY": {"lat": 67.55, "lon": 33.39, "name": "Apatity", "rigidity_gv": 0.65},
+    "JUNG": {"lat": 46.55, "lon": 7.98,  "name": "Jungfraujoch", "rigidity_gv": 4.49},
+    "ATHN": {"lat": 37.97, "lon": 23.78, "name": "Athens", "rigidity_gv": 8.53},
+    "ROME": {"lat": 41.90, "lon": 12.52, "name": "Rome", "rigidity_gv": 6.27},
+    "BKSN": {"lat": 43.28, "lon": 42.69, "name": "Baksan", "rigidity_gv": 5.70},
+    "AATB": {"lat": 43.04, "lon": 76.94, "name": "Alma-Ata B", "rigidity_gv": 5.90},
 }
 
 NMDB_API = "https://www.nmdb.eu/nest/draw_graph.php"

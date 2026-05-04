@@ -738,7 +738,7 @@ gh workflow run "Earthquake Correlation Analysis" \
 | `fetch_gnss_tec.py` | Nagoya Univ. ISEE (AGRID2/GRID2 netCDF) | GNSS-TEC 0.5° grid, 1h temporal, 5.3M records (no auth, 2 hrs/day × 200 dates/run) |
 | `fetch_modis_lst.py` | ORNL DAAC TESViS API | MODIS LST 1km: M5.5+ land epicenters ±14d + random control (rate limited) |
 | `fetch_kakioka_ulf.py` | INTERMAGNET BGS GIN + WDC Kyoto | KAK/MMB/KNY 1-min geomagnetic: M6+ events ±7d (IAGA-2002 format) |
-| `fetch_nmdb_cosmicray.py` | NMDB (Neutron Monitor Database) | Daily cosmic ray count rates: IRKT/OULU/PSNM, 2011-present (no auth) |
+| `fetch_nmdb_cosmicray.py` | NMDB (Neutron Monitor Database) | Daily cosmic ray count rates: 9 stations (IRKT/OULU/PSNM/APTY/JUNG/ATHN/ROME/BKSN/AATB), 2011-present (no auth) |
 | `fetch_cses_satellite.py` | INTERMAGNET BGS GIN + CSES-Limadou | KAK/MMB/KNY 1-min geomag → hourly downsample (2011-2026, 7-day batch) + CSES satellite EM (2018+, auth required) |
 | `fetch_blitzortung.py` | Blitzortung.org + Univ. Bonn sferics | Lightning stroke counts aggregated to 2° grid cells (Japan region, `lightning` table) |
 | `fetch_iss_lis_lightning.py` | NASA GHRC DAAC (Earthdata auth) | ISS LIS flash counts 2017-2023, 2° cells (`iss_lis_lightning` table, separate from Blitzortung) |
@@ -961,7 +961,7 @@ Phase 7-8 showed diminishing returns from seismological features (+0.003 per pha
 
 | Data Source | Status | Issue |
 |---|---|---|
-| NMDB cosmic rays | ✅ 14,565 records (IRKT/OULU/PSNM) | — |
+| NMDB cosmic rays | ✅ 14,685 records (3 stations; expanding to 9) | — |
 | Blitzortung lightning | ❌ JSONDecodeError | Archive returns HTML (access restricted), not detected |
 | INTERMAGNET hourly | ❌ HTTP 400 on all requests | 3 API parameter errors: `SamplesPerDay=24` (invalid), date format with TZ, wrong publicationState |
 | Movebank animal GPS | ❌ No data | No public GPS tracking studies in Japan region |
@@ -1287,7 +1287,7 @@ GCP プロジェクト `data-platform-490901` の `geohazard` データセット
 - Ionosphere TEC: CODE (University of Bern), Nagoya University ISEE GNSS-TEC
 - Land Surface Temperature: NASA MODIS MOD11A1 via LAADS DAAC
 - GEONET: 国土地理院 (Geospatial Information Authority of Japan)
-- Cosmic rays: NMDB (Neutron Monitor Database, nmdb.eu), operated by IRKT/OULU/PSNM stations
+- Cosmic rays: NMDB (Neutron Monitor Database, nmdb.eu), operated by 9 NMDB stations (IRKT/OULU/PSNM/APTY/JUNG/ATHN/ROME/BKSN/AATB)
 - Animal tracking: Movebank (movebank.org), Max Planck Institute of Animal Behavior
 - Lightning: Blitzortung.org community lightning network, University of Bonn sferics archive, NASA WWLLN (Univ. of Washington) via GHRC DAAC, NASA ISS LIS via GHRC DAAC
 - Satellite EM: CSES-Limadou (ASI/SSDC), INTERMAGNET (BGS Edinburgh GIN)

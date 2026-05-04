@@ -80,9 +80,15 @@ European Union's FP7 programme (contract no. 213007) for providing data.
 ```
 
 ### Per-station (used in this project)
-- **IRKT** (Irkutsk): Check www.nmdb.eu/station/IRKT
-- **OULU** (Oulu): Check www.nmdb.eu/station/OULU
-- **PSNM** (Doi Inthanon): Check www.nmdb.eu/station/PSNM
+- **IRKT** (Irkutsk, Russia, 3.64 GV): Check www.nmdb.eu/station/IRKT
+- **OULU** (Oulu, Finland, 0.81 GV): Check www.nmdb.eu/station/OULU
+- **PSNM** (Doi Inthanon, Thailand, 16.80 GV): Check www.nmdb.eu/station/PSNM
+- **APTY** (Apatity, Russia, 0.65 GV): Check www.nmdb.eu/station/APTY
+- **JUNG** (Jungfraujoch, Switzerland, 4.49 GV): Check www.nmdb.eu/station/JUNG
+- **ATHN** (Athens, Greece, 8.53 GV): Check www.nmdb.eu/station/ATHN
+- **ROME** (Rome, Italy, 6.27 GV): Check www.nmdb.eu/station/ROME
+- **BKSN** (Baksan, Russia/Caucasus, 5.70 GV): Check www.nmdb.eu/station/BKSN
+- **AATB** (Alma-Ata B, Kazakhstan, 5.90 GV): Check www.nmdb.eu/station/AATB
 
 ---
 
