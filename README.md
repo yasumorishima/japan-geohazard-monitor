@@ -417,6 +417,28 @@ Empirical breakdown was independently obtained by triggering the dedicated `Meas
 BigQuery `snet_waveform.distinct_days` advanced 1927 → 1940 (+13 days, `max_date` 2026-05-02 unchanged) on this single recovery cycle. The four preceding failed cycles (25276071313 / 25279499629 / 25283693176 / 25287932837) had run their `fetch-snet`/`fetch-hinet`/`light` jobs to success but failed at the merge job's Step 12 Snapshot, so Step 14 Upload checkpoint never ran — meaning the `data/geohazard.db` mutations from those four runs were not persisted to the cross-run artifact, and each subsequent run started from the same pre-failure checkpoint and re-fetched the same target dates only to lose them again at the next Snapshot failure. The +13 / cycle observation reflects normal `MAX_REQUESTS_PER_RUN=144` gap-driven progress for one successful cycle, not the 4-cycle accumulation initially expected. Catch-up to 100% snet completeness (~3,500 distinct days, 2016-08-15 to present) is therefore on a `+13/cycle × 8 cycle/day = +104 days/day` trajectory, projecting ~15 days from 2026-05-04 (i.e. ~2026-05-19), subject to NIED Hi-net session-cookie quota holding at the snet 144 + hinet 30 = 174 < 200/day margin.
 
 
+### Phase 2 (3) PR-2 artifact overlay-only ✅ (2026-05-04)
+
+PR #132 (master `c0b8e69`) reduces per-cron GHA artifact volume from `~11.3 GB` (six full-DB uploads at ~1.87 GB each) to a projected `~2.1 GB` total — a 5.4x reduction. The wasted ~9.2 GB came from the merge step's `scripts/merge_checkpoints.py --overlay PATH:TABLES` protocol, which only reads the 1–2 owned tables from each non-light artifact yet was being handed the entire `data/geohazard.db` (every fetcher's ~29 unrelated tables along with it). A new helper `scripts/extract_overlay.py` now builds a fresh, compact overlay DB containing only each job's owned tables via `ATTACH DATABASE 'file:src.db?mode=ro' + INSERT INTO main.<table> SELECT * FROM src.<table>` — read-only ATTACH hardens against accidental writes to the live fetch DB, and `VACUUM` at the end ensures the artifact reflects only used pages. Indexes are intentionally not copied, since merge_checkpoints.py reads each overlay only with linear `SELECT * FROM overlay.<table>` — no index lookups are performed and skipping them shrinks artifacts further with zero merge-step impact.
+
+Per-fetch ownership and projected artifact sizes (full DB → overlay):
+
+| Job | Owned tables | Projected overlay |
+| --- | --- | --- |
+| `fetch-modis` | `modis_lst` | ~30 MB (60x) |
+| `fetch-so2` | `so2_column` | ~50 MB (38x) |
+| `fetch-cloud` | `cloud_fraction` | ~40 MB (47x) |
+| `fetch-snet` | `snet_waveform`, `fnet_waveform` | ~100 MB (19x) |
+| `fetch-hinet` | `hinet_waveform` | ~5 MB (370x) |
+| `fetch-light` | (full DB — base) | 1872 MB (unchanged) |
+
+The light job continues to upload the full DB unchanged — it serves as `merge_checkpoints.py --base`, which must contain every table for the prior-cron snapshot rows to survive in tables whose owner job was skipped or cancelled.
+
+Each non-light fetch job picks up an `Extract owned-table overlay` step inserted between the existing snapshot step and the upload-artifact step. The new step is gated by `if: steps.snapshot.outcome == 'success'` and uses `continue-on-error: true` with a `python3 scripts/extract_overlay.py ... && mv data/geohazard_overlay.db data/geohazard.db` chain, so an extract failure (unexpected schema, disk full, etc.) leaves the original `data/geohazard.db` in place and the existing `if: always() && steps.snapshot.outcome == 'success'` upload step still uploads it as the full DB — graceful degradation that falls back to the pre-PR-2 path with no regression. The merge step itself is unchanged: `merge_checkpoints.py --overlay PATH:TABLES` reads only the listed tables from each artifact and works identically against either a stripped overlay or a full DB. A `--src == --dst` guard in `extract_overlay.py` prevents the destructive case where a typo in workflow YAML could otherwise unlink the live DB before ATTACH could read it (covered by `scripts/smoke_test_extract_overlay.py` test 6 of 8). Schema verification across all 6 owned tables confirmed plain `id INTEGER PRIMARY KEY AUTOINCREMENT` + composite `UNIQUE(...)` (no `WITHOUT ROWID`, no `STRICT`), so `extract_overlay.py`'s `CREATE TABLE` copy from `sqlite_master.sql` works for every owned table.
+
+Review trail (3 commits squashed into `c0b8e69`): initial `e26f22e` → CodeRabbit nitpicks `2196bf3` (`subprocess.run(timeout=120)` for CI hang prevention; `_qident()` SQL identifier quoting helper, defensive against future callers despite all current production names being simple ASCII) → Opus subagent re-review fixes `c38699d` (the `--src == --dst` guard above as MUST-FIX, URI-form read-only ATTACH and removal of unnecessary `journal_mode = MEMORY` as SHOULD-FIX). Smoke test grew 7 → 8 cases on RPi5 (Python 3.11 / sqlite3 3.40.1) covering schema preservation, multi-table extraction, missing-table tolerance, empty table, size reduction (336x on synthetic data), `--src == --dst` rejection, missing-source error, and `dst` overwrite. CodeRabbit "No actionable comments" on the final state. Production validation (actual artifact size measurement on the next successful cron run) is deferred to a follow-up entry once observed.
+
+
 ## Analysis Results (2011-2026, 28K M3+ earthquakes, 6.2M TEC, 45K Kp, 1.15M GNSS-TEC, 24M ULF, 98 features with dynamic selection)
 
 ### Summary
