@@ -448,11 +448,11 @@ Artifact sizes measured directly from the cron run's artifact metadata:
 | Artifact | Size | vs full DB (~1885 MB) | Projection |
 | --- | --- | --- | --- |
 | `backfill-light` | 1,885 MB | (base, unchanged) | 1,872 MB ✓ |
-| `backfill-modis` | **8.7 KB** | 218,000x smaller | ~30 MB (vastly under) |
+| `backfill-modis` | **8.7 KB** | 225,000x smaller | ~30 MB (vastly under) |
 | `backfill-so2` | 299 MB | 6.3x smaller | ~50 MB (6x over) |
 | `backfill-cloud` | 111 MB | 17.0x smaller | ~40 MB |
 | `backfill-snet` | 63 MB | 30.0x smaller | ~100 MB |
-| `backfill-hinet` | **91 KB** | 20,650x smaller | ~5 MB (vastly under) |
+| `backfill-hinet` | **91 KB** | 21,250x smaller | ~5 MB (vastly under) |
 | **Total** | **2,358 MB** | **4.8x reduction** | ~2,097 MB / 5.4x |
 
 The 4.8x reduction (vs the projected 5.4x) is dominated by `so2_column` running 6x over its projection — the table holds 19.6 M rows (the heaviest non-light table) and the projection underweighted it. The under-projection is the opposite direction: `modis_lst` (343 rows of monthly composites) and `hinet_waveform` (696 rows from Stage 1 deployment) shrink to bytes-class artifacts because their tables are nearly empty in absolute terms. The 4.8x ratio still represents `~9 GB` of GHA artifact storage avoided per cron cycle and a similar reduction in the merge job's 6-artifact download time, which is the dominant goal of PR-2 — the projection miss has no operational consequence beyond updating expectations for follow-up tuning.
