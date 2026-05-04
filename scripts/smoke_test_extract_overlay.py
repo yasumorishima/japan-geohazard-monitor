@@ -23,6 +23,7 @@ def run_extract(src: str, dst: str, tables: str) -> subprocess.CompletedProcess:
         [sys.executable, EXTRACT, "--src", src, "--dst", dst, "--tables", tables],
         capture_output=True,
         text=True,
+        timeout=120,
     )
 
 

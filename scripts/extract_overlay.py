@@ -37,6 +37,16 @@ import sqlite3
 import sys
 
 
+def _qident(name: str) -> str:
+    """Quote a SQLite identifier (table name) for safe interpolation.
+
+    Doubles any embedded `"` and wraps in `"..."`. Defensive: current callers
+    pass simple ASCII table names (modis_lst etc.), but quoting hardens
+    extract_overlay.py against future callers that pass unusual names.
+    """
+    return '"' + name.replace('"', '""') + '"'
+
+
 def extract(src_path: str, dst_path: str, tables: list[str]) -> None:
     if not os.path.exists(src_path):
         print(f"ERROR: src not found: {src_path}", file=sys.stderr)
@@ -64,11 +74,12 @@ def extract(src_path: str, dst_path: str, tables: list[str]) -> None:
             continue
         create_sql = row[0]
         dst.execute(create_sql)
+        qtable = _qident(table)
         n = dst.execute(
-            f"SELECT COUNT(*) FROM src.{table}"
+            f"SELECT COUNT(*) FROM src.{qtable}"
         ).fetchone()[0]
         if n > 0:
-            dst.execute(f"INSERT INTO main.{table} SELECT * FROM src.{table}")
+            dst.execute(f"INSERT INTO main.{qtable} SELECT * FROM src.{qtable}")
         dst.commit()
         print(f"  {table}: {n} rows copied")
 
