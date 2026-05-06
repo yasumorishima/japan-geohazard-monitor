@@ -428,6 +428,13 @@ TABLES = {
 # when the DB is empty or corrupted.
 MIN_ROWS_TO_UPLOAD = 1000
 
+# Regression guard: if SQLite count is below REGRESSION_THRESHOLD * BQ count,
+# skip the upload. 0.5 (50%) catches catastrophic data loss (5/5 05:46Z
+# incident SQLite was 14-32% of BQ for affected tables). Higher values
+# (e.g. 0.7) would trigger on minor transient losses; lower values would
+# miss meaningful losses. Bypass with env BQ_FORCE_OVERWRITE=true.
+REGRESSION_THRESHOLD = 0.5
+
 # Per-table override for the minimum-row threshold.
 # Some tables are sparse by design (event-targeted backfill, rare phenomena)
 # and would never reach the global 1000-row floor in their bootstrap phase.
@@ -466,6 +473,62 @@ def _sanitize(v):
     if isinstance(v, float) and not math.isfinite(v):
         return None
     return v
+
+
+def _query_bq_count(client, bq_table):
+    """Return current row count of bq_table, or 0 if table missing / query fails.
+
+    Used by the regression guard. Fail-open semantics: BQ NotFound (first-time
+    table creation) and any transient error (network, auth, quota) return 0
+    so we never block a legitimate upload on a BQ glitch. The cost is that
+    we also miss the regression catch on those rare error paths, which is
+    acceptable since the original threshold (MIN_ROWS_TO_UPLOAD) still
+    protects against fully empty SQLite.
+    """
+    from google.api_core import exceptions as google_exceptions
+    try:
+        result = client.query(f"SELECT COUNT(*) AS n FROM `{bq_table}`").result()
+        for row in result:
+            return row[0]
+        return 0
+    except google_exceptions.NotFound:
+        return 0
+    except Exception as e:
+        logger.warning(
+            "BQ count query failed for %s (%s) — fail-open returning 0",
+            bq_table, type(e).__name__,
+        )
+        return 0
+
+
+def _should_skip_regression(client, bq_table, sqlite_count, table_name):
+    """Return True if BQ upload should be skipped due to regression vs current BQ count.
+
+    Decision logic:
+    - BQ_FORCE_OVERWRITE=true env -> always allow (returns False)
+    - BQ count == 0 (table missing or query failed) -> allow (first-time creation)
+    - SQLite count >= REGRESSION_THRESHOLD * BQ count -> allow
+    - Otherwise -> skip (returns True)
+
+    Logs a warning when bypassing or skipping so the operator can audit.
+    """
+    if os.environ.get("BQ_FORCE_OVERWRITE", "").lower() == "true":
+        logger.warning("%s: BQ_FORCE_OVERWRITE=true — bypassing regression guard",
+                       table_name)
+        return False
+    bq_count = _query_bq_count(client, bq_table)
+    if bq_count == 0:
+        return False
+    ratio = sqlite_count / bq_count
+    if ratio < REGRESSION_THRESHOLD:
+        logger.warning(
+            "%s: regression detected (SQLite %d = %.0f%% of BQ %d) — "
+            "skipping. Set env BQ_FORCE_OVERWRITE=true to bypass for legitimate "
+            "shrinkage (data cleanup, schema migration).",
+            table_name, sqlite_count, ratio * 100, bq_count,
+        )
+        return True
+    return False
 
 
 def main():
@@ -513,9 +576,16 @@ def main():
                                 table_name, count, threshold)
                     continue
 
-                logger.info("%s: streaming %d rows to gzip NDJSON...", table_name, count)
-
                 bq_table = f"{PROJECT}.{DATASET}.{table_name}"
+
+                # Regression guard: catch SQLite data loss before WRITE_TRUNCATE
+                # propagates it to BQ. See _should_skip_regression() docstring.
+                # Background: 5/5 05:46Z incident reset 25 light-artifact tables;
+                # PR #137 fixed the trigger, this guard adds defense in depth.
+                if _should_skip_regression(client, bq_table, count, table_name):
+                    continue
+
+                logger.info("%s: streaming %d rows to gzip NDJSON...", table_name, count)
                 schema = [bigquery.SchemaField(s["name"], s["type"]) for s in config["schema"]]
 
                 job_config = bigquery.LoadJobConfig(

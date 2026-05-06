@@ -2310,6 +2310,11 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          # Repository Variable: set to 'true' during initial recovery period
+          # to bypass regression guard (otherwise still-recovering tables would
+          # be locked out of BQ updates). Unset / set to 'false' once tables
+          # are back to baseline so the guard can catch future incidents.
+          BQ_FORCE_OVERWRITE: ${{ vars.BQ_FORCE_OVERWRITE }}
         run: python3 scripts/load_raw_to_bq.py
 
       - name: Notify Discord
