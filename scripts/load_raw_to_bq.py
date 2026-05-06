@@ -16,6 +16,11 @@ import sqlite3
 import sys
 import tempfile
 
+# google-api-core is a transitive dependency of google-cloud-bigquery (loaded
+# lazily inside main()). Importing here at module top is safe because RPi5
+# smoke test stubs google.api_core.exceptions in sys.modules before importing.
+from google.api_core import exceptions as google_exceptions
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -483,13 +488,13 @@ def _query_bq_count(client, bq_table):
     so we never block a legitimate upload on a BQ glitch. The cost is that
     we also miss the regression catch on those rare error paths, which is
     acceptable since the original threshold (MIN_ROWS_TO_UPLOAD) still
-    protects against fully empty SQLite.
+    protects against fully empty SQLite. Operators must monitor for sustained
+    permission glitches independently (weekly check of regression-guard logs).
     """
-    from google.api_core import exceptions as google_exceptions
     try:
         result = client.query(f"SELECT COUNT(*) AS n FROM `{bq_table}`").result()
         for row in result:
-            return row[0]
+            return int(row[0] or 0)
         return 0
     except google_exceptions.NotFound:
         return 0
@@ -507,8 +512,14 @@ def _should_skip_regression(client, bq_table, sqlite_count, table_name):
     Decision logic:
     - BQ_FORCE_OVERWRITE=true env -> always allow (returns False)
     - BQ count == 0 (table missing or query failed) -> allow (first-time creation)
-    - SQLite count >= REGRESSION_THRESHOLD * BQ count -> allow
+    - SQLite count >= REGRESSION_THRESHOLD * BQ count -> allow (boundary inclusive:
+      ratio == 0.5 passes; ratio < 0.5 skips)
     - Otherwise -> skip (returns True)
+
+    Known limitation: with REGRESSION_THRESHOLD = 0.5, a 40-50% partial data
+    loss still passes through. Tighter thresholds (0.7+) would catch more but
+    risk false-positive on legitimate cleanup operations. The 5/5 incident
+    scenarios were 14-32% so 0.5 retains comfortable margin.
 
     Logs a warning when bypassing or skipping so the operator can audit.
     """
@@ -522,7 +533,7 @@ def _should_skip_regression(client, bq_table, sqlite_count, table_name):
     ratio = sqlite_count / bq_count
     if ratio < REGRESSION_THRESHOLD:
         logger.warning(
-            "%s: regression detected (SQLite %d = %.0f%% of BQ %d) — "
+            "%s: regression detected (SQLite %d = %.1f%% of BQ %d) — "
             "skipping. Set env BQ_FORCE_OVERWRITE=true to bypass for legitimate "
             "shrinkage (data cleanup, schema migration).",
             table_name, sqlite_count, ratio * 100, bq_count,
