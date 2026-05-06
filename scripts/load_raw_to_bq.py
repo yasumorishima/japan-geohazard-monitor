@@ -492,13 +492,13 @@ def _query_bq_count(client, bq_table):
     permission glitches independently (weekly check of regression-guard logs).
     """
     try:
-        result = client.query(f"SELECT COUNT(*) AS n FROM `{bq_table}`").result()
+        result = client.query(f"SELECT COUNT(*) AS n FROM `{bq_table}`").result()  # noqa: S608
         for row in result:
             return int(row[0] or 0)
         return 0
     except google_exceptions.NotFound:
         return 0
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # fail-open: guard must not block legitimate uploads
         logger.warning(
             "BQ count query failed for %s (%s) — fail-open returning 0",
             bq_table, type(e).__name__,

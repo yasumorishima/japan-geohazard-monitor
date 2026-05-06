@@ -18,10 +18,18 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 
-# Stub google.* modules before importing load_raw_to_bq, since the helper
-# does a lazy import of google.api_core.exceptions inside _query_bq_count.
-class _StubNotFound(Exception):
-    pass
+# Stub google.* modules before importing load_raw_to_bq.
+# When google-cloud-bigquery is actually installed (e.g. CI env with the
+# library), inherit from the real NotFound so _query_bq_count's
+#  branch is exercised correctly.
+# On RPi5 (no google library), fall back to bare Exception subclass.
+try:
+    from google.api_core.exceptions import NotFound as _RealNotFound  # type: ignore[import]
+    class _StubNotFound(_RealNotFound):
+        pass
+except ImportError:
+    class _StubNotFound(Exception):  # type: ignore[no-redef]
+        pass
 
 
 _google = types.ModuleType("google")
