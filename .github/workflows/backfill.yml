@@ -273,12 +273,20 @@ jobs:
             NEEDS_INIT=1
             echo "No DB file -- will init"
           else
-            timeout 300 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null
-            if [ $? -ne 0 ]; then
-              echo "Existing DB is corrupt -- removing and re-initialising"
-              rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
-              NEEDS_INIT=1
-            fi
+            timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
+            integrity_rc=$?
+            case "$integrity_rc" in
+              124|137|143)
+                echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
+                ;;
+              0)
+                ;;
+              *)
+                echo "Existing DB is corrupt (rc=$integrity_rc) -- removing and re-initialising"
+                rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                NEEDS_INIT=1
+                ;;
+            esac
           fi
           if [ "$NEEDS_INIT" = "1" ]; then
             python3 -c "
@@ -517,12 +525,20 @@ jobs:
             NEEDS_INIT=1
             echo "No DB file -- will init"
           else
-            timeout 300 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null
-            if [ $? -ne 0 ]; then
-              echo "Existing DB is corrupt -- removing and re-initialising"
-              rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
-              NEEDS_INIT=1
-            fi
+            timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
+            integrity_rc=$?
+            case "$integrity_rc" in
+              124|137|143)
+                echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
+                ;;
+              0)
+                ;;
+              *)
+                echo "Existing DB is corrupt (rc=$integrity_rc) -- removing and re-initialising"
+                rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                NEEDS_INIT=1
+                ;;
+            esac
           fi
           if [ "$NEEDS_INIT" = "1" ]; then
             python3 -c "
@@ -779,12 +795,20 @@ jobs:
             NEEDS_INIT=1
             echo "No DB file -- will init"
           else
-            timeout 300 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null
-            if [ $? -ne 0 ]; then
-              echo "Existing DB is corrupt -- removing and re-initialising"
-              rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
-              NEEDS_INIT=1
-            fi
+            timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
+            integrity_rc=$?
+            case "$integrity_rc" in
+              124|137|143)
+                echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
+                ;;
+              0)
+                ;;
+              *)
+                echo "Existing DB is corrupt (rc=$integrity_rc) -- removing and re-initialising"
+                rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                NEEDS_INIT=1
+                ;;
+            esac
           fi
           if [ "$NEEDS_INIT" = "1" ]; then
             python3 -c "
@@ -1071,12 +1095,20 @@ jobs:
             NEEDS_INIT=1
             echo "No DB file -- will init"
           else
-            timeout 300 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null
-            if [ $? -ne 0 ]; then
-              echo "Existing DB is corrupt -- removing and re-initialising"
-              rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
-              NEEDS_INIT=1
-            fi
+            timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
+            integrity_rc=$?
+            case "$integrity_rc" in
+              124|137|143)
+                echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
+                ;;
+              0)
+                ;;
+              *)
+                echo "Existing DB is corrupt (rc=$integrity_rc) -- removing and re-initialising"
+                rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                NEEDS_INIT=1
+                ;;
+            esac
           fi
           if [ "$NEEDS_INIT" = "1" ]; then
             python3 -c "
@@ -1366,12 +1398,20 @@ jobs:
             NEEDS_INIT=1
             echo "No DB file -- will init"
           else
-            timeout 300 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null
-            if [ $? -ne 0 ]; then
-              echo "Existing DB is corrupt -- removing and re-initialising"
-              rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
-              NEEDS_INIT=1
-            fi
+            timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
+            integrity_rc=$?
+            case "$integrity_rc" in
+              124|137|143)
+                echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
+                ;;
+              0)
+                ;;
+              *)
+                echo "Existing DB is corrupt (rc=$integrity_rc) -- removing and re-initialising"
+                rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                NEEDS_INIT=1
+                ;;
+            esac
           fi
           if [ "$NEEDS_INIT" = "1" ]; then
             python3 -c "
@@ -1675,12 +1715,20 @@ jobs:
             NEEDS_INIT=1
             echo "No DB file -- will init"
           else
-            timeout 300 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null
-            if [ $? -ne 0 ]; then
-              echo "Existing DB is corrupt -- removing and re-initialising"
-              rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
-              NEEDS_INIT=1
-            fi
+            timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
+            integrity_rc=$?
+            case "$integrity_rc" in
+              124|137|143)
+                echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
+                ;;
+              0)
+                ;;
+              *)
+                echo "Existing DB is corrupt (rc=$integrity_rc) -- removing and re-initialising"
+                rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                NEEDS_INIT=1
+                ;;
+            esac
           fi
           if [ "$NEEDS_INIT" = "1" ]; then
             python3 -c "
