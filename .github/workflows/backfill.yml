@@ -2048,7 +2048,7 @@ jobs:
         id: fetch_ioc_sealevel
         if: inputs.target == 'all' || inputs.target == 'ioc_sealevel' || inputs.target == ''
         continue-on-error: true
-        timeout-minutes: 15
+        timeout-minutes: 35
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           IOC_PARALLEL_FETCHES: ${{ vars.IOC_PARALLEL_FETCHES || '2' }}
