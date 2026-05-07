@@ -1847,12 +1847,14 @@ jobs:
         id: fetch_iss_lis
         if: (inputs.target == 'all' || inputs.target == 'iss_lis' || inputs.target == '') && steps.earthdata_check.outputs.earthdata_ok == 'true'
         continue-on-error: true
-        timeout-minutes: 20
+        timeout-minutes: 35
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+          MAX_GRANULES_PER_RUN: ${{ vars.ISS_LIS_MAX_GRANULES || '700' }}
+          ISS_LIS_PARALLEL_FETCHES: ${{ vars.ISS_LIS_PARALLEL_FETCHES || '1' }}
         run: |
           python3 scripts/fetch_iss_lis_lightning.py
 
@@ -1901,7 +1903,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           SWARM_TOKEN: ${{ secrets.SWARM_TOKEN }}
-          SWARM_MAX_DAYS: "90"
+          SWARM_MAX_DAYS: ${{ vars.SWARM_MAX_DAYS || '90' }}
         run: |
           python3 -u scripts/fetch_swarm_em.py
 
