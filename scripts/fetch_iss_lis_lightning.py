@@ -71,7 +71,16 @@ TIMEOUT = aiohttp.ClientTimeout(total=120, connect=30)
 
 # Max granules per run to stay within Actions time budget
 # ISS LIS is accumulative (skips existing data), so process more per run
-MAX_GRANULES_PER_RUN = 700  # ~1.4s/granule × 700 ≈ 16min (fits in 20min timeout)
+# env-overridable for tuning (cron PR #143: parallel + window expansion)
+MAX_GRANULES_PER_RUN = int(os.environ.get("MAX_GRANULES_PER_RUN", "700"))
+
+# Parallel granule downloads. Default 1 keeps prior sequential behavior.
+# Earthdata DL throttling unknown beyond ~4-8 concurrent; tune via Variable.
+PARALLEL_FETCHES = max(1, int(os.environ.get("ISS_LIS_PARALLEL_FETCHES", "1")))
+
+# Flush DB writes every N processed granules to bound crash loss when
+# parallel mode batches results (vs prior per-granule commit).
+BATCH_FLUSH_GRANULES = 50
 
 
 async def init_iss_lis_table():
@@ -322,43 +331,58 @@ async def main():
     total_records = 0
     session = await get_earthdata_session()
 
-    try:
-        for i, granule in enumerate(granules):
-            if (i + 1) % 50 == 0:
-                logger.info("ISS LIS: processing granule %d/%d...", i + 1, len(granules))
+    sem = asyncio.Semaphore(PARALLEL_FETCHES)
 
-            # Download NetCDF
+    async def _process_one(idx, granule):
+        async with sem:
+            if (idx + 1) % 50 == 0:
+                logger.info("ISS LIS: processing granule %d/%d...",
+                            idx + 1, len(granules))
             status, data = await earthdata_fetch_bytes(
                 session, granule["url"], timeout=TIMEOUT)
-
             if status != 200 or not data:
-                continue
-
-            # Parse flashes in Japan
+                if PARALLEL_FETCHES == 1:
+                    await asyncio.sleep(0.3)  # preserve legacy rate limit
+                return [], 0
             flashes = parse_lis_netcdf(data)
+            if PARALLEL_FETCHES == 1:
+                await asyncio.sleep(0.3)
             if not flashes:
-                continue
+                return [], 0
+            return aggregate_daily_cells(flashes), len(flashes)
 
-            total_flashes += len(flashes)
+    async def _flush_batch(batch):
+        if not batch:
+            return
+        async with safe_connect() as db:
+            await db.executemany(
+                """INSERT OR IGNORE INTO iss_lis_lightning
+                   (observed_at, cell_lat, cell_lon, flash_count,
+                    mean_radiance, received_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                [(r["date"], r["cell_lat"], r["cell_lon"],
+                  r["flash_count"], r["mean_radiance"], now_iso)
+                 for r in batch],
+            )
+            await db.commit()
 
-            # Aggregate to daily cells
-            daily_cells = aggregate_daily_cells(flashes)
-
-            if daily_cells:
-                async with safe_connect() as db:
-                    await db.executemany(
-                        """INSERT OR IGNORE INTO iss_lis_lightning
-                           (observed_at, cell_lat, cell_lon, flash_count,
-                            mean_radiance, received_at)
-                           VALUES (?, ?, ?, ?, ?, ?)""",
-                        [(r["date"], r["cell_lat"], r["cell_lon"],
-                          r["flash_count"], r["mean_radiance"], now_iso)
-                         for r in daily_cells],
-                    )
-                    await db.commit()
-                total_records += len(daily_cells)
-
-            await asyncio.sleep(0.3)  # Rate limit
+    try:
+        tasks = [_process_one(i, g) for i, g in enumerate(granules)]
+        batch = []
+        granule_count = 0
+        for coro in asyncio.as_completed(tasks):
+            cells, n_flashes = await coro
+            granule_count += 1
+            total_flashes += n_flashes
+            if cells:
+                batch.extend(cells)
+                if granule_count % BATCH_FLUSH_GRANULES == 0:
+                    await _flush_batch(batch)
+                    total_records += len(batch)
+                    batch = []
+        if batch:
+            await _flush_batch(batch)
+            total_records += len(batch)
 
     finally:
         await session.close()
