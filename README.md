@@ -464,7 +464,7 @@ Front-stall observation: as part of the same session a 31-table BigQuery coverag
 
 ### Phase 2 (3) Cosmic ray station expansion ✅ (2026-05-04)
 
-PR #136 (master `92dac56`) expanded `fetch_cosmic_ray.py` from 3 NMDB stations (OULU/KIEL/MOSC) to 9 stations (added APTY/INVK/JUNG/MGDN/NEWK/SOPO/TERA) for global summed-rate density and improved Forbush-decrease detection latitude coverage. Total `cosmic_ray` rows grew to **47,018 rows** (2011-01-01 → 2026-05-05) at fixed 11-year retrospective coverage. Throughput cost: ~6 sec added per cron (NMDB API, BasicAuth, 1-req/station/day cycle), well within light-job budget. Feature `cosmic_ray_anomaly` reuses the same 27-day solar rotation baseline; the 9-station summed-rate denoises geomagnetically-induced bursts that single-station data could not separate from genuine anomalies.
+PR #136 (master `92dac56`) expanded `fetch_nmdb_cosmicray.py` from 3 NMDB stations (IRKT/OULU/PSNM) to 9 stations (added APTY/JUNG/ATHN/ROME/BKSN/AATB) for global summed-rate density and improved Forbush-decrease detection latitude coverage. Total `cosmic_ray` rows grew to **47,018 rows** (2011-01-01 → 2026-05-05) at fixed 11-year retrospective coverage. Throughput cost: ~6 sec added per cron (NMDB API, BasicAuth, 1-req/station/day cycle), well within light-job budget. Feature `cosmic_ray_anomaly` reuses the same 27-day solar rotation baseline; the 9-station summed-rate denoises geomagnetically-induced bursts that single-station data could not separate from genuine anomalies.
 
 ### Light-artifact reset incident + Stage 1 fix ✅ (2026-05-06)
 
