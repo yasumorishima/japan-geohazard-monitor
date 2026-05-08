@@ -189,7 +189,24 @@ async def fetch_cloud_day(session: aiohttp.ClientSession, date: datetime) -> lis
         try:
             status, text = await earthdata_fetch(session, url, timeout=TIMEOUT)
             if status == 200:
-                if not text or "<html" in text[:200].lower():
+                if not text:
+                    diag_count = getattr(fetch_cloud_day, "_diag_empty", 0)
+                    if diag_count < 5:
+                        logger.warning(
+                            "Cloud %s: HTTP 200 empty body (silent failure)",
+                            date_str,
+                        )
+                        fetch_cloud_day._diag_empty = diag_count + 1
+                    return []
+                if "<html" in text[:200].lower():
+                    diag_count = getattr(fetch_cloud_day, "_diag_html", 0)
+                    if diag_count < 5:
+                        logger.warning(
+                            "Cloud %s: HTTP 200 HTML body (auth/redirect issue) "
+                            "len=%d preview=%r",
+                            date_str, len(text), text[:200],
+                        )
+                        fetch_cloud_day._diag_html = diag_count + 1
                     return []
                 return _parse_cloud_ascii(text, date_str)
             elif status in (401, 403):
