@@ -151,25 +151,97 @@ jobs:
       - name: Step 1 - light alone integrity_check + sqlite_master scan
         run: |
           python3 << 'PYEOF'
-          import sqlite3, os
+          import sqlite3, os, traceback
           db = '/tmp/light/geohazard.db'
           print(f'=== light DB size: {os.path.getsize(db)/1024/1024:.1f} MB ===')
           c = sqlite3.connect(db)
           print('=== integrity_check (first 20 rows) ===')
-          for i, row in enumerate(c.execute('PRAGMA integrity_check')):
-              print(row)
-              if i >= 19:
-                  print('... truncated')
-                  break
+          try:
+              cur = c.execute('PRAGMA integrity_check')
+              for i, row in enumerate(cur):
+                  print(row)
+                  if i >= 19:
+                      print('... truncated')
+                      break
+          except Exception as e:
+              print(f'integrity_check raised: {type(e).__name__}: {e}')
           print()
           print('=== rootpage 98196/97/98 mapping (light) ===')
-          for row in c.execute("SELECT type, name, tbl_name, rootpage FROM sqlite_master WHERE rootpage IN (98196,98197,98198) ORDER BY rootpage"):
-              print(row)
+          try:
+              for row in c.execute("SELECT type, name, tbl_name, rootpage FROM sqlite_master WHERE rootpage IN (98196,98197,98198) ORDER BY rootpage"):
+                  print(row)
+          except Exception as e:
+              print(f'sqlite_master scan raised: {type(e).__name__}: {e}')
           print()
           print('=== top 30 rootpages by descending order ===')
-          for row in c.execute("SELECT type, name, tbl_name, rootpage FROM sqlite_master ORDER BY rootpage DESC LIMIT 30"):
-              print(row)
+          try:
+              for row in c.execute("SELECT type, name, tbl_name, rootpage FROM sqlite_master ORDER BY rootpage DESC LIMIT 30"):
+                  print(row)
+          except Exception as e:
+              print(f'top rootpages raised: {type(e).__name__}: {e}')
           c.close()
+          PYEOF
+
+      - name: Step 1.5 - raw file structure (trailing pages, WAL/journal magic)
+        run: |
+          python3 << 'PYEOF'
+          import struct, os
+          db = '/tmp/light/geohazard.db'
+          actual_size = os.path.getsize(db)
+          with open(db, 'rb') as f:
+              hdr = f.read(100)
+              page_size_raw = struct.unpack('>H', hdr[16:18])[0]
+              page_size = 65536 if page_size_raw == 1 else page_size_raw
+              header_page_count = struct.unpack('>I', hdr[28:32])[0]
+              expected_size = header_page_count * page_size
+              extra_bytes = actual_size - expected_size
+              extra_pages = extra_bytes // page_size if page_size else 0
+              print(f'header.page_size: {page_size}')
+              print(f'header.page_count: {header_page_count}')
+              print(f'expected size (page_count * page_size): {expected_size}')
+              print(f'actual size: {actual_size}')
+              print(f'extra bytes: {extra_bytes} ({extra_pages} full pages + {extra_bytes % page_size} stub bytes)')
+              print()
+
+              if extra_bytes <= 0:
+                  print('No trailing extension. Hypothesis (WAL leakage) does NOT match.')
+              else:
+                  WAL_MAGIC = bytes.fromhex('377f0682')   # SQLite WAL header (little-endian)
+                  WAL_MAGIC_BE = bytes.fromhex('377f0683')
+                  ROLLBACK_MAGIC = bytes.fromhex('d9d505f920a163d7')
+
+                  print('=== Examining each extra page ===')
+                  for i in range(extra_pages):
+                      offset = expected_size + i * page_size
+                      f.seek(offset)
+                      page = f.read(page_size)
+                      hd = page[:64]
+                      first4 = page[:4]
+                      first8 = page[:8]
+                      tags = []
+                      if first4 == WAL_MAGIC or first4 == WAL_MAGIC_BE:
+                          tags.append('WAL_HEADER')
+                      if first8 == ROLLBACK_MAGIC:
+                          tags.append('ROLLBACK_JOURNAL_HEADER')
+                      page_type = page[0] if page else None
+                      if page_type in (0x02, 0x05, 0x0a, 0x0d):
+                          page_type_name = {0x02:'INTERIOR_INDEX', 0x05:'INTERIOR_TABLE', 0x0a:'LEAF_INDEX', 0x0d:'LEAF_TABLE'}[page_type]
+                          tags.append(f'BTREE_{page_type_name}')
+                      else:
+                          tags.append(f'page_type=0x{page_type:02x}' if page_type is not None else 'empty')
+                      print(f'  page #{header_page_count + i + 1} @ offset {offset}:')
+                      print(f'    first 64 bytes hex: {hd.hex()}')
+                      print(f'    classification: {", ".join(tags) if tags else "unknown"}')
+                  print()
+
+                  print('=== Stub bytes (if any) ===')
+                  stub_offset = expected_size + extra_pages * page_size
+                  f.seek(stub_offset)
+                  stub = f.read()
+                  if stub:
+                      print(f'  stub bytes ({len(stub)}): {stub[:128].hex()}')
+                  else:
+                      print('  no stub bytes')
           PYEOF
 
       - name: Step 2 - reproduce merge with sequential overlay + integrity_check after each
