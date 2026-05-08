@@ -1,0 +1,134 @@
+name: Diagnose Merge Corruption
+
+# 2026-05-08: SQLite Tree 98196 corruption が schedule cron で連発、
+# light + 5 overlay artifact から merge_checkpoints.py を local 再現し、
+# (1) light 単独 integrity / (2) Tree 98196/97/98 → table 名 / (3) どの
+# overlay 適用で corruption 入るか を順次特定する。 backfill.yml
+# concurrency group に巻き込まれないよう独立 workflow 化。
+
+on:
+  workflow_dispatch:
+    inputs:
+      diag_run_id:
+        description: '対象 run ID (failed merge run)'
+        required: true
+      memo:
+        description: 'Why this run'
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DIAG_RUN_ID: ${{ inputs.diag_run_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Disk before
+        run: df -h .
+
+      - name: Download all backfill artifacts from DIAG_RUN_ID
+        run: |
+          set -e
+          mkdir -p /tmp/light /tmp/modis /tmp/so2 /tmp/cloud /tmp/snet /tmp/hinet
+          for kind in light modis so2 cloud snet hinet; do
+            echo "=== Downloading backfill-${kind}-${DIAG_RUN_ID}"
+            gh run download "${DIAG_RUN_ID}" --repo ${{ github.repository }} \
+              --name "backfill-${kind}-${DIAG_RUN_ID}" --dir /tmp/${kind}
+            ls -lh /tmp/${kind}/
+          done
+
+      - name: Disk after download
+        run: df -h .
+
+      - name: Step 1 - light alone integrity_check + sqlite_master scan
+        run: |
+          python3 << 'PYEOF'
+          import sqlite3, os
+          db = '/tmp/light/geohazard.db'
+          print(f'=== light DB size: {os.path.getsize(db)/1024/1024:.1f} MB ===')
+          c = sqlite3.connect(db)
+          print('=== integrity_check (first 20 rows) ===')
+          for i, row in enumerate(c.execute('PRAGMA integrity_check')):
+              print(row)
+              if i >= 19:
+                  print('... truncated')
+                  break
+          print()
+          print('=== rootpage 98196/97/98 mapping (light) ===')
+          for row in c.execute("SELECT type, name, tbl_name, rootpage FROM sqlite_master WHERE rootpage IN (98196,98197,98198) ORDER BY rootpage"):
+              print(row)
+          print()
+          print('=== top 30 rootpages by descending order ===')
+          for row in c.execute("SELECT type, name, tbl_name, rootpage FROM sqlite_master ORDER BY rootpage DESC LIMIT 30"):
+              print(row)
+          c.close()
+          PYEOF
+
+      - name: Step 2 - reproduce merge with sequential overlay + integrity_check after each
+        run: |
+          set -e
+          cp /tmp/light/geohazard.db /tmp/dst.db
+          echo '=== Initial dst (=light) integrity ==='
+          python3 -c "import sqlite3; c=sqlite3.connect('/tmp/dst.db'); rows=list(c.execute('PRAGMA integrity_check')); print('rows:', len(rows), 'first:', rows[0])"
+          for spec in 'modis:modis_lst' 'so2:so2_column' 'cloud:cloud_fraction' 'snet:snet_waveform' 'snet:fnet_waveform' 'hinet:hinet_waveform'; do
+            kind="${spec%%:*}"
+            tbl="${spec##*:}"
+            echo ""
+            echo "=== Applying overlay: /tmp/${kind}/geohazard.db -> ${tbl} ==="
+            DST=/tmp/dst.db OVL_KIND=${kind} OVL_TBL=${tbl} python3 << 'PYEOF'
+          import sqlite3, os
+          dst = os.environ['DST']
+          ovl = f"/tmp/{os.environ['OVL_KIND']}/geohazard.db"
+          tbl = os.environ['OVL_TBL']
+          if not os.path.exists(ovl):
+              print(f'overlay missing: {ovl} -- SKIP')
+              raise SystemExit(0)
+          conn = sqlite3.connect(dst)
+          conn.execute('ATTACH DATABASE ? AS overlay', (ovl,))
+          tbls_in_overlay = {r[0] for r in conn.execute("SELECT name FROM overlay.sqlite_master WHERE type='table'")}
+          if tbl not in tbls_in_overlay:
+              print(f'  {tbl}: missing in overlay')
+              raise SystemExit(0)
+          before = conn.execute(f'SELECT COUNT(*) FROM main."{tbl}"').fetchone()[0]
+          ovl_cnt = conn.execute(f'SELECT COUNT(*) FROM overlay."{tbl}"').fetchone()[0]
+          print(f'  before={before:,} overlay={ovl_cnt:,}')
+          if ovl_cnt < before:
+              print(f'  SKIP: overlay smaller than base ({ovl_cnt} < {before})')
+              raise SystemExit(0)
+          conn.execute('BEGIN')
+          conn.execute(f'DELETE FROM main."{tbl}"')
+          conn.execute(f'INSERT OR IGNORE INTO main."{tbl}" SELECT * FROM overlay."{tbl}"')
+          conn.execute('COMMIT')
+          after = conn.execute(f'SELECT COUNT(*) FROM main."{tbl}"').fetchone()[0]
+          print(f'  after={after:,}')
+          conn.execute('DETACH DATABASE overlay')
+          rows = list(conn.execute('PRAGMA integrity_check'))
+          if len(rows) == 1 and rows[0][0] == 'ok':
+              print(f'  integrity_check after {tbl} apply: OK')
+          else:
+              print(f'  integrity_check FAILED after {tbl} apply ({len(rows)} rows):')
+              for r in rows[:10]:
+                  print('    ', r)
+              print(f'  rootpage mapping for trees in errors:')
+              for r in conn.execute("SELECT type, name, tbl_name, rootpage FROM sqlite_master WHERE rootpage IN (98196,98197,98198) ORDER BY rootpage"):
+                  print('    ', r)
+              raise SystemExit(2)
+          conn.close()
+          print(f'  dst size: {os.path.getsize(dst)/1024/1024:.1f} MB')
+          PYEOF
+          done
+
+      - name: Disk final
+        if: always()
+        run: df -h .
