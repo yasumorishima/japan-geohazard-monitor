@@ -2,9 +2,14 @@ name: Diagnose Merge Corruption
 
 # 2026-05-08: SQLite Tree 98196 corruption が schedule cron で連発、
 # light + 5 overlay artifact から merge_checkpoints.py を local 再現し、
-# (1) light 単独 integrity / (2) Tree 98196/97/98 → table 名 / (3) どの
+# (1) light 単独 integrity / (2) Tree 98196/97/98 -> table 名 / (3) どの
 # overlay 適用で corruption 入るか を順次特定する。 backfill.yml
 # concurrency group に巻き込まれないよう独立 workflow 化。
+#
+# v2 (2026-05-08 後半): Step 0 で artifact zip 自体の整合性を check
+# (unzip -t + zip sha256 + 中身 SQLite sha256) を追加。 zip 破損
+# (= upload-artifact@v4 圧縮 bug) と中身 SQLite 破損 (= snapshot
+# integrity_check 漏れ) を切り分ける。
 
 on:
   workflow_dispatch:
@@ -37,7 +42,85 @@ jobs:
       - name: Disk before
         run: df -h .
 
-      - name: Download all backfill artifacts from DIAG_RUN_ID
+      - name: Step 0 - light artifact raw zip integrity check
+        run: |
+          set -e
+          mkdir -p /tmp/zipcheck
+          ARTIFACT_NAME="backfill-light-${DIAG_RUN_ID}"
+          echo "=== Looking up artifact ID for ${ARTIFACT_NAME} ==="
+          ARTIFACT_ID=$(gh api "repos/${{ github.repository }}/actions/runs/${DIAG_RUN_ID}/artifacts" --paginate \
+            --jq ".artifacts[] | select(.name==\"${ARTIFACT_NAME}\") | .id" | head -n1)
+          echo "artifact ID: ${ARTIFACT_ID}"
+          if [ -z "${ARTIFACT_ID}" ]; then
+            echo "ERROR: artifact ${ARTIFACT_NAME} not found on run ${DIAG_RUN_ID}"
+            exit 1
+          fi
+
+          echo "=== Downloading raw zip via gh api (no auto-extract) ==="
+          gh api "repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip" > /tmp/zipcheck/light.zip
+          ZIP_BYTES=$(stat -c%s /tmp/zipcheck/light.zip)
+          ZIP_MB=$(awk "BEGIN { printf \"%.1f\", ${ZIP_BYTES}/1024/1024 }")
+          ZIP_SHA=$(sha256sum /tmp/zipcheck/light.zip | awk '{print $1}')
+          echo "zip size: ${ZIP_BYTES} bytes (${ZIP_MB} MB)"
+          echo "zip sha256: ${ZIP_SHA}"
+
+          echo ""
+          echo "=== unzip -t (zip-level CRC integrity test) ==="
+          if unzip -t /tmp/zipcheck/light.zip; then
+            echo "ZIP_INTEGRITY: OK"
+          else
+            RC=$?
+            echo "ZIP_INTEGRITY: FAILED rc=${RC}"
+            echo "=== unzip -l (best-effort listing) ==="
+            unzip -l /tmp/zipcheck/light.zip || true
+            # 続行: 中身が一部取り出せるか確認
+          fi
+
+          echo ""
+          echo "=== Extracting inner geohazard.db ==="
+          mkdir -p /tmp/zipcheck/extracted
+          unzip -o /tmp/zipcheck/light.zip -d /tmp/zipcheck/extracted || echo "unzip extraction had errors (continuing)"
+          ls -lh /tmp/zipcheck/extracted/ || true
+
+          INNER_DB=/tmp/zipcheck/extracted/geohazard.db
+          if [ -f "${INNER_DB}" ]; then
+            INNER_BYTES=$(stat -c%s "${INNER_DB}")
+            INNER_MB=$(awk "BEGIN { printf \"%.1f\", ${INNER_BYTES}/1024/1024 }")
+            INNER_SHA=$(sha256sum "${INNER_DB}" | awk '{print $1}')
+            echo "inner geohazard.db size: ${INNER_BYTES} bytes (${INNER_MB} MB)"
+            echo "inner geohazard.db sha256: ${INNER_SHA}"
+            echo ""
+            echo "=== SQLite header check ==="
+            python3 << 'PYEOF'
+          with open('/tmp/zipcheck/extracted/geohazard.db', 'rb') as f:
+              hdr = f.read(100)
+          print('header hex (first 16 bytes):', hdr[:16].hex())
+          print('header magic match (SQLite format 3):', hdr[:16] == b'SQLite format 3\x00')
+          # SQLite header layout: page size at byte 16-17 (big-endian)
+          import struct
+          page_size_raw = struct.unpack('>H', hdr[16:18])[0]
+          # 1 means 65536
+          page_size = 65536 if page_size_raw == 1 else page_size_raw
+          print(f'page size: {page_size}')
+          # database size in pages at byte 28-31 (big-endian, 4 bytes)
+          page_count = struct.unpack('>I', hdr[28:32])[0]
+          print(f'page count (from header): {page_count}')
+          print(f'expected db size from header: {page_count * page_size} bytes')
+          PYEOF
+          else
+            echo "ERROR: inner geohazard.db not extracted"
+          fi
+
+          echo ""
+          echo "=== Step 0 summary ==="
+          echo "ZIP_SHA=${ZIP_SHA}"
+          echo "ZIP_BYTES=${ZIP_BYTES}"
+          if [ -f "${INNER_DB}" ]; then
+            echo "INNER_SHA=${INNER_SHA}"
+            echo "INNER_BYTES=${INNER_BYTES}"
+          fi
+
+      - name: Download all backfill artifacts from DIAG_RUN_ID (auto-extract via gh run download)
         run: |
           set -e
           mkdir -p /tmp/light /tmp/modis /tmp/so2 /tmp/cloud /tmp/snet /tmp/hinet
@@ -47,6 +130,20 @@ jobs:
               --name "backfill-${kind}-${DIAG_RUN_ID}" --dir /tmp/${kind}
             ls -lh /tmp/${kind}/
           done
+
+      - name: Cross-check Step 0 zip vs gh run download extraction
+        run: |
+          if [ -f /tmp/zipcheck/extracted/geohazard.db ] && [ -f /tmp/light/geohazard.db ]; then
+            ZIPEXT_SHA=$(sha256sum /tmp/zipcheck/extracted/geohazard.db | awk '{print $1}')
+            GHRUN_SHA=$(sha256sum /tmp/light/geohazard.db | awk '{print $1}')
+            echo "Step 0 (gh api zip + unzip) sha256: ${ZIPEXT_SHA}"
+            echo "Step 1 (gh run download)    sha256: ${GHRUN_SHA}"
+            if [ "${ZIPEXT_SHA}" = "${GHRUN_SHA}" ]; then
+              echo "MATCH: both extraction paths produced identical bytes"
+            else
+              echo "MISMATCH: extraction-path divergence detected (rare)"
+            fi
+          fi
 
       - name: Disk after download
         run: df -h .
