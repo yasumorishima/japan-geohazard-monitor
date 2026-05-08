@@ -1,0 +1,303 @@
+name: Diagnose Merge Corruption
+
+# 2026-05-08: SQLite Tree 98196 corruption が schedule cron で連発、
+# light + 5 overlay artifact から merge_checkpoints.py を local 再現し、
+# (1) light 単独 integrity / (2) Tree 98196/97/98 -> table 名 / (3) どの
+# overlay 適用で corruption 入るか を順次特定する。 backfill.yml
+# concurrency group に巻き込まれないよう独立 workflow 化。
+#
+# v2 (2026-05-08 後半): Step 0 で artifact zip 自体の整合性を check
+# (unzip -t + zip sha256 + 中身 SQLite sha256) を追加。 zip 破損
+# (= upload-artifact@v4 圧縮 bug) と中身 SQLite 破損 (= snapshot
+# integrity_check 漏れ) を切り分ける。
+
+on:
+  workflow_dispatch:
+    inputs:
+      diag_run_id:
+        description: '対象 run ID (failed merge run)'
+        required: true
+      memo:
+        description: 'Why this run'
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DIAG_RUN_ID: ${{ inputs.diag_run_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Disk before
+        run: df -h .
+
+      - name: Step 0 - light artifact raw zip integrity check
+        run: |
+          set -e
+          mkdir -p /tmp/zipcheck
+          ARTIFACT_NAME="backfill-light-${DIAG_RUN_ID}"
+          echo "=== Looking up artifact ID for ${ARTIFACT_NAME} ==="
+          ARTIFACT_ID=$(gh api "repos/${{ github.repository }}/actions/runs/${DIAG_RUN_ID}/artifacts" --paginate \
+            --jq ".artifacts[] | select(.name==\"${ARTIFACT_NAME}\") | .id" | head -n1)
+          echo "artifact ID: ${ARTIFACT_ID}"
+          if [ -z "${ARTIFACT_ID}" ]; then
+            echo "ERROR: artifact ${ARTIFACT_NAME} not found on run ${DIAG_RUN_ID}"
+            exit 1
+          fi
+
+          echo "=== Downloading raw zip via gh api (no auto-extract) ==="
+          gh api "repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip" > /tmp/zipcheck/light.zip
+          ZIP_BYTES=$(stat -c%s /tmp/zipcheck/light.zip)
+          ZIP_MB=$(awk "BEGIN { printf \"%.1f\", ${ZIP_BYTES}/1024/1024 }")
+          ZIP_SHA=$(sha256sum /tmp/zipcheck/light.zip | awk '{print $1}')
+          echo "zip size: ${ZIP_BYTES} bytes (${ZIP_MB} MB)"
+          echo "zip sha256: ${ZIP_SHA}"
+
+          echo ""
+          echo "=== unzip -t (zip-level CRC integrity test) ==="
+          if unzip -t /tmp/zipcheck/light.zip; then
+            echo "ZIP_INTEGRITY: OK"
+          else
+            RC=$?
+            echo "ZIP_INTEGRITY: FAILED rc=${RC}"
+            echo "=== unzip -l (best-effort listing) ==="
+            unzip -l /tmp/zipcheck/light.zip || true
+            # 続行: 中身が一部取り出せるか確認
+          fi
+
+          echo ""
+          echo "=== Extracting inner geohazard.db ==="
+          mkdir -p /tmp/zipcheck/extracted
+          unzip -o /tmp/zipcheck/light.zip -d /tmp/zipcheck/extracted || echo "unzip extraction had errors (continuing)"
+          ls -lh /tmp/zipcheck/extracted/ || true
+
+          INNER_DB=/tmp/zipcheck/extracted/geohazard.db
+          if [ -f "${INNER_DB}" ]; then
+            INNER_BYTES=$(stat -c%s "${INNER_DB}")
+            INNER_MB=$(awk "BEGIN { printf \"%.1f\", ${INNER_BYTES}/1024/1024 }")
+            INNER_SHA=$(sha256sum "${INNER_DB}" | awk '{print $1}')
+            echo "inner geohazard.db size: ${INNER_BYTES} bytes (${INNER_MB} MB)"
+            echo "inner geohazard.db sha256: ${INNER_SHA}"
+            echo ""
+            echo "=== SQLite header check ==="
+            python3 << 'PYEOF'
+          with open('/tmp/zipcheck/extracted/geohazard.db', 'rb') as f:
+              hdr = f.read(100)
+          print('header hex (first 16 bytes):', hdr[:16].hex())
+          print('header magic match (SQLite format 3):', hdr[:16] == b'SQLite format 3\x00')
+          # SQLite header layout: page size at byte 16-17 (big-endian)
+          import struct
+          page_size_raw = struct.unpack('>H', hdr[16:18])[0]
+          # 1 means 65536
+          page_size = 65536 if page_size_raw == 1 else page_size_raw
+          print(f'page size: {page_size}')
+          # database size in pages at byte 28-31 (big-endian, 4 bytes)
+          page_count = struct.unpack('>I', hdr[28:32])[0]
+          print(f'page count (from header): {page_count}')
+          print(f'expected db size from header: {page_count * page_size} bytes')
+          PYEOF
+          else
+            echo "ERROR: inner geohazard.db not extracted"
+          fi
+
+          echo ""
+          echo "=== Step 0 summary ==="
+          echo "ZIP_SHA=${ZIP_SHA}"
+          echo "ZIP_BYTES=${ZIP_BYTES}"
+          if [ -f "${INNER_DB}" ]; then
+            echo "INNER_SHA=${INNER_SHA}"
+            echo "INNER_BYTES=${INNER_BYTES}"
+          fi
+
+      - name: Download all backfill artifacts from DIAG_RUN_ID (auto-extract via gh run download)
+        run: |
+          set -e
+          mkdir -p /tmp/light /tmp/modis /tmp/so2 /tmp/cloud /tmp/snet /tmp/hinet
+          for kind in light modis so2 cloud snet hinet; do
+            echo "=== Downloading backfill-${kind}-${DIAG_RUN_ID}"
+            gh run download "${DIAG_RUN_ID}" --repo ${{ github.repository }} \
+              --name "backfill-${kind}-${DIAG_RUN_ID}" --dir /tmp/${kind}
+            ls -lh /tmp/${kind}/
+          done
+
+      - name: Cross-check Step 0 zip vs gh run download extraction
+        run: |
+          if [ -f /tmp/zipcheck/extracted/geohazard.db ] && [ -f /tmp/light/geohazard.db ]; then
+            ZIPEXT_SHA=$(sha256sum /tmp/zipcheck/extracted/geohazard.db | awk '{print $1}')
+            GHRUN_SHA=$(sha256sum /tmp/light/geohazard.db | awk '{print $1}')
+            echo "Step 0 (gh api zip + unzip) sha256: ${ZIPEXT_SHA}"
+            echo "Step 1 (gh run download)    sha256: ${GHRUN_SHA}"
+            if [ "${ZIPEXT_SHA}" = "${GHRUN_SHA}" ]; then
+              echo "MATCH: both extraction paths produced identical bytes"
+            else
+              echo "MISMATCH: extraction-path divergence detected (rare)"
+            fi
+          fi
+
+      - name: Disk after download
+        run: df -h .
+
+      - name: Step 1 - light alone integrity_check + sqlite_master scan
+        run: |
+          python3 << 'PYEOF'
+          import sqlite3, os, traceback
+          db = '/tmp/light/geohazard.db'
+          print(f'=== light DB size: {os.path.getsize(db)/1024/1024:.1f} MB ===')
+          c = sqlite3.connect(db)
+          print('=== integrity_check (first 20 rows) ===')
+          try:
+              cur = c.execute('PRAGMA integrity_check')
+              for i, row in enumerate(cur):
+                  print(row)
+                  if i >= 19:
+                      print('... truncated')
+                      break
+          except Exception as e:
+              print(f'integrity_check raised: {type(e).__name__}: {e}')
+          print()
+          print('=== rootpage 98196/97/98 mapping (light) ===')
+          try:
+              for row in c.execute("SELECT type, name, tbl_name, rootpage FROM sqlite_master WHERE rootpage IN (98196,98197,98198) ORDER BY rootpage"):
+                  print(row)
+          except Exception as e:
+              print(f'sqlite_master scan raised: {type(e).__name__}: {e}')
+          print()
+          print('=== top 30 rootpages by descending order ===')
+          try:
+              for row in c.execute("SELECT type, name, tbl_name, rootpage FROM sqlite_master ORDER BY rootpage DESC LIMIT 30"):
+                  print(row)
+          except Exception as e:
+              print(f'top rootpages raised: {type(e).__name__}: {e}')
+          c.close()
+          PYEOF
+
+      - name: Step 1.5 - raw file structure (trailing pages, WAL/journal magic)
+        run: |
+          python3 << 'PYEOF'
+          import struct, os
+          db = '/tmp/light/geohazard.db'
+          actual_size = os.path.getsize(db)
+          with open(db, 'rb') as f:
+              hdr = f.read(100)
+              page_size_raw = struct.unpack('>H', hdr[16:18])[0]
+              page_size = 65536 if page_size_raw == 1 else page_size_raw
+              header_page_count = struct.unpack('>I', hdr[28:32])[0]
+              expected_size = header_page_count * page_size
+              extra_bytes = actual_size - expected_size
+              extra_pages = extra_bytes // page_size if page_size else 0
+              print(f'header.page_size: {page_size}')
+              print(f'header.page_count: {header_page_count}')
+              print(f'expected size (page_count * page_size): {expected_size}')
+              print(f'actual size: {actual_size}')
+              print(f'extra bytes: {extra_bytes} ({extra_pages} full pages + {extra_bytes % page_size} stub bytes)')
+              print()
+
+              if extra_bytes <= 0:
+                  print('No trailing extension. Hypothesis (WAL leakage) does NOT match.')
+              else:
+                  WAL_MAGIC = bytes.fromhex('377f0682')   # SQLite WAL header (little-endian)
+                  WAL_MAGIC_BE = bytes.fromhex('377f0683')
+                  ROLLBACK_MAGIC = bytes.fromhex('d9d505f920a163d7')
+
+                  print('=== Examining each extra page ===')
+                  for i in range(extra_pages):
+                      offset = expected_size + i * page_size
+                      f.seek(offset)
+                      page = f.read(page_size)
+                      hd = page[:64]
+                      first4 = page[:4]
+                      first8 = page[:8]
+                      tags = []
+                      if first4 == WAL_MAGIC or first4 == WAL_MAGIC_BE:
+                          tags.append('WAL_HEADER')
+                      if first8 == ROLLBACK_MAGIC:
+                          tags.append('ROLLBACK_JOURNAL_HEADER')
+                      page_type = page[0] if page else None
+                      if page_type in (0x02, 0x05, 0x0a, 0x0d):
+                          page_type_name = {0x02:'INTERIOR_INDEX', 0x05:'INTERIOR_TABLE', 0x0a:'LEAF_INDEX', 0x0d:'LEAF_TABLE'}[page_type]
+                          tags.append(f'BTREE_{page_type_name}')
+                      else:
+                          tags.append(f'page_type=0x{page_type:02x}' if page_type is not None else 'empty')
+                      print(f'  page #{header_page_count + i + 1} @ offset {offset}:')
+                      print(f'    first 64 bytes hex: {hd.hex()}')
+                      print(f'    classification: {", ".join(tags) if tags else "unknown"}')
+                  print()
+
+                  print('=== Stub bytes (if any) ===')
+                  stub_offset = expected_size + extra_pages * page_size
+                  f.seek(stub_offset)
+                  stub = f.read()
+                  if stub:
+                      print(f'  stub bytes ({len(stub)}): {stub[:128].hex()}')
+                  else:
+                      print('  no stub bytes')
+          PYEOF
+
+      - name: Step 2 - reproduce merge with sequential overlay + integrity_check after each
+        run: |
+          set -e
+          cp /tmp/light/geohazard.db /tmp/dst.db
+          echo '=== Initial dst (=light) integrity ==='
+          python3 -c "import sqlite3; c=sqlite3.connect('/tmp/dst.db'); rows=list(c.execute('PRAGMA integrity_check')); print('rows:', len(rows), 'first:', rows[0])"
+          for spec in 'modis:modis_lst' 'so2:so2_column' 'cloud:cloud_fraction' 'snet:snet_waveform' 'snet:fnet_waveform' 'hinet:hinet_waveform'; do
+            kind="${spec%%:*}"
+            tbl="${spec##*:}"
+            echo ""
+            echo "=== Applying overlay: /tmp/${kind}/geohazard.db -> ${tbl} ==="
+            DST=/tmp/dst.db OVL_KIND=${kind} OVL_TBL=${tbl} python3 << 'PYEOF'
+          import sqlite3, os
+          dst = os.environ['DST']
+          ovl = f"/tmp/{os.environ['OVL_KIND']}/geohazard.db"
+          tbl = os.environ['OVL_TBL']
+          if not os.path.exists(ovl):
+              print(f'overlay missing: {ovl} -- SKIP')
+              raise SystemExit(0)
+          conn = sqlite3.connect(dst)
+          conn.execute('ATTACH DATABASE ? AS overlay', (ovl,))
+          tbls_in_overlay = {r[0] for r in conn.execute("SELECT name FROM overlay.sqlite_master WHERE type='table'")}
+          if tbl not in tbls_in_overlay:
+              print(f'  {tbl}: missing in overlay')
+              raise SystemExit(0)
+          before = conn.execute(f'SELECT COUNT(*) FROM main."{tbl}"').fetchone()[0]
+          ovl_cnt = conn.execute(f'SELECT COUNT(*) FROM overlay."{tbl}"').fetchone()[0]
+          print(f'  before={before:,} overlay={ovl_cnt:,}')
+          if ovl_cnt < before:
+              print(f'  SKIP: overlay smaller than base ({ovl_cnt} < {before})')
+              raise SystemExit(0)
+          conn.execute('BEGIN')
+          conn.execute(f'DELETE FROM main."{tbl}"')
+          conn.execute(f'INSERT OR IGNORE INTO main."{tbl}" SELECT * FROM overlay."{tbl}"')
+          conn.execute('COMMIT')
+          after = conn.execute(f'SELECT COUNT(*) FROM main."{tbl}"').fetchone()[0]
+          print(f'  after={after:,}')
+          conn.execute('DETACH DATABASE overlay')
+          rows = list(conn.execute('PRAGMA integrity_check'))
+          if len(rows) == 1 and rows[0][0] == 'ok':
+              print(f'  integrity_check after {tbl} apply: OK')
+          else:
+              print(f'  integrity_check FAILED after {tbl} apply ({len(rows)} rows):')
+              for r in rows[:10]:
+                  print('    ', r)
+              print(f'  rootpage mapping for trees in errors:')
+              for r in conn.execute("SELECT type, name, tbl_name, rootpage FROM sqlite_master WHERE rootpage IN (98196,98197,98198) ORDER BY rootpage"):
+                  print('    ', r)
+              raise SystemExit(2)
+          conn.close()
+          print(f'  dst size: {os.path.getsize(dst)/1024/1024:.1f} MB')
+          PYEOF
+          done
+
+      - name: Disk final
+        if: always()
+        run: df -h .
