@@ -214,7 +214,7 @@ jobs:
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
               log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              timeout 180 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+              timeout 600 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
                 --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
               dl_rc=$?
               if [ $dl_rc -ne 0 ]; then
@@ -344,6 +344,7 @@ jobs:
               # 'database disk image is malformed' on read (root cause of
               # 2026-05-08 schedule cron Tree 98196 corruption).
               dst.execute('PRAGMA journal_mode = DELETE')
+              dst.execute("VACUUM")
               dst.close()
               src.close()
               rm_sidefiles('data/geohazard_snapshot.db')
@@ -501,7 +502,7 @@ jobs:
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
               log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              timeout 180 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+              timeout 600 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
                 --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
               dl_rc=$?
               if [ $dl_rc -ne 0 ]; then
@@ -649,6 +650,7 @@ jobs:
               # 'database disk image is malformed' on read (root cause of
               # 2026-05-08 schedule cron Tree 98196 corruption).
               dst.execute('PRAGMA journal_mode = DELETE')
+              dst.execute("VACUUM")
               dst.close()
               src.close()
               rm_sidefiles('data/geohazard_snapshot.db')
@@ -806,7 +808,7 @@ jobs:
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
               log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              timeout 180 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+              timeout 600 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
                 --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
               dl_rc=$?
               if [ $dl_rc -ne 0 ]; then
@@ -1111,7 +1113,7 @@ jobs:
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
               log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              timeout 180 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+              timeout 600 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
                 --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
               dl_rc=$?
               if [ $dl_rc -ne 0 ]; then
@@ -1295,6 +1297,7 @@ jobs:
               # 'database disk image is malformed' on read (root cause of
               # 2026-05-08 schedule cron Tree 98196 corruption).
               dst.execute('PRAGMA journal_mode = DELETE')
+              dst.execute("VACUUM")
               dst.close()
               src.close()
               rm_sidefiles('data/geohazard_snapshot.db')
@@ -1450,7 +1453,7 @@ jobs:
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
               log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              timeout 180 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+              timeout 600 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
                 --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
               dl_rc=$?
               if [ $dl_rc -ne 0 ]; then
@@ -1608,6 +1611,7 @@ jobs:
               # 'database disk image is malformed' on read (root cause of
               # 2026-05-08 schedule cron Tree 98196 corruption).
               dst.execute('PRAGMA journal_mode = DELETE')
+              dst.execute("VACUUM")
               dst.close()
               src.close()
               rm_sidefiles('data/geohazard_snapshot.db')
@@ -1801,7 +1805,7 @@ jobs:
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
               log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              timeout 180 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+              timeout 600 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
                 --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
               dl_rc=$?
               if [ $dl_rc -ne 0 ]; then
@@ -2255,6 +2259,7 @@ jobs:
               # 'database disk image is malformed' on read (root cause of
               # 2026-05-08 schedule cron Tree 98196 corruption).
               dst.execute('PRAGMA journal_mode = DELETE')
+              dst.execute("VACUUM")
               dst.close()
               src.close()
               rm_sidefiles('data/geohazard_snapshot.db')
