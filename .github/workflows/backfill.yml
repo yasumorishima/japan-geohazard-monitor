@@ -344,7 +344,7 @@ jobs:
               # 'database disk image is malformed' on read (root cause of
               # 2026-05-08 schedule cron Tree 98196 corruption).
               dst.execute('PRAGMA journal_mode = DELETE')
-              dst.execute("VACUUM")
+              dst.execute('VACUUM')
               dst.close()
               src.close()
               rm_sidefiles('data/geohazard_snapshot.db')
@@ -650,7 +650,7 @@ jobs:
               # 'database disk image is malformed' on read (root cause of
               # 2026-05-08 schedule cron Tree 98196 corruption).
               dst.execute('PRAGMA journal_mode = DELETE')
-              dst.execute("VACUUM")
+              dst.execute('VACUUM')
               dst.close()
               src.close()
               rm_sidefiles('data/geohazard_snapshot.db')
@@ -1297,7 +1297,7 @@ jobs:
               # 'database disk image is malformed' on read (root cause of
               # 2026-05-08 schedule cron Tree 98196 corruption).
               dst.execute('PRAGMA journal_mode = DELETE')
-              dst.execute("VACUUM")
+              dst.execute('VACUUM')
               dst.close()
               src.close()
               rm_sidefiles('data/geohazard_snapshot.db')
@@ -1611,7 +1611,7 @@ jobs:
               # 'database disk image is malformed' on read (root cause of
               # 2026-05-08 schedule cron Tree 98196 corruption).
               dst.execute('PRAGMA journal_mode = DELETE')
-              dst.execute("VACUUM")
+              dst.execute('VACUUM')
               dst.close()
               src.close()
               rm_sidefiles('data/geohazard_snapshot.db')
@@ -2259,7 +2259,7 @@ jobs:
               # 'database disk image is malformed' on read (root cause of
               # 2026-05-08 schedule cron Tree 98196 corruption).
               dst.execute('PRAGMA journal_mode = DELETE')
-              dst.execute("VACUUM")
+              dst.execute('VACUUM')
               dst.close()
               src.close()
               rm_sidefiles('data/geohazard_snapshot.db')
