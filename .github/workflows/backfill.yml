@@ -33,15 +33,15 @@ name: Backfill Data
 # Disable this workflow once coverage reaches 100%.
 
 on:
-  schedule:
-    - cron: '0 0 * * *'    # UTC 00:00 = JST 09:00
-    - cron: '0 3 * * *'    # UTC 03:00 = JST 12:00
-    - cron: '0 6 * * *'    # UTC 06:00 = JST 15:00
-    - cron: '0 9 * * *'    # UTC 09:00 = JST 18:00
-    - cron: '0 12 * * *'   # UTC 12:00 = JST 21:00
-    - cron: '0 15 * * *'   # UTC 15:00 = JST 00:00
-    - cron: '0 18 * * *'   # UTC 18:00 = JST 03:00
-    - cron: '0 21 * * *'   # UTC 21:00 = JST 06:00
+#   schedule:
+#     - cron: '0 0 * * *'    # UTC 00:00 = JST 09:00
+#     - cron: '0 3 * * *'    # UTC 03:00 = JST 12:00
+#     - cron: '0 6 * * *'    # UTC 06:00 = JST 15:00
+#     - cron: '0 9 * * *'    # UTC 09:00 = JST 18:00
+#     - cron: '0 12 * * *'   # UTC 12:00 = JST 21:00
+#     - cron: '0 15 * * *'   # UTC 15:00 = JST 00:00
+#     - cron: '0 18 * * *'   # UTC 18:00 = JST 03:00
+#     - cron: '0 21 * * *'   # UTC 21:00 = JST 06:00
   workflow_dispatch:
     inputs:
       memo:
