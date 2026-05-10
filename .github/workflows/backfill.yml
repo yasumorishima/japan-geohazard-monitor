@@ -144,7 +144,7 @@ jobs:
       - name: Restore previous database checkpoint
         id: restore
         continue-on-error: true
-        timeout-minutes: 25
+        timeout-minutes: 60
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash {0}
@@ -231,7 +231,7 @@ jobs:
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
               log "  copied (${DB_SIZE}) -- checking integrity"
-              timeout 60 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
+              timeout 300 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
               ic_rc=$?
               if [ $ic_rc -eq 0 ]; then
                 RESTORED="${ARTIFACT_NAME}"
@@ -240,7 +240,7 @@ jobs:
                 break
               else
                 log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
-                timeout 300 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
+                timeout 600 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
                 sv_rc=$?
                 if [ $sv_rc -eq 0 ] && [ -f /tmp/salvaged.db ]; then
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
@@ -432,7 +432,7 @@ jobs:
       - name: Restore previous database checkpoint
         id: restore
         continue-on-error: true
-        timeout-minutes: 25
+        timeout-minutes: 60
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash {0}
@@ -519,7 +519,7 @@ jobs:
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
               log "  copied (${DB_SIZE}) -- checking integrity"
-              timeout 60 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
+              timeout 300 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
               ic_rc=$?
               if [ $ic_rc -eq 0 ]; then
                 RESTORED="${ARTIFACT_NAME}"
@@ -528,7 +528,7 @@ jobs:
                 break
               else
                 log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
-                timeout 300 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
+                timeout 600 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
                 sv_rc=$?
                 if [ $sv_rc -eq 0 ] && [ -f /tmp/salvaged.db ]; then
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
@@ -738,7 +738,7 @@ jobs:
       - name: Restore previous database checkpoint
         id: restore
         continue-on-error: true
-        timeout-minutes: 25
+        timeout-minutes: 60
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash {0}
@@ -825,7 +825,7 @@ jobs:
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
               log "  copied (${DB_SIZE}) -- checking integrity"
-              timeout 60 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
+              timeout 300 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
               ic_rc=$?
               if [ $ic_rc -eq 0 ]; then
                 RESTORED="${ARTIFACT_NAME}"
@@ -834,7 +834,7 @@ jobs:
                 break
               else
                 log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
-                timeout 300 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
+                timeout 600 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
                 sv_rc=$?
                 if [ $sv_rc -eq 0 ] && [ -f /tmp/salvaged.db ]; then
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
@@ -1043,7 +1043,7 @@ jobs:
       - name: Restore previous database checkpoint
         id: restore
         continue-on-error: true
-        timeout-minutes: 25
+        timeout-minutes: 60
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash {0}
@@ -1130,7 +1130,7 @@ jobs:
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
               log "  copied (${DB_SIZE}) -- checking integrity"
-              timeout 60 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
+              timeout 300 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
               ic_rc=$?
               if [ $ic_rc -eq 0 ]; then
                 RESTORED="${ARTIFACT_NAME}"
@@ -1139,7 +1139,7 @@ jobs:
                 break
               else
                 log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
-                timeout 300 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
+                timeout 600 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
                 sv_rc=$?
                 if [ $sv_rc -eq 0 ] && [ -f /tmp/salvaged.db ]; then
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
@@ -1385,7 +1385,7 @@ jobs:
       - name: Restore previous database checkpoint
         id: restore
         continue-on-error: true
-        timeout-minutes: 25
+        timeout-minutes: 60
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash {0}
@@ -1470,7 +1470,7 @@ jobs:
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
               log "  copied (${DB_SIZE}) -- checking integrity"
-              timeout 60 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
+              timeout 300 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
               ic_rc=$?
               if [ $ic_rc -eq 0 ]; then
                 RESTORED="${ARTIFACT_NAME}"
@@ -1479,7 +1479,7 @@ jobs:
                 break
               else
                 log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
-                timeout 300 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
+                timeout 600 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
                 sv_rc=$?
                 if [ $sv_rc -eq 0 ] && [ -f /tmp/salvaged.db ]; then
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
@@ -1735,7 +1735,7 @@ jobs:
       - name: Restore previous database checkpoint
         id: restore
         continue-on-error: true
-        timeout-minutes: 25
+        timeout-minutes: 60
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash {0}
@@ -1822,7 +1822,7 @@ jobs:
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
               log "  copied (${DB_SIZE}) -- checking integrity"
-              timeout 60 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
+              timeout 300 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
               ic_rc=$?
               if [ $ic_rc -eq 0 ]; then
                 RESTORED="${ARTIFACT_NAME}"
@@ -1831,7 +1831,7 @@ jobs:
                 break
               else
                 log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
-                timeout 300 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
+                timeout 600 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
                 sv_rc=$?
                 if [ $sv_rc -eq 0 ] && [ -f /tmp/salvaged.db ]; then
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
