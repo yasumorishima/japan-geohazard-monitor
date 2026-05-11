@@ -2306,29 +2306,22 @@ jobs:
 
   # =====================================================================
   # MERGE JOB -- combine light (base) with modis / so2 / cloud / snet
-  # overlays, then snapshot / coverage / checkpoint / BQ / Discord / Issue.
-  # if: always() so single-job failure still triggers BQ upload + reporting.
+  # overlays, then snapshot / SSD mirror / coverage / checkpoint / Discord.
+  # Runs on RPi5 self-hosted runner so the merged DB lands on the ext4 SSD
+  # as primary storage. if: always() so single-job failure still reports.
   # =====================================================================
   merge:
     needs: [fetch-modis, fetch-so2, fetch-cloud, fetch-snet, fetch-hinet, light]
     if: always() && inputs.target != 'diagnostic'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, ARM64, rpi5-geohazard]
     # Bumped 60->150 after Hi-net Stage 1 (PR #127) pushed merge time past
     # 60min ceiling (run 25276071313 / 25279499629 both cancelled at Snapshot
     # step). 150min matches fetch-snet/fetch-hinet/light heavy-job tier with
-    # comfortable headroom for 25min BQ upload + 10min merge + ~5min misc.
+    # comfortable headroom for ~10min merge + ~5min misc + SSD copy.
     timeout-minutes: 150
 
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install dependencies
-        run: |
-          pip install google-cloud-bigquery pyarrow numpy
 
       - name: Download light.db artifact
         id: download_light
@@ -2424,6 +2417,18 @@ jobs:
               print(f'wal_checkpoint failed: {e}')
               sys.exit(1)
           "
+
+      - name: Mirror merged DB to RPi5 SSD (primary storage)
+        if: steps.snapshot.outcome == 'success'
+        # Atomic-swap: stage to .new, retain previous as .prev (silenced on
+        # first run when no current file exists), then mv -f for atomic
+        # POSIX rename. SSD has 205GB free for the geohazard archive.
+        run: |
+          mkdir -p /mnt/ssd/geohazard
+          cp data/geohazard.db /mnt/ssd/geohazard/geohazard.db.new
+          cp /mnt/ssd/geohazard/geohazard.db /mnt/ssd/geohazard/geohazard.db.prev 2>/dev/null || true
+          mv -f /mnt/ssd/geohazard/geohazard.db.new /mnt/ssd/geohazard/geohazard.db
+          ls -lh /mnt/ssd/geohazard/
 
       - name: Coverage report
         if: steps.snapshot.outcome == 'success'
