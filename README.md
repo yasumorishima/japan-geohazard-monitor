@@ -801,7 +801,7 @@ gh workflow run "Earthquake Correlation Analysis" \
 | `fetch_ioc_sealevel.py` | IOC/VLIZ | Sea level monitoring: Japan coastal stations, REST API (no auth, 1 req/min) |
 | ~~`fetch_snet_pressure.py`~~ | ~~NIED Hi-net~~ | **[DEPRECATED 2026-04-25, Phase 1 Step 4aa]** S-net BPR is unavailable via HinetPy; tombstone stub retained (see Phase 1 Step 4aa entry in the **Data Completeness Initiative** bullet). |
 | `validate_data.py` | Local DB | **Data completeness validation**: checks all 30 tables for existence, row count, date range coverage. Outputs JSON report + human-readable summary. Runs twice per workflow (post-fetch + final) |
-| `load_raw_to_bq.py` | Local DB → BQ | **Raw data BQ loader**: SQLite → BigQuery (全31テーブル). Chunked upload (50K rows), WRITE_TRUNCATE + APPEND. Min 1000 rows guard. テーブル不在時graceful skip |
+| ~~`load_raw_to_bq.py`~~ | ~~Local DB → BQ~~ | **[DEPRECATED 2026-05-11, PR #156]** SQLite → BigQuery loader retired after BQ Sandbox 10 GB free tier reached 98 % (`ioc_sea_level` growth) and audit found zero BQ READ paths in the codebase. Script retained in `scripts/` for reference. Primary persistence moved to RPi5 SSD (PR #157). |
 
 ### Analysis scripts
 
@@ -1245,7 +1245,7 @@ Phase 18 (testing): **S-net waveform feature extraction** — replaced single `s
 
 CSEP Benchmark: ML_HistGBT Molchan skill **0.9811** (best), beating Simple_ETAS (0.8713), Relative_Intensity (0.7745), Smoothed_Seismicity (0.2220).
 
-Feature matrix exported to BigQuery (`geohazard.feature_matrix`: 216,711 rows, 132 MB) + Google Drive for Colab GPU experiments.
+Feature matrix exported to Google Drive for Colab GPU experiments. (Historical: also mirrored to BigQuery `geohazard.feature_matrix` until 2026-05-11; BQ pipeline retired per PR #156 / #157.)
 
 ### Roadmap
 
@@ -1265,39 +1265,35 @@ Feature matrix exported to BigQuery (`geohazard.feature_matrix`: 216,711 rows, 1
 | **Phase 16** | ⏱️ Timeout | SO2/cloud連続日次fetch成功（SO2 2.3M行、cloud 547K行）、但し6h制限でMLに未到達。DB checkpoint保存済み |
 | **Phase 17** | ❌ Cancelled | CI 2ジョブ分割 + ギャップ診断。手動キャンセル |
 | **Phase 18** | ✅ Complete | **S-net波形特徴量**: 1→7特徴量（RMS/HV比/帯域パワー/スペクトル傾斜/空間勾配/セグメント最大anomaly）。75→84特徴量 |
-| **BQ Integration** | ✅ Active | CI完了後にfeature_matrix + AUC + 非ゼロ率を自動ロード。座標不一致バグはBQ集計クエリで発見 |
+| **BQ Integration** | 🛑 Retired (2026-05-11) | Sandbox 10 GB 上限 98 % 到達 + READ パスゼロにつき PR #156 で upload step を全削除。 過去の貢献: Phase 15h の座標ミスマッチバグを集計クエリで即座に発見。 一次保存先は RPi5 SSD (PR #157) へ移行 |
 | **Bayesian Horseshoe** | 🧪 Tested | Stage 1 smoke test: **Test AUC 0.8029** (1 fold, 2ch×200+500). Top: xray_flux, geomag_fractal, polar_motion. Needs walk-forward CV validation |
-| **ConvLSTM** | 🟢 Colab-ready | Spatiotemporal neural network. Script + feature_matrix.json deployed to Drive + BigQuery |
+| **ConvLSTM** | 🟢 Colab-ready | Spatiotemporal neural network. Script + feature_matrix.json deployed to Drive |
 | **SeismoGNN** | 🟢 Colab-ready | Graph Attention Network with fault-network topology. Script deployed to Drive |
 | **Transformer** | 📋 Next | SafeNet-style multi-window features (7/14/30/90/365d) + attention (SafeNet, Sci. Reports 2025) |
 | **PINN** | 📋 Next | Physics-Informed NN with Rate-State friction loss (Nature Comms 2023) |
 | **Phase 19** | 🔄 Running | S-netマルチセンサー（0120速度+0120C高感度+0120A加速度）+ VLFスペクトル。84→92特徴量。ワークフロー修正: S-net前半移動+incremental save（タイムアウト時データ喪失防止）+SMAP無効化 |
 | **S-net** | ✅ Active | NIED承認済。圧力チャンネル不在→**波形特徴量**に転換。0120A(加速度)確認済み、0120(速度)+0120C(高感度)をPhase 19で追加 |
-| **Data Backfill** | 🔄 Running | `backfill.yml`: 全28+ fetcher を3時間毎cron（8スケジュール、24/7）で実行。チェックポイント累積 + 全31テーブルBQ自動ロード。Discord通知（coverage %） + 失敗時Issue自動作成。100%到達でcron頻度削減 |
+| **Data Backfill** | 🔄 Running | `backfill.yml`: 全28+ fetcher を3時間毎cron（8スケジュール、24/7）で実行。 merge job が結果を **RPi5 SSD (`/mnt/ssd/geohazard/geohazard.db`, 205 GB free)** に一次保存 (PR #157)、 GH Actions checkpoint artifact (30-day) は backup tier。 Discord通知（coverage %） + 失敗時Issue自動作成。 100%到達でcron頻度削減 |
 
-### GCP BigQuery Data Platform
+### Persistence Tiers
 
-GCP プロジェクト `data-platform-490901` の `geohazard` データセットに feature matrix + メタデータ + 生データを集約。
+`backfill.yml` の merge job が cron 終了時に出力する `geohazard.db` の保存階層 (2026-05-11 以降):
 
-**現在のテーブル・ビュー:**
+| 階層 | 場所 | 役割 | 容量 | 保持 |
+|---|---|---|---|---|
+| Primary | **RPi5 ext4 SSD** `/mnt/ssd/geohazard/geohazard.db` | merge job 直接書き出し (PR #157、 RPi5 self-hosted runner) | 205 GB free | 永続 (`.prev` で 1 世代ロールバック保持) |
+| Backup | **GH Actions artifact** `backfill-checkpoint-<run_id>` | merge job が常時 upload | 30 GB cap | 30 day rolling |
 
-| テーブル | 行数 | 内容 | 更新 |
-|---|---|---|---|
-| `feature_matrix` | 216,711 | 全特徴量データ（Phase毎に上書き） | CI ML完了後 |
-| `feature_matrix_metadata` | 1+ | Phase別AUC・特徴量数の推移（追記） | CI ML完了後 |
-| `feature_nonzero_rates` | — | 特徴量別非ゼロ率（CI初回実行後に自動作成） | CI ML完了後 |
-| `earthquakes`, `tec`, `geomag_kp`, ... (全31テーブル) | 🔄 backfill中 | 全fetcher生データ（2011-2026） | 3時間毎 |
-| `v_auc_history` | view | AUC推移の可視化用 | — |
-| `v_feature_summary` | view | 空間特徴量の非ゼロ率一覧（バグ検出） | — |
+> targeted `workflow_dispatch` (`target != 'all'`) では一次・二次とも上書き skip (該当 run が部分テーブルしか更新しないため、 他テーブルの状態を巻き戻すのを防ぐ)。
 
-**生データBQ連携** (2026-04-12〜): `backfill.yml` の各run終了時に `load_raw_to_bq.py` が全31テーブルをSQLiteからBQへ自動ロード（WRITE_TRUNCATE + 50Kチャンク分割）。1000行未満の場合はスキップしてBQデータを保護。テーブル不在時はgraceful skip。推定最大サイズ: ~700MB（無料枠10GBの範囲内）。
+#### Historical: GCP BigQuery Data Platform (2026-04-12 〜 2026-05-11、 retired)
 
-**BQ活用の成果**: Phase 15h で SO2 408K行取得成功にもかかわらず AUC が変わらなかった原因を、BQ 集計クエリ（`AVG(so2_column_anomaly) = 0.0`）で即座に発見。7つの空間データソースの座標ミスマッチバグ（Phase 15i で修正済み）を特定できた。
+GCP プロジェクト `data-platform-490901` の `geohazard` データセットへ feature matrix + メタデータ + 生データ全 31 テーブルを集約していました (`load_raw_to_bq.py` / `load_to_bq.py`)。 2026-05-11 に **PR #156** で upload step を全削除して retire:
 
-**今後の予定:**
-- backfill 100%到達後、`backfill.yml` のcron頻度を下げる（3h→週1）
-- Phase 16 完了後、非ゼロ率が gravity/soil/nightlight で 80%+ に改善することを `v_feature_summary` で確認
-- Grafana ダッシュボード（`geohazard` データセット分）を作成予定
+- **理由**: Sandbox 10 GB 上限が `ioc_sea_level` 成長で 98 % 到達。 codebase audit (`grep -rln 'SELECT.*FROM.*geohazard\.'`) で BQ READ パスゼロを確認、 write-only archive 化していた。
+- **貢献の記録**: Phase 15h の空間データソース座標ミスマッチバグ (`AVG(so2_column_anomaly) = 0.0`) を BQ 集計クエリで即座に発見、 Phase 15i で 7 ソース一括修正。
+- **データ**: 2026-05-11 時点の BQ テーブルは archive として残置 (Sandbox 60-day 無アクセス auto-expire 待ち、 手動削除なし)。
+- **後継**: 上記 Primary tier = RPi5 SSD へ移行。 ad-hoc 集計が必要ならローカルで `sqlite3 /mnt/ssd/geohazard/geohazard.db` 直接クエリ。
 
 ### Not yet implemented
 
