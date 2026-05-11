@@ -2419,10 +2419,18 @@ jobs:
           "
 
       - name: Mirror merged DB to RPi5 SSD (primary storage)
-        if: steps.snapshot.outcome == 'success'
+        # Same gating as `Upload checkpoint artifact` below: never overwrite
+        # the SSD primary copy from a targeted workflow_dispatch (e.g.
+        # target=cloud) because that DB only contains fresh rows for one
+        # table and would roll back the other tables' state.
         # Atomic-swap: stage to .new, retain previous as .prev (silenced on
         # first run when no current file exists), then mv -f for atomic
         # POSIX rename. SSD has 205GB free for the geohazard archive.
+        if: >-
+          steps.snapshot.outcome == 'success'
+          && (github.event_name != 'workflow_dispatch'
+              || inputs.target == 'all'
+              || inputs.target == '')
         run: |
           mkdir -p /mnt/ssd/geohazard
           cp data/geohazard.db /mnt/ssd/geohazard/geohazard.db.new
