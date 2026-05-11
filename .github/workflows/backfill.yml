@@ -2430,12 +2430,18 @@ jobs:
         # Same gating as `Upload checkpoint artifact` below: never overwrite
         # the SSD primary copy from a targeted workflow_dispatch (e.g.
         # target=cloud) because that DB only contains fresh rows for one
-        # table and would roll back the other tables' state.
+        # table and would roll back the other tables' state. The
+        # `github.ref == 'refs/heads/master'` clause additionally prevents
+        # a feature-branch workflow_dispatch (target=all or '') from
+        # overwriting the SSD primary; only master should write to it.
+        # `schedule` events always run on the default branch in GitHub
+        # Actions, so this clause does not block the production cron.
         # Atomic-swap: stage to .new, retain previous as .prev (silenced on
         # first run when no current file exists), then mv -f for atomic
         # POSIX rename. SSD has 205GB free for the geohazard archive.
         if: >-
           steps.snapshot.outcome == 'success'
+          && github.ref == 'refs/heads/master'
           && (github.event_name != 'workflow_dispatch'
               || inputs.target == 'all'
               || inputs.target == '')
@@ -2490,8 +2496,15 @@ jobs:
         # checkpoint is missing data from other tables that were accumulated
         # in previous full runs. Uploading would overwrite the latest full
         # checkpoint and reset progress for all other tables.
+        # The `github.ref == 'refs/heads/master'` clause additionally
+        # prevents a feature-branch workflow_dispatch (target=all or '')
+        # from overwriting the canonical checkpoint artifact lineage; only
+        # master cron / master manual dispatch should advance the
+        # checkpoint. `schedule` always runs on the default branch so this
+        # does not block the production pipeline.
         if: >-
           steps.snapshot.outcome == 'success'
+          && github.ref == 'refs/heads/master'
           && (github.event_name != 'workflow_dispatch'
               || inputs.target == 'all'
               || inputs.target == '')
