@@ -2337,7 +2337,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: backfill-light-${{ github.run_id }}
-          path: /tmp/light
+          path: /mnt/ssd/runner-temp/light
 
       - name: Download modis.db artifact
         id: download_modis
@@ -2345,7 +2345,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: backfill-modis-${{ github.run_id }}
-          path: /tmp/modis
+          path: /mnt/ssd/runner-temp/modis
 
       - name: Download so2.db artifact
         id: download_so2
@@ -2353,7 +2353,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: backfill-so2-${{ github.run_id }}
-          path: /tmp/so2
+          path: /mnt/ssd/runner-temp/so2
 
       - name: Download cloud.db artifact
         id: download_cloud
@@ -2361,7 +2361,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: backfill-cloud-${{ github.run_id }}
-          path: /tmp/cloud
+          path: /mnt/ssd/runner-temp/cloud
 
       - name: Download snet.db artifact
         id: download_snet
@@ -2369,7 +2369,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: backfill-snet-${{ github.run_id }}
-          path: /tmp/snet
+          path: /mnt/ssd/runner-temp/snet
 
       - name: Download hinet.db artifact
         if: needs.fetch-hinet.result == 'success'
@@ -2377,7 +2377,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: backfill-hinet-${{ github.run_id }}
-          path: /tmp/hinet
+          path: /mnt/ssd/runner-temp/hinet
 
       - name: Merge light + 4 overlays
         id: merge
@@ -2386,13 +2386,13 @@ jobs:
           # --require-base ensures we never let an overlay-only DB through to BQ
           # (would WRITE_TRUNCATE every light-owned table and zero them out).
           python3 scripts/merge_checkpoints.py \
-            --base /tmp/light/geohazard.db \
-            --overlay /tmp/modis/geohazard.db:modis_lst \
-            --overlay /tmp/so2/geohazard.db:so2_column \
-            --overlay /tmp/cloud/geohazard.db:cloud_fraction \
-            --overlay /tmp/snet/geohazard.db:snet_waveform \
-            --overlay /tmp/snet/geohazard.db:fnet_waveform \
-            --overlay /tmp/hinet/geohazard.db:hinet_waveform \
+            --base /mnt/ssd/runner-temp/light/geohazard.db \
+            --overlay /mnt/ssd/runner-temp/modis/geohazard.db:modis_lst \
+            --overlay /mnt/ssd/runner-temp/so2/geohazard.db:so2_column \
+            --overlay /mnt/ssd/runner-temp/cloud/geohazard.db:cloud_fraction \
+            --overlay /mnt/ssd/runner-temp/snet/geohazard.db:snet_waveform \
+            --overlay /mnt/ssd/runner-temp/snet/geohazard.db:fnet_waveform \
+            --overlay /mnt/ssd/runner-temp/hinet/geohazard.db:hinet_waveform \
             --dst data/geohazard.db \
             --require-base
 
