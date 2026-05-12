@@ -1273,7 +1273,7 @@ Feature matrix exported to Google Drive for Colab GPU experiments. (Historical: 
 | **PINN** | 📋 Next | Physics-Informed NN with Rate-State friction loss (Nature Comms 2023) |
 | **Phase 19** | 🔄 Running | S-netマルチセンサー（0120速度+0120C高感度+0120A加速度）+ VLFスペクトル。84→92特徴量。ワークフロー修正: S-net前半移動+incremental save（タイムアウト時データ喪失防止）+SMAP無効化 |
 | **S-net** | ✅ Active | NIED承認済。圧力チャンネル不在→**波形特徴量**に転換。0120A(加速度)確認済み、0120(速度)+0120C(高感度)をPhase 19で追加 |
-| **Data Backfill** | 🔄 Running | `backfill.yml`: 全28+ fetcher を3時間毎cron（8スケジュール、24/7）で実行。 merge job が結果を **RPi5 SSD (`/mnt/ssd/geohazard/geohazard.db`, 205 GB free)** に一次保存 (PR #157)、 GH Actions checkpoint artifact (30-day) は backup tier。 Discord通知（coverage %） + 失敗時Issue自動作成。 100%到達でcron頻度削減 |
+| **Data Backfill** | 🔄 Running | `backfill.yml`: 全28+ fetcher を3時間毎cron（8スケジュール、24/7）で実行。 merge job が結果を **RPi5 SSD (`/mnt/ssd/geohazard/geohazard.db`, 205 GB free)** に一次保存 (PR #157)、 merge 中の scratch artifacts (light/modis/so2/cloud/snet/hinet) も `/mnt/ssd/runner-temp/` (USB SSD) に展開して SD card 摩耗回避 (PR #159、 2026-05-12)、 GH Actions checkpoint artifact (30-day) は backup tier。 Discord通知（coverage %） + 失敗時Issue自動作成。 100%到達でcron頻度削減 |
 
 ### Persistence Tiers
 
@@ -1282,6 +1282,7 @@ Feature matrix exported to Google Drive for Colab GPU experiments. (Historical: 
 | 階層 | 場所 | 役割 | 容量 | 保持 |
 |---|---|---|---|---|
 | Primary | **RPi5 ext4 SSD** `/mnt/ssd/geohazard/geohazard.db` | merge job 直接書き出し (PR #157、 RPi5 self-hosted runner) | 205 GB free | 永続 (`.prev` で 1 世代ロールバック保持) |
+| Scratch (during merge) | **RPi5 ext4 SSD** `/mnt/ssd/runner-temp/{light,modis,so2,cloud,snet,hinet}/geohazard.db` | actions/download-artifact@v4 が job 中に展開 (PR #159、 2026-05-12) | ~10 GB peak / cron tick | 一時 (次 cron tick で上書き) |
 | Backup | **GH Actions artifact** `backfill-checkpoint-<run_id>` | merge job が常時 upload | 30 GB cap | 30 day rolling |
 
 > targeted `workflow_dispatch` (`target != 'all'`) では一次・二次とも上書き skip (該当 run が部分テーブルしか更新しないため、 他テーブルの状態を巻き戻すのを防ぐ)。
