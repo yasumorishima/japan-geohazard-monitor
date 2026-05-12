@@ -1293,7 +1293,7 @@ GCP プロジェクト `data-platform-490901` の `geohazard` データセット
 
 - **理由**: Sandbox 10 GB 上限が `ioc_sea_level` 成長で 98 % 到達。 codebase audit (`grep -rln 'SELECT.*FROM.*geohazard\.'`) で BQ READ パスゼロを確認、 write-only archive 化していた。
 - **貢献の記録**: Phase 15h の空間データソース座標ミスマッチバグ (`AVG(so2_column_anomaly) = 0.0`) を BQ 集計クエリで即座に発見、 Phase 15i で 7 ソース一括修正。
-- **データ**: 2026-05-11 時点の BQ テーブルは archive として残置 (Sandbox 60-day 無アクセス auto-expire 待ち、 手動削除なし)。
+- **データ**: 2026-05-12 に dataset 全削除 (34 table + 2 view、 9.3 GB)。 SSD primary tier が PR #157 以降 4 連続 cron success で完動確認 + READ パスゼロにつき archive 不要と判断。 Sandbox quota 93% → 0% 解放。
 - **後継**: 上記 Primary tier = RPi5 SSD へ移行。 ad-hoc 集計が必要ならローカルで `sqlite3 /mnt/ssd/geohazard/geohazard.db` 直接クエリ。
 
 ### Not yet implemented
