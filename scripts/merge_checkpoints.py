@@ -51,12 +51,13 @@ WAL mode:
 
 Usage:
     python3 scripts/merge_checkpoints.py \
-        --base /tmp/light/geohazard.db \
-        --overlay /tmp/modis/geohazard.db:modis_lst \
-        --overlay /tmp/so2/geohazard.db:so2_column \
-        --overlay /tmp/cloud/geohazard.db:cloud_fraction \
-        --overlay /tmp/snet/geohazard.db:snet_waveform \
-        --overlay /tmp/snet/geohazard.db:fnet_waveform \
+        --base /mnt/ssd/runner-temp/light/geohazard.db \
+        --overlay /mnt/ssd/runner-temp/modis/geohazard.db:modis_lst \
+        --overlay /mnt/ssd/runner-temp/so2/geohazard.db:so2_column \
+        --overlay /mnt/ssd/runner-temp/cloud/geohazard.db:cloud_fraction \
+        --overlay /mnt/ssd/runner-temp/snet/geohazard.db:snet_waveform \
+        --overlay /mnt/ssd/runner-temp/snet/geohazard.db:fnet_waveform \
+        --overlay /mnt/ssd/runner-temp/hinet/geohazard.db:hinet_waveform \
         --dst data/geohazard.db \
         --require-base
 
