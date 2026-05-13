@@ -1,8 +1,10 @@
 """Fetch TEC (IONEX) data from CODE (Bern).
 
-Modes:
-  event  — Fetch around M6.5+ earthquakes ±7 days (existing)
-  random — Fetch random dates ±7 days for control baseline
+Modes (default: continuous):
+  continuous — Fetch all dates 2011-01-01..today (recent-first), capped by
+               TEC_MAX_DATES env (default 100, GHA sets 150).
+  event      — Fetch around M6.5+ earthquakes ±7 days (legacy, opt-in).
+  random     — Fetch random dates ±7 days for control baseline (legacy).
 """
 
 import argparse
