@@ -740,8 +740,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install aiohttp aiosqlite numpy scipy netCDF4 google-cloud-bigquery pyarrow scikit-learn h5py
-          sudo apt-get install -y ncompress
+          sudo apt-get update
+          sudo apt-get install -y ncompress libhdf4-dev
+          pip install aiohttp aiosqlite numpy scipy netCDF4 google-cloud-bigquery pyarrow scikit-learn h5py pyhdf
 
       - name: Restore previous database checkpoint
         id: restore

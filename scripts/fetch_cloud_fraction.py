@@ -40,14 +40,18 @@ from db_connect import safe_connect
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
 from config import DB_PATH
-from earthdata_auth import get_earthdata_session, earthdata_fetch, EARTHDATA_TOKEN
+from earthdata_auth import get_earthdata_session, EARTHDATA_TOKEN
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# LAADS DAAC OPeNDAP for MOD08_D3 (MODIS Terra daily L3 atmosphere)
-# Path includes RemoteResources/laads/ prefix (verified 2026-03-20)
-LAADS_OPENDAP = "https://ladsweb.modaps.eosdis.nasa.gov/opendap/RemoteResources/laads/allData/61/MOD08_D3"
+# LAADS DAAC direct HDF4 download for MOD08_D3 (MODIS Terra daily L3 atmosphere).
+# Switched from OPeNDAP `.ascii?Cloud_Fraction_Mean` to direct .hdf download because
+# LAADS OPeNDAP does NOT honor Bearer tokens (diagnosis 2026-05-14): every OPeNDAP
+# request returns 302 -> /oauth/login regardless of Authorization header, ultimately
+# delivering an HTTP 200 HTML OAuth landing page (len ~11062). NASA's
+# "Download Files Using EDL Tokens" doc only documents Bearer for /archive/... paths.
+LAADS_ARCHIVE = "https://ladsweb.modaps.eosdis.nasa.gov/archive/allData/61/MOD08_D3"
 
 # Japan bbox in 1° grid
 # Lat: -90 to 90 (180 cells), Lon: -180 to 180 (360 cells)
@@ -168,7 +172,13 @@ async def _resolve_filename(session: aiohttp.ClientSession, year: int, doy: int)
 
 
 async def fetch_cloud_day(session: aiohttp.ClientSession, date: datetime) -> list[dict]:
-    """Fetch cloud fraction for one day via LAADS OPeNDAP."""
+    """Fetch cloud fraction for one day via LAADS direct HDF4 download.
+
+    Uses /archive/... path with Bearer token (the only LAADS path where Bearer
+    is officially supported). The HDF4 file is downloaded to memory and parsed
+    via pyhdf. Japan bbox subsetting is done after parsing (HDF4 does not
+    support server-side subsetting on this endpoint).
+    """
     if not EARTHDATA_TOKEN:
         return []
 
@@ -176,44 +186,58 @@ async def fetch_cloud_day(session: aiohttp.ClientSession, date: datetime) -> lis
     doy = date.timetuple().tm_yday
     date_str = date.strftime("%Y-%m-%d")
 
-    # Resolve actual filename (contains processing date)
     filename = await _resolve_filename(session, year, doy)
     if not filename:
         return []
 
-    # OPeNDAP ASCII — fetch full array (LAADS HDF4 doesn't support subsetting)
-    # Python-side slicing for Japan bbox is fast (~65K values per day)
-    url = f"{LAADS_OPENDAP}/{year}/{doy:03d}/{filename}.ascii?Cloud_Fraction_Mean"
+    url = f"{LAADS_ARCHIVE}/{year}/{doy:03d}/{filename}"
+    headers = {"Authorization": f"Bearer {EARTHDATA_TOKEN}"}
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            status, text = await earthdata_fetch(session, url, timeout=TIMEOUT)
-            if status == 200:
-                if not text:
+            async with session.get(
+                url, headers=headers, timeout=TIMEOUT, allow_redirects=True
+            ) as resp:
+                if resp.status in (401, 403):
+                    logger.info(
+                        "Cloud fraction requires Earthdata auth (HTTP %d)", resp.status
+                    )
+                    return []
+                if resp.status == 404:
+                    return []
+                if resp.status != 200:
+                    if attempt == MAX_RETRIES:
+                        body_head = (await resp.text(errors="replace"))[:200]
+                        logger.warning(
+                            "Cloud %s: HTTP %d on .hdf download preview=%r",
+                            date_str, resp.status, body_head,
+                        )
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+
+                content_bytes = await resp.read()
+                if not content_bytes or len(content_bytes) < 1000:
                     diag_count = getattr(fetch_cloud_day, "_diag_empty", 0)
                     if diag_count < 5:
                         logger.warning(
-                            "Cloud %s: HTTP 200 empty body (silent failure)",
-                            date_str,
+                            "Cloud %s: empty/tiny .hdf body (len=%d)",
+                            date_str, len(content_bytes),
                         )
                         fetch_cloud_day._diag_empty = diag_count + 1
                     return []
-                if "<html" in text[:200].lower():
-                    diag_count = getattr(fetch_cloud_day, "_diag_html", 0)
+                # HDF4 magic header bytes
+                if content_bytes[:4] != b"":
+                    diag_count = getattr(fetch_cloud_day, "_diag_nothdf", 0)
                     if diag_count < 5:
+                        preview = content_bytes[:200]
                         logger.warning(
-                            "Cloud %s: HTTP 200 HTML body (auth/redirect issue) "
+                            "Cloud %s: not HDF4 magic (auth/redirect issue?) "
                             "len=%d preview=%r",
-                            date_str, len(text), text[:200],
+                            date_str, len(content_bytes), preview,
                         )
-                        fetch_cloud_day._diag_html = diag_count + 1
+                        fetch_cloud_day._diag_nothdf = diag_count + 1
                     return []
-                return _parse_cloud_ascii(text, date_str)
-            elif status in (401, 403):
-                logger.info("Cloud fraction requires Earthdata auth")
-                return []
-            elif status == 404:
-                return []
+                return _parse_cloud_hdf4(content_bytes, date_str)
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             if attempt == MAX_RETRIES:
                 logger.debug("Cloud %s: %s", date_str, type(e).__name__)
@@ -222,71 +246,70 @@ async def fetch_cloud_day(session: aiohttp.ClientSession, date: datetime) -> lis
     return []
 
 
-def _parse_cloud_ascii(text: str, date_str: str) -> list[dict]:
-    """Parse OPeNDAP ASCII cloud fraction (full 180x360 grid).
+def _parse_cloud_hdf4(content_bytes: bytes, date_str: str) -> list[dict]:
+    """Parse a MOD08_D3 HDF4 file (bytes) and extract Cloud_Fraction_Mean.
 
-    Format from LAADS OPeNDAP:
-        Dataset: MOD08_D3...
-        Cloud_Fraction_Mean[0], 2800, 4564, ...
-        Cloud_Fraction_Mean[1], 3100, 4200, ...
-    Values are Int16 scaled by 10000 (divide to get 0-1 fraction).
-    We extract only the Japan bbox rows/columns.
+    MOD08_D3 collection 61 layout:
+        - Dataset: Cloud_Fraction_Mean  (Int16, 180x360)
+        - YDim row 0   = -89.5 deg lat (south first), row 179 = +89.5 deg
+        - XDim col 0   = -179.5 deg lon, col 359 = +179.5 deg
+        - scale_factor (HDF attr): 0.0001  -> raw * scale = cloud fraction in [0, 1]
+        - _FillValue   (HDF attr): -9999
+    Japan bbox slicing matches the previous OPeNDAP code path.
     """
-    rows = []
-    in_data = False
-    SCALE = 10000.0
-    FILL_VALUE = -9999  # typical HDF4 fill
+    import os as _os
+    import tempfile as _tempfile
 
-    for line in text.split("\n"):
-        line = line.strip()
-        if not line:
-            continue
+    from pyhdf.SD import SD, SDC  # local import: pyhdf only loaded on the fetch path
 
-        # Data lines start with variable name or [index]
-        if line.startswith("Cloud_Fraction_Mean["):
-            in_data = True
-            # Extract row index: "Cloud_Fraction_Mean[42], ..."
-            bracket_end = line.index("]")
-            row_idx = int(line[len("Cloud_Fraction_Mean["):bracket_end])
+    tmp = _tempfile.NamedTemporaryFile(suffix=".hdf", delete=False)
+    tmp_path = tmp.name
+    try:
+        tmp.write(content_bytes)
+        tmp.close()
+        try:
+            hdf = SD(tmp_path, SDC.READ)
+            ds = hdf.select("Cloud_Fraction_Mean")
+            data = ds[:]
+            attrs = ds.attributes()
+            scale = float(attrs.get("scale_factor", 0.0001))
+            offset = float(attrs.get("add_offset", 0.0))
+            fill = int(attrs.get("_FillValue", -9999))
+            ds.endaccess()
+            hdf.end()
+        except Exception as e:
+            diag_count = getattr(_parse_cloud_hdf4, "_diag_parse", 0)
+            if diag_count < 5:
+                logger.warning(
+                    "Cloud %s: HDF parse failed: %s: %s",
+                    date_str, type(e).__name__, e,
+                )
+                _parse_cloud_hdf4._diag_parse = diag_count + 1
+            return []
+    finally:
+        try:
+            _os.unlink(tmp_path)
+        except OSError:
+            pass
 
-            # Only process Japan lat rows (LAT_START to LAT_END inclusive)
-            if row_idx < LAT_START or row_idx > LAT_END:
+    n_rows, n_cols = data.shape
+    rows: list[dict] = []
+    for row_idx in range(LAT_START, min(LAT_END + 1, n_rows)):
+        lat = -89.5 + row_idx
+        for lon_idx in range(LON_START, min(LON_END + 1, n_cols)):
+            raw = int(data[row_idx, lon_idx])
+            if raw == fill or raw < 0:
                 continue
-
-            lat = -89.5 + row_idx  # 1° grid center
-
-            # Values after the first comma
-            first_comma = line.index(",")
-            val_parts = line[first_comma + 1:].split(",")
-
-            # Extract Japan lon columns only
-            for lon_idx in range(LON_START, min(LON_END + 1, len(val_parts) + LON_START)):
-                arr_idx = lon_idx  # val_parts covers all 360 columns
-                if arr_idx >= len(val_parts):
-                    break
-                try:
-                    raw = int(val_parts[arr_idx].strip())
-                    if raw <= FILL_VALUE or raw < 0:
-                        continue
-                    val = raw / SCALE
-                    if val > 1.1:
-                        continue
-                    lon = -179.5 + lon_idx
-                    rows.append({
-                        "date": date_str,
-                        "lat": round(lat, 1),
-                        "lon": round(lon, 1),
-                        "cloud_frac": round(val, 4),
-                    })
-                except (ValueError, IndexError):
-                    continue
-
-            continue
-
-        # Stop after data section
-        if in_data and not line.startswith("Cloud_Fraction_Mean"):
-            break
-
+            val = (raw - offset) * scale
+            if val > 1.1:
+                continue
+            lon = -179.5 + lon_idx
+            rows.append({
+                "date": date_str,
+                "lat": round(lat, 1),
+                "lon": round(lon, 1),
+                "cloud_frac": round(val, 4),
+            })
     return rows
 
 
