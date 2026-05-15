@@ -42,7 +42,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 SHORT_NAME = "MOD08_D3"
-VERSION = "61"
+VERSION = "6.1"
 
 JAPAN_BBOX = (122.0, 24.0, 150.0, 46.0)
 
