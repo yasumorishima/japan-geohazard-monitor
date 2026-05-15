@@ -939,7 +939,7 @@ jobs:
           EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
-          CLOUD_MAX_DATES: "3"
+          CLOUD_MAX_DATES: "900"
         run: python3 -u scripts/fetch_cloud_fraction.py
 
       - name: Snapshot DB
