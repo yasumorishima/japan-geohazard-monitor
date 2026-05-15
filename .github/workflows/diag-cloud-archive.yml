@@ -1,0 +1,71 @@
+name: Diag Cloud Archive
+on:
+  workflow_dispatch:
+    inputs:
+      memo:
+        description: "intent"
+        required: true
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test LAADS archive paths with Bearer
+        env:
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+        run: |
+          set +e
+          if [ -z "$EARTHDATA_TOKEN" ]; then
+            echo "ERROR: EARTHDATA_TOKEN secret missing"
+            exit 1
+          fi
+          echo "token set, len=${#EARTHDATA_TOKEN}"
+          AUTH="Authorization: Bearer $EARTHDATA_TOKEN"
+
+          echo "================= 1. archive .json directory listing ================="
+          curl --max-time 30 -sS -D /tmp/h1.txt -o /tmp/b1.json \
+            -w "http=%{http_code} size=%{size_download} ctype=%{content_type} url=%{url_effective}\nredirect=%{num_redirects}\n" \
+            -H "$AUTH" -L \
+            "https://ladsweb.modaps.eosdis.nasa.gov/archive/allData/61/MOD08_D3/2011/001.json"
+          echo "--- response headers ---"
+          grep -E "^(HTTP|Location|Content-Type|WWW-Authenticate|Set-Cookie)" /tmp/h1.txt
+          echo "--- body first 500 bytes ---"
+          head -c 500 /tmp/b1.json
+
+          echo ""
+          echo "================= 2. Direct .hdf with -L follow ================="
+          curl --max-time 60 -sS -D /tmp/h2.txt -o /tmp/test.hdf \
+            -w "http=%{http_code} size=%{size_download} ctype=%{content_type} url=%{url_effective}\nredirect=%{num_redirects}\n" \
+            -H "$AUTH" -L \
+            "https://ladsweb.modaps.eosdis.nasa.gov/archive/allData/61/MOD08_D3/2011/001/MOD08_D3.A2011001.061.2017310034512.hdf"
+          echo "--- response headers ---"
+          grep -E "^(HTTP|Location|Content-Type|WWW-Authenticate|Set-Cookie)" /tmp/h2.txt
+          echo "--- magic bytes (first 16) ---"
+          od -An -tx1 -N 16 /tmp/test.hdf
+          file /tmp/test.hdf
+          head -c 300 /tmp/test.hdf
+
+          echo ""
+          echo "================= 3. Direct .hdf NO follow ================="
+          curl --max-time 30 -sS -D /tmp/h3.txt -o /tmp/test_noL.hdf \
+            -w "http=%{http_code} size=%{size_download}\n" \
+            -H "$AUTH" \
+            "https://ladsweb.modaps.eosdis.nasa.gov/archive/allData/61/MOD08_D3/2011/001/MOD08_D3.A2011001.061.2017310034512.hdf"
+          echo "--- headers (no follow) ---"
+          cat /tmp/h3.txt
+          echo "--- body ---"
+          head -c 300 /tmp/test_noL.hdf
+
+          echo ""
+          echo "================= 4. API v2 download URL ================="
+          curl --max-time 30 -sS -D /tmp/h4.txt -o /tmp/test_data.hdf \
+            -w "http=%{http_code} size=%{size_download} ctype=%{content_type} url=%{url_effective}\n" \
+            -H "$AUTH" -L \
+            "https://ladsweb.modaps.eosdis.nasa.gov/api/v2/content/archives/allData/61/MOD08_D3/2011/001/MOD08_D3.A2011001.061.2017310034512.hdf"
+          echo "--- headers ---"
+          grep -E "^(HTTP|Location|Content-Type|WWW-Authenticate)" /tmp/h4.txt | head -20
+          od -An -tx1 -N 16 /tmp/test_data.hdf
+          head -c 300 /tmp/test_data.hdf
+
+          echo ""
+          echo "================= done ================="
