@@ -10,6 +10,8 @@ Real-time monitoring dashboard for Japan's geophysical activity — earthquakes,
 
 Raspberry Pi 5 + Docker（Tailscaleネットワーク内）
 
+> **Data:** Dataset migration to public [Hugging Face Datasets](https://huggingface.co/yasumorishima) is planned.
+
 ## Architecture
 
 ```
