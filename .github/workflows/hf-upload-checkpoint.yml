@@ -40,4 +40,4 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          huggingface-cli upload yasumorishima/japan-geohazard "${{ steps.db.outputs.path }}" geohazard.db --repo-type dataset --commit-message "Add geohazard.db (checkpoint 2026-05-14)"
+          hf upload yasumorishima/japan-geohazard "${{ steps.db.outputs.path }}" geohazard.db --repo-type dataset --commit-message "Add geohazard.db (checkpoint 2026-05-14)"
