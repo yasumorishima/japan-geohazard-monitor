@@ -18,17 +18,23 @@ name: Backfill Data
 #                                 + S-net waveform
 #                                 + S-net pressure   -> snet.db artifact
 #   light        (timeout 200m): remaining ~26 fetchers -> light.db artifact
-#   merge        (timeout 60m):  needs all 5 above, runs
+#   merge        (ubuntu-latest): needs all above, runs
 #                                 scripts/merge_checkpoints.py with light
-#                                 as base and 4 overlays.
+#                                 as base and the per-table overlays.
 #                                 Then Snapshot / Coverage / Upload
-#                                 checkpoint (target ガード) / Upload BQ
-#                                 (target ガード) / Discord / Issue.
+#                                 checkpoint artifact (target ガード) /
+#                                 Upload canonical DB to Hugging Face
+#                                 (UTC 00:00 cron のみ) / Discord / Issue.
+#
+# Storage: the GitHub artifact chain (backfill-checkpoint-<run_id>) is the
+# per-run working state restored by each fetch job. The Hugging Face dataset
+# yasumorishima/japan-geohazard is the canonical durable copy (the retired
+# RPi5 SSD primary tier was replaced by HF on 2026-05-28).
 #
 # If a fetch job is target-skipped (workflow_dispatch with a specific
 # target) or cancelled / fails, its overlay artifact is absent and
 # merge_checkpoints.py leaves those tables as the base's
-# prior-checkpoint rows (no BQ regression).
+# prior-checkpoint rows (no regression).
 #
 # Disable this workflow once coverage reaches 100%.
 
@@ -2315,22 +2321,47 @@ jobs:
 
   # =====================================================================
   # MERGE JOB -- combine light (base) with modis / so2 / cloud / snet
-  # overlays, then snapshot / SSD mirror / coverage / checkpoint / Discord.
-  # Runs on RPi5 self-hosted runner so the merged DB lands on the ext4 SSD
-  # as primary storage. if: always() so single-job failure still reports.
+  # overlays, then snapshot / coverage / checkpoint / HF upload / Discord.
+  # 2026-05-28: migrated off the RPi5 self-hosted runner + USB SSD (both
+  # permanently retired after the SSD died) to ubuntu-latest. The merged
+  # DB is no longer mirrored to /mnt/ssd; instead the canonical durable
+  # copy lives on the Hugging Face dataset yasumorishima/japan-geohazard
+  # (uploaded once/day, see the HF step below). The GitHub artifact chain
+  # (backfill-checkpoint-<run_id>) remains the per-run working state.
+  # if: always() so single-job failure still reports.
   # =====================================================================
   merge:
     needs: [fetch-modis, fetch-so2, fetch-cloud, fetch-snet, fetch-hinet, light]
     if: always() && inputs.target != 'diagnostic'
-    runs-on: [self-hosted, Linux, ARM64, rpi5-geohazard]
+    runs-on: ubuntu-latest
     # Bumped 60->150 after Hi-net Stage 1 (PR #127) pushed merge time past
     # 60min ceiling (run 25276071313 / 25279499629 both cancelled at Snapshot
     # step). 150min matches fetch-snet/fetch-hinet/light heavy-job tier with
-    # comfortable headroom for ~10min merge + ~5min misc + SSD copy.
+    # comfortable headroom for ~10min merge + ~5min misc + HF upload.
     timeout-minutes: 150
 
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Free up runner disk and stage the large /mnt scratch
+        # merge_checkpoints.py copies the ~16.5GB base to the dst (shutil.copyfile),
+        # so the job holds ~33GB at once: base+overlays AND dst. Split them across
+        # filesystems so neither fills up:
+        #   - base + overlays -> /mnt/merge  (the ephemeral disk, ~74GB free)
+        #   - dst data/geohazard.db          (root fs, freed below, ~40GB)
+        # Reclaiming toolcaches we don't use here (Android SDK, .NET, GHC, CodeQL)
+        # gives the root fs comfortable headroom for the 16.5GB dst + snapshot.
+        run: |
+          df -h / /mnt
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost 2>/dev/null || true
+          sudo mkdir -p /mnt/merge
+          sudo chown "$(id -u):$(id -g)" /mnt/merge
+          df -h / /mnt
 
       - name: Download light.db artifact
         id: download_light
@@ -2338,7 +2369,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: backfill-light-${{ github.run_id }}
-          path: /mnt/ssd/runner-temp/light
+          path: /mnt/merge/light
 
       - name: Download modis.db artifact
         id: download_modis
@@ -2346,7 +2377,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: backfill-modis-${{ github.run_id }}
-          path: /mnt/ssd/runner-temp/modis
+          path: /mnt/merge/modis
 
       - name: Download so2.db artifact
         id: download_so2
@@ -2354,7 +2385,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: backfill-so2-${{ github.run_id }}
-          path: /mnt/ssd/runner-temp/so2
+          path: /mnt/merge/so2
 
       - name: Download cloud.db artifact
         id: download_cloud
@@ -2362,7 +2393,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: backfill-cloud-${{ github.run_id }}
-          path: /mnt/ssd/runner-temp/cloud
+          path: /mnt/merge/cloud
 
       - name: Download snet.db artifact
         id: download_snet
@@ -2370,7 +2401,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: backfill-snet-${{ github.run_id }}
-          path: /mnt/ssd/runner-temp/snet
+          path: /mnt/merge/snet
 
       - name: Download hinet.db artifact
         if: needs.fetch-hinet.result == 'success'
@@ -2378,22 +2409,22 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: backfill-hinet-${{ github.run_id }}
-          path: /mnt/ssd/runner-temp/hinet
+          path: /mnt/merge/hinet
 
       - name: Merge light + 4 overlays
         id: merge
         run: |
           mkdir -p data
-          # --require-base ensures we never let an overlay-only DB through to BQ
-          # (would WRITE_TRUNCATE every light-owned table and zero them out).
+          # --require-base ensures we never let an overlay-only DB through as a
+          # checkpoint (would zero out every light-owned table on the next run).
           python3 scripts/merge_checkpoints.py \
-            --base /mnt/ssd/runner-temp/light/geohazard.db \
-            --overlay /mnt/ssd/runner-temp/modis/geohazard.db:modis_lst \
-            --overlay /mnt/ssd/runner-temp/so2/geohazard.db:so2_column \
-            --overlay /mnt/ssd/runner-temp/cloud/geohazard.db:cloud_fraction \
-            --overlay /mnt/ssd/runner-temp/snet/geohazard.db:snet_waveform \
-            --overlay /mnt/ssd/runner-temp/snet/geohazard.db:fnet_waveform \
-            --overlay /mnt/ssd/runner-temp/hinet/geohazard.db:hinet_waveform \
+            --base /mnt/merge/light/geohazard.db \
+            --overlay /mnt/merge/modis/geohazard.db:modis_lst \
+            --overlay /mnt/merge/so2/geohazard.db:so2_column \
+            --overlay /mnt/merge/cloud/geohazard.db:cloud_fraction \
+            --overlay /mnt/merge/snet/geohazard.db:snet_waveform \
+            --overlay /mnt/merge/snet/geohazard.db:fnet_waveform \
+            --overlay /mnt/merge/hinet/geohazard.db:hinet_waveform \
             --dst data/geohazard.db \
             --require-base
 
@@ -2427,31 +2458,30 @@ jobs:
               sys.exit(1)
           "
 
-      - name: Mirror merged DB to RPi5 SSD (primary storage)
-        # Same gating as `Upload checkpoint artifact` below: never overwrite
-        # the SSD primary copy from a targeted workflow_dispatch (e.g.
-        # target=cloud) because that DB only contains fresh rows for one
-        # table and would roll back the other tables' state. The
-        # `github.ref == 'refs/heads/master'` clause additionally prevents
-        # a feature-branch workflow_dispatch (target=all or '') from
-        # overwriting the SSD primary; only master should write to it.
-        # `schedule` events always run on the default branch in GitHub
-        # Actions, so this clause does not block the production cron.
-        # Atomic-swap: stage to .new, retain previous as .prev (silenced on
-        # first run when no current file exists), then mv -f for atomic
-        # POSIX rename. SSD has 205GB free for the geohazard archive.
+      - name: Upload canonical DB to Hugging Face (durable primary storage)
+        # Replaces the retired RPi5 SSD mirror. The Hugging Face dataset
+        # yasumorishima/japan-geohazard is now the canonical durable copy.
+        # Gated to ONE cron tick per day (UTC 00:00) -- not every 3h run --
+        # because each push is a ~16.5GB git-LFS commit; uploading 8x/day
+        # would balloon the dataset's LFS storage. hf_sync.py squashes LFS
+        # history after a verified upload to keep usedStorage bounded.
+        # schedule-only + master-only: a targeted/feature-branch dispatch
+        # carries a partial DB and must never overwrite the canonical copy.
+        # To push manually, use the hf-upload-checkpoint.yml workflow.
         if: >-
           steps.snapshot.outcome == 'success'
           && github.ref == 'refs/heads/master'
-          && (github.event_name != 'workflow_dispatch'
-              || inputs.target == 'all'
-              || inputs.target == '')
+          && github.event_name == 'schedule'
+          && github.event.schedule == '0 0 * * *'
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          mkdir -p /mnt/ssd/geohazard
-          cp data/geohazard.db /mnt/ssd/geohazard/geohazard.db.new
-          cp /mnt/ssd/geohazard/geohazard.db /mnt/ssd/geohazard/geohazard.db.prev 2>/dev/null || true
-          mv -f /mnt/ssd/geohazard/geohazard.db.new /mnt/ssd/geohazard/geohazard.db
-          ls -lh /mnt/ssd/geohazard/
+          pip install --quiet "huggingface_hub>=0.26"
+          python3 scripts/hf_sync.py \
+            --src data/geohazard.db \
+            --repo yasumorishima/japan-geohazard \
+            --path geohazard.db \
+            --squash
 
       - name: Coverage report
         if: steps.snapshot.outcome == 'success'
