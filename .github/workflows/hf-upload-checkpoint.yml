@@ -1,0 +1,43 @@
+name: Upload checkpoint to Hugging Face
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Run ID holding the checkpoint artifact
+        required: true
+        default: "25850138812"
+      artifact:
+        description: Artifact name
+        required: true
+        default: "backfill-checkpoint-25850138812"
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download checkpoint artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ inputs.run_id }}" -n "${{ inputs.artifact }}" -D dl --repo "${{ github.repository }}"
+          ls -laR dl
+
+      - name: Locate DB and integrity check
+        id: db
+        run: |
+          DB="$(find dl -name '*.db' | head -1)"
+          if [ -z "$DB" ]; then echo "no .db found"; find dl -type f; exit 1; fi
+          echo "path=$DB" >> "$GITHUB_OUTPUT"
+          ls -la "$DB"
+          echo "integrity: $(sqlite3 "$DB" 'PRAGMA integrity_check;' | head -1)"
+          echo "table_count: $(sqlite3 "$DB" "SELECT count(*) FROM sqlite_master WHERE type='table';")"
+
+      - name: Install huggingface_hub
+        run: pip install --quiet "huggingface_hub>=0.26"
+
+      - name: Upload to Hugging Face
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          huggingface-cli upload yasumorishima/japan-geohazard "${{ steps.db.outputs.path }}" geohazard.db --repo-type dataset --commit-message "Add geohazard.db (checkpoint 2026-05-14)"
