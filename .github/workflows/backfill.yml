@@ -144,6 +144,16 @@ jobs:
       restore_restored: ${{ steps.restore.outputs.restored }}
 
     steps:
+      # Free ~30GB of pre-installed software we never use. The 2026-05-28
+      # 15:00 UTC full-schedule run hit "no space left on device" while
+      # expanding the 17GB checkpoint into /tmp/db-restore; so2/modis/cloud/
+      # hinet all failed at the Restore step. The light job already does this
+      # and was the only fetch job to survive. Mirror that mitigation here.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
@@ -432,6 +442,16 @@ jobs:
       restore_restored: ${{ steps.restore.outputs.restored }}
 
     steps:
+      # Free ~30GB of pre-installed software we never use. The 2026-05-28
+      # 15:00 UTC full-schedule run hit "no space left on device" while
+      # expanding the 17GB checkpoint into /tmp/db-restore; so2/modis/cloud/
+      # hinet all failed at the Restore step. The light job already does this
+      # and was the only fetch job to survive. Mirror that mitigation here.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
@@ -738,6 +758,16 @@ jobs:
       restore_restored: ${{ steps.restore.outputs.restored }}
 
     steps:
+      # Free ~30GB of pre-installed software we never use. The 2026-05-28
+      # 15:00 UTC full-schedule run hit "no space left on device" while
+      # expanding the 17GB checkpoint into /tmp/db-restore; so2/modis/cloud/
+      # hinet all failed at the Restore step. The light job already does this
+      # and was the only fetch job to survive. Mirror that mitigation here.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
@@ -1044,6 +1074,16 @@ jobs:
       restore_restored: ${{ steps.restore.outputs.restored }}
 
     steps:
+      # Free ~30GB of pre-installed software we never use. The 2026-05-28
+      # 15:00 UTC full-schedule run hit "no space left on device" while
+      # expanding the 17GB checkpoint into /tmp/db-restore; so2/modis/cloud/
+      # hinet all failed at the Restore step. The light job already does this
+      # and was the only fetch job to survive. Mirror that mitigation here.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
@@ -1389,6 +1429,16 @@ jobs:
       restore_outcome: ${{ steps.restore.outcome }}
       restore_restored: ${{ steps.restore.outputs.restored }}
     steps:
+      # Free ~30GB of pre-installed software we never use. The 2026-05-28
+      # 15:00 UTC full-schedule run hit "no space left on device" while
+      # expanding the 17GB checkpoint into /tmp/db-restore; so2/modis/cloud/
+      # hinet all failed at the Restore step. The light job already does this
+      # and was the only fetch job to survive. Mirror that mitigation here.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h
+
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
