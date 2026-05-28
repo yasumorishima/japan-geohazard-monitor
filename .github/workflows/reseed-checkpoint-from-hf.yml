@@ -1,0 +1,59 @@
+name: Reseed checkpoint from Hugging Face
+
+# One-shot recovery: pull the canonical geohazard.db from the Hugging Face
+# dataset and re-publish it as a fresh backfill-checkpoint-<run_id> artifact.
+#
+# Why: after the RPi5 SSD died (2026-05-27) the GitHub artifact chain's latest
+# surviving checkpoint was a degraded ~587MB salvage, while the full ~16.5GB
+# history lives only on HF. Running this once puts a complete checkpoint back
+# at the head of the chain (newest created_at), so the normal backfill restore
+# step (sort_by(created_at)|reverse) picks it up and the pipeline resumes from
+# full history instead of the degraded remnant.
+#
+# Run manually whenever the artifact chain needs reseeding from HF.
+
+on:
+  workflow_dispatch:
+    inputs:
+      memo:
+        description: 'Why this reseed'
+        required: true
+
+jobs:
+  reseed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Free up runner disk for the 16.5GB DB
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost 2>/dev/null || true
+          df -h /
+
+      - name: Download canonical DB from Hugging Face
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          pip install --quiet "huggingface_hub>=0.26"
+          mkdir -p data
+          hf download yasumorishima/japan-geohazard geohazard.db \
+            --repo-type dataset --local-dir data
+          ls -lh data/geohazard.db
+
+      - name: Integrity check
+        run: |
+          python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
+
+      - name: Upload as fresh checkpoint artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backfill-checkpoint-${{ github.run_id }}
+          path: data/geohazard.db
+          retention-days: 30
