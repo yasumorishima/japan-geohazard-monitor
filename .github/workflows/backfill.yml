@@ -154,7 +154,8 @@ jobs:
       # and was the only fetch job to survive. Mirror that mitigation here.
       - name: Free disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/share/swift /usr/local/.ghcup /usr/local/share/boost 2>/dev/null || true
+          sudo docker image prune -af 2>/dev/null || true
           df -h
 
       - uses: actions/checkout@v4
@@ -452,7 +453,8 @@ jobs:
       # and was the only fetch job to survive. Mirror that mitigation here.
       - name: Free disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/share/swift /usr/local/.ghcup /usr/local/share/boost 2>/dev/null || true
+          sudo docker image prune -af 2>/dev/null || true
           df -h
 
       - uses: actions/checkout@v4
@@ -768,7 +770,8 @@ jobs:
       # and was the only fetch job to survive. Mirror that mitigation here.
       - name: Free disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/share/swift /usr/local/.ghcup /usr/local/share/boost 2>/dev/null || true
+          sudo docker image prune -af 2>/dev/null || true
           df -h
 
       - uses: actions/checkout@v4
@@ -1091,7 +1094,8 @@ jobs:
       # and was the only fetch job to survive. Mirror that mitigation here.
       - name: Free disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/share/swift /usr/local/.ghcup /usr/local/share/boost 2>/dev/null || true
+          sudo docker image prune -af 2>/dev/null || true
           df -h
 
       - uses: actions/checkout@v4
@@ -1446,7 +1450,8 @@ jobs:
       # and was the only fetch job to survive. Mirror that mitigation here.
       - name: Free disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/share/swift /usr/local/.ghcup /usr/local/share/boost 2>/dev/null || true
+          sudo docker image prune -af 2>/dev/null || true
           df -h
 
       - uses: actions/checkout@v4
@@ -1793,7 +1798,8 @@ jobs:
       # of them.
       - name: Free disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/share/swift /usr/local/.ghcup /usr/local/share/boost 2>/dev/null || true
+          sudo docker image prune -af 2>/dev/null || true
           df -h
 
       - uses: actions/checkout@v4
