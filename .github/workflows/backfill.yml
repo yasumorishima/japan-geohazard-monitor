@@ -108,16 +108,19 @@ permissions:
 # light restore step hanging when a prior run overlapped). cancel-in-progress
 # is deliberately false so a long-running run isn't killed by the next
 # schedule tick; the next run queues until this one finishes.
-# Scope: schedule (master cron) shares one queue ("backfill-data-master")
-# to serialise the production pipeline. workflow_dispatch on a feature
-# branch gets its own ref-scoped queue so PR smoke runs don't fight the
-# master cron (2026-05-11: PR #157 smoke was evicted by a fresh schedule
-# tick before this change). Data isolation between branch dispatches and
+# Scope: anything running on master -- schedule (cron) AND manual
+# workflow_dispatch (e.g. target=all) -- shares one queue
+# ("backfill-data-master") so they serialise the production pipeline and
+# never run concurrently building checkpoints on a stale base (2026-05-29:
+# a master target=all dispatch ran alongside the cron and the two runs did
+# not compound). Only a dispatch on a NON-master (feature) branch gets its
+# own ref-scoped queue so PR smoke runs don't fight the master cron
+# (2026-05-11: PR #157 smoke was evicted by a fresh schedule tick). Data isolation between branch dispatches and
 # master is already enforced by the SSD-mirror / artifact-upload gates
 # below, so the only thing the shared queue was protecting was the
 # artifact API, and the schedule-only sub-queue is sufficient for that.
 concurrency:
-  group: backfill-data-${{ github.event_name == 'schedule' && 'master' || github.ref }}
+  group: backfill-data-${{ github.ref == 'refs/heads/master' && 'master' || github.ref }}
   cancel-in-progress: false
 
 # Reusable shell snippets are inlined per job below; YAML anchors aren't
