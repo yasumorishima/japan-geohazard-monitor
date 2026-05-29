@@ -1004,10 +1004,17 @@ jobs:
               # cache / writer-side view. Force flush + fresh subprocess +
               # SELECT COUNT on the populated table catches the real state.
               os.sync()
+              # Use quick_check here (the full structural integrity_check is
+              # already done unbounded by the Python src check above). On the
+              # ~17GB DB the CLI integrity_check exceeded the 600s cap (run
+              # 26599363437), failing the snapshot and silently dropping the
+              # cloud overlay, so cloud_fraction stayed 0. quick_check + the
+              # COUNT(*) keep the fresh-process on-disk verify fast/predictable
+              # while still catching page/truncation corruption.
               r2 = subprocess.run(
                   ['sqlite3', 'data/geohazard_snapshot.db',
-                   'PRAGMA integrity_check;\nSELECT COUNT(*) FROM cloud_fraction;'],
-                  capture_output=True, text=True, timeout=600
+                   'PRAGMA quick_check;\nSELECT COUNT(*) FROM cloud_fraction;'],
+                  capture_output=True, text=True, timeout=1200
               )
               first = (r2.stdout.strip().split('\n')[0] if r2.stdout.strip() else '').strip()
               if r2.returncode != 0 or first != 'ok':
