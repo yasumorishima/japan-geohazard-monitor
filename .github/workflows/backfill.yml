@@ -354,6 +354,7 @@ jobs:
           try:
               subprocess.run(['sudo', 'mkdir', '-p', '/mnt/snap'], check=True)
               subprocess.run(['sudo', 'chown', '%d:%d' % (os.getuid(), os.getgid()), '/mnt/snap'], check=True)
+              os.environ['SQLITE_TMPDIR'] = '/mnt/snap'
               src = sqlite3.connect('data/geohazard.db')
               src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
               r = src.execute('PRAGMA integrity_check').fetchone()[0]
@@ -673,6 +674,7 @@ jobs:
           try:
               subprocess.run(['sudo', 'mkdir', '-p', '/mnt/snap'], check=True)
               subprocess.run(['sudo', 'chown', '%d:%d' % (os.getuid(), os.getgid()), '/mnt/snap'], check=True)
+              os.environ['SQLITE_TMPDIR'] = '/mnt/snap'
               src = sqlite3.connect('data/geohazard.db')
               src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
               r = src.execute('PRAGMA integrity_check').fetchone()[0]
@@ -997,6 +999,7 @@ jobs:
           try:
               subprocess.run(['sudo', 'mkdir', '-p', '/mnt/snap'], check=True)
               subprocess.run(['sudo', 'chown', '%d:%d' % (os.getuid(), os.getgid()), '/mnt/snap'], check=True)
+              os.environ['SQLITE_TMPDIR'] = '/mnt/snap'
               src = sqlite3.connect('data/geohazard.db')
               src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
               r = src.execute('PRAGMA integrity_check').fetchone()[0]
@@ -1355,6 +1358,7 @@ jobs:
           try:
               subprocess.run(['sudo', 'mkdir', '-p', '/mnt/snap'], check=True)
               subprocess.run(['sudo', 'chown', '%d:%d' % (os.getuid(), os.getgid()), '/mnt/snap'], check=True)
+              os.environ['SQLITE_TMPDIR'] = '/mnt/snap'
               src = sqlite3.connect('data/geohazard.db')
               src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
               r = src.execute('PRAGMA integrity_check').fetchone()[0]
@@ -1682,6 +1686,7 @@ jobs:
           try:
               subprocess.run(['sudo', 'mkdir', '-p', '/mnt/snap'], check=True)
               subprocess.run(['sudo', 'chown', '%d:%d' % (os.getuid(), os.getgid()), '/mnt/snap'], check=True)
+              os.environ['SQLITE_TMPDIR'] = '/mnt/snap'
               src = sqlite3.connect('data/geohazard.db')
               src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
               r = src.execute('PRAGMA integrity_check').fetchone()[0]
@@ -2333,6 +2338,7 @@ jobs:
           try:
               subprocess.run(['sudo', 'mkdir', '-p', '/mnt/snap'], check=True)
               subprocess.run(['sudo', 'chown', '%d:%d' % (os.getuid(), os.getgid()), '/mnt/snap'], check=True)
+              os.environ['SQLITE_TMPDIR'] = '/mnt/snap'
               src = sqlite3.connect('data/geohazard.db')
               src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
               r = src.execute('PRAGMA integrity_check').fetchone()[0]
