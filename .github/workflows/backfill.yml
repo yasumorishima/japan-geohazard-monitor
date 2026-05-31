@@ -345,73 +345,49 @@ jobs:
         if: always()
         run: |
           python3 -c "
-          import sqlite3, sys, os, struct, subprocess
+          import sqlite3, sys, os, struct
           def rm_sidefiles(base):
               for ext in ('-wal', '-shm'):
                   p = base + ext
                   if os.path.exists(p):
                       os.unlink(p)
           try:
-              subprocess.run(['sudo', 'mkdir', '-p', '/mnt/snap'], check=True)
-              subprocess.run(['sudo', 'chown', '%d:%d' % (os.getuid(), os.getgid()), '/mnt/snap'], check=True)
-              os.environ['SQLITE_TMPDIR'] = '/mnt/snap'
+              # Finalise the working DB in place. GitHub ubuntu-latest has a
+              # single root filesystem (no separate scratch mount), so the old
+              # full-copy snapshot made a 2nd ~24GB clone plus a 3rd ~24GB
+              # rebuild temp and overflowed root once cloud_fraction filled the
+              # DB (#177 fixed the light job; the fetch jobs hit the same wall:
+              # runs 26710814978/26717437400 'database or disk is full').
+              # extract_overlay reads data/geohazard.db next, so an in-place
+              # finalise is sufficient -- the full copy was only a staging step
+              # for the owned-table extraction.
               src = sqlite3.connect('data/geohazard.db')
               src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+              # journal_mode=DELETE rewrites the header WAL flag so a later open
+              # cannot checkpoint stray frames past header.page_count (root cause
+              # of 2026-05-08 Tree 98196 malformed-image).
+              src.execute('PRAGMA journal_mode = DELETE')
               r = src.execute('PRAGMA integrity_check').fetchone()[0]
+              src.close()
+              rm_sidefiles('data/geohazard.db')
               if r != 'ok':
                   print(f'REFUSING to snapshot corrupt DB: {r[:200]}')
-                  src.close()
                   sys.exit(1)
-              # Pre-clean any stale snapshot side-files
-              for p in ('/mnt/snap/geohazard_snapshot.db', '/mnt/snap/geohazard_snapshot.db-wal', '/mnt/snap/geohazard_snapshot.db-shm'):
-                  if os.path.exists(p):
-                      os.unlink(p)
-              dst = sqlite3.connect('/mnt/snap/geohazard_snapshot.db')
-              src.backup(dst)
-              # Force DELETE journal_mode on dst BEFORE close so the header
-              # WAL flag (inherited from src via backup) is rewritten. Without
-              # this, verify-side close can checkpoint stray frames into the
-              # main file, extending it past header.page_count and producing
-              # 'database disk image is malformed' on read (root cause of
-              # 2026-05-08 schedule cron Tree 98196 corruption).
-              dst.execute('PRAGMA journal_mode = DELETE')
-              dst.execute('VACUUM')
-              dst.close()
-              src.close()
-              rm_sidefiles('/mnt/snap/geohazard_snapshot.db')
-              verify = sqlite3.connect('/mnt/snap/geohazard_snapshot.db')
-              verify.execute('PRAGMA journal_mode = DELETE')
-              r2 = verify.execute('PRAGMA integrity_check').fetchone()[0]
-              verify.close()
-              rm_sidefiles('/mnt/snap/geohazard_snapshot.db')
-              if r2 != 'ok':
-                  print(f'REFUSING to upload corrupt snapshot (post-backup): {r2[:200]}')
-                  sys.exit(1)
-              # Defense-in-depth: header.page_count * page_size must equal file size
-              with open('/mnt/snap/geohazard_snapshot.db', 'rb') as f:
+              with open('data/geohazard.db', 'rb') as f:
                   hdr = f.read(100)
               ps_raw = struct.unpack('>H', hdr[16:18])[0]
               page_size = 65536 if ps_raw == 1 else ps_raw
               page_count = struct.unpack('>I', hdr[28:32])[0]
               expected = page_count * page_size
-              actual = os.path.getsize('/mnt/snap/geohazard_snapshot.db')
+              actual = os.path.getsize('data/geohazard.db')
               if actual != expected:
-                  print(f'REFUSING to upload size-mismatched snapshot: header={expected} actual={actual} extra={actual-expected}')
+                  print(f'REFUSING to snapshot size-mismatched DB: header={expected} actual={actual} extra={actual-expected}')
                   sys.exit(1)
-              print(f'Snapshot created (integrity ok, size={actual} matches header pc*ps={expected})')
+              print(f'Snapshot finalised in place (integrity ok, size={actual} matches header pc*ps={expected})')
           except Exception as e:
               print(f'Snapshot failed: {e}')
               sys.exit(1)
           "
-          if [ -f /mnt/snap/geohazard_snapshot.db ]; then
-            mv /mnt/snap/geohazard_snapshot.db data/geohazard.db
-            # Strip stale WAL/SHM that mv preserved (it only renames .db).
-            # If old data/geohazard.db-wal survives, a subsequent SQLite open
-            # would re-apply those frames to the snapshot, re-introducing
-            # the WAL leakage we just guarded against.
-            rm -f data/geohazard.db-wal data/geohazard.db-shm
-          fi
-
       - name: Extract owned-table overlay (PR-2 artifact reduction)
         id: extract_overlay
         if: steps.snapshot.outcome == 'success'
@@ -665,73 +641,49 @@ jobs:
         if: always()
         run: |
           python3 -c "
-          import sqlite3, sys, os, struct, subprocess
+          import sqlite3, sys, os, struct
           def rm_sidefiles(base):
               for ext in ('-wal', '-shm'):
                   p = base + ext
                   if os.path.exists(p):
                       os.unlink(p)
           try:
-              subprocess.run(['sudo', 'mkdir', '-p', '/mnt/snap'], check=True)
-              subprocess.run(['sudo', 'chown', '%d:%d' % (os.getuid(), os.getgid()), '/mnt/snap'], check=True)
-              os.environ['SQLITE_TMPDIR'] = '/mnt/snap'
+              # Finalise the working DB in place. GitHub ubuntu-latest has a
+              # single root filesystem (no separate scratch mount), so the old
+              # full-copy snapshot made a 2nd ~24GB clone plus a 3rd ~24GB
+              # rebuild temp and overflowed root once cloud_fraction filled the
+              # DB (#177 fixed the light job; the fetch jobs hit the same wall:
+              # runs 26710814978/26717437400 'database or disk is full').
+              # extract_overlay reads data/geohazard.db next, so an in-place
+              # finalise is sufficient -- the full copy was only a staging step
+              # for the owned-table extraction.
               src = sqlite3.connect('data/geohazard.db')
               src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+              # journal_mode=DELETE rewrites the header WAL flag so a later open
+              # cannot checkpoint stray frames past header.page_count (root cause
+              # of 2026-05-08 Tree 98196 malformed-image).
+              src.execute('PRAGMA journal_mode = DELETE')
               r = src.execute('PRAGMA integrity_check').fetchone()[0]
+              src.close()
+              rm_sidefiles('data/geohazard.db')
               if r != 'ok':
                   print(f'REFUSING to snapshot corrupt DB: {r[:200]}')
-                  src.close()
                   sys.exit(1)
-              # Pre-clean any stale snapshot side-files
-              for p in ('/mnt/snap/geohazard_snapshot.db', '/mnt/snap/geohazard_snapshot.db-wal', '/mnt/snap/geohazard_snapshot.db-shm'):
-                  if os.path.exists(p):
-                      os.unlink(p)
-              dst = sqlite3.connect('/mnt/snap/geohazard_snapshot.db')
-              src.backup(dst)
-              # Force DELETE journal_mode on dst BEFORE close so the header
-              # WAL flag (inherited from src via backup) is rewritten. Without
-              # this, verify-side close can checkpoint stray frames into the
-              # main file, extending it past header.page_count and producing
-              # 'database disk image is malformed' on read (root cause of
-              # 2026-05-08 schedule cron Tree 98196 corruption).
-              dst.execute('PRAGMA journal_mode = DELETE')
-              dst.execute('VACUUM')
-              dst.close()
-              src.close()
-              rm_sidefiles('/mnt/snap/geohazard_snapshot.db')
-              verify = sqlite3.connect('/mnt/snap/geohazard_snapshot.db')
-              verify.execute('PRAGMA journal_mode = DELETE')
-              r2 = verify.execute('PRAGMA integrity_check').fetchone()[0]
-              verify.close()
-              rm_sidefiles('/mnt/snap/geohazard_snapshot.db')
-              if r2 != 'ok':
-                  print(f'REFUSING to upload corrupt snapshot (post-backup): {r2[:200]}')
-                  sys.exit(1)
-              # Defense-in-depth: header.page_count * page_size must equal file size
-              with open('/mnt/snap/geohazard_snapshot.db', 'rb') as f:
+              with open('data/geohazard.db', 'rb') as f:
                   hdr = f.read(100)
               ps_raw = struct.unpack('>H', hdr[16:18])[0]
               page_size = 65536 if ps_raw == 1 else ps_raw
               page_count = struct.unpack('>I', hdr[28:32])[0]
               expected = page_count * page_size
-              actual = os.path.getsize('/mnt/snap/geohazard_snapshot.db')
+              actual = os.path.getsize('data/geohazard.db')
               if actual != expected:
-                  print(f'REFUSING to upload size-mismatched snapshot: header={expected} actual={actual} extra={actual-expected}')
+                  print(f'REFUSING to snapshot size-mismatched DB: header={expected} actual={actual} extra={actual-expected}')
                   sys.exit(1)
-              print(f'Snapshot created (integrity ok, size={actual} matches header pc*ps={expected})')
+              print(f'Snapshot finalised in place (integrity ok, size={actual} matches header pc*ps={expected})')
           except Exception as e:
               print(f'Snapshot failed: {e}')
               sys.exit(1)
           "
-          if [ -f /mnt/snap/geohazard_snapshot.db ]; then
-            mv /mnt/snap/geohazard_snapshot.db data/geohazard.db
-            # Strip stale WAL/SHM that mv preserved (it only renames .db).
-            # If old data/geohazard.db-wal survives, a subsequent SQLite open
-            # would re-apply those frames to the snapshot, re-introducing
-            # the WAL leakage we just guarded against.
-            rm -f data/geohazard.db-wal data/geohazard.db-shm
-          fi
-
       - name: Extract owned-table overlay (PR-2 artifact reduction)
         id: extract_overlay
         if: steps.snapshot.outcome == 'success'
@@ -995,63 +947,49 @@ jobs:
         if: always()
         run: |
           python3 -c "
-          import sqlite3, sys, os, subprocess
+          import sqlite3, sys, os, struct
+          def rm_sidefiles(base):
+              for ext in ('-wal', '-shm'):
+                  p = base + ext
+                  if os.path.exists(p):
+                      os.unlink(p)
           try:
-              subprocess.run(['sudo', 'mkdir', '-p', '/mnt/snap'], check=True)
-              subprocess.run(['sudo', 'chown', '%d:%d' % (os.getuid(), os.getgid()), '/mnt/snap'], check=True)
-              os.environ['SQLITE_TMPDIR'] = '/mnt/snap'
+              # Finalise the working DB in place. GitHub ubuntu-latest has a
+              # single root filesystem (no separate scratch mount), so the old
+              # full-copy snapshot made a 2nd ~24GB clone plus a 3rd ~24GB
+              # rebuild temp and overflowed root once cloud_fraction filled the
+              # DB (#177 fixed the light job; the fetch jobs hit the same wall:
+              # runs 26710814978/26717437400 'database or disk is full').
+              # extract_overlay reads data/geohazard.db next, so an in-place
+              # finalise is sufficient -- the full copy was only a staging step
+              # for the owned-table extraction.
               src = sqlite3.connect('data/geohazard.db')
               src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+              # journal_mode=DELETE rewrites the header WAL flag so a later open
+              # cannot checkpoint stray frames past header.page_count (root cause
+              # of 2026-05-08 Tree 98196 malformed-image).
+              src.execute('PRAGMA journal_mode = DELETE')
               r = src.execute('PRAGMA integrity_check').fetchone()[0]
+              src.close()
+              rm_sidefiles('data/geohazard.db')
               if r != 'ok':
                   print(f'REFUSING to snapshot corrupt DB: {r[:200]}')
-                  src.close()
                   sys.exit(1)
-              dst = sqlite3.connect('/mnt/snap/geohazard_snapshot.db')
-              src.backup(dst)
-              dst.close()
-              src.close()
-              # Post-backup verification via sqlite3 CLI subprocess after os.sync().
-              # 2026-04-19 diag run 24623870561 proved the in-process Python
-              # sqlite3 integrity_check on dst can return 'ok' while the
-              # on-disk artifact is actually malformed (merge later rejects it
-              # with 'database disk image is malformed'). Cause likely OS page
-              # cache / writer-side view. Force flush + fresh subprocess +
-              # SELECT COUNT on the populated table catches the real state.
-              os.sync()
-              # Use quick_check here (the full structural integrity_check is
-              # already done unbounded by the Python src check above). On the
-              # ~17GB DB the CLI integrity_check exceeded the 600s cap (run
-              # 26599363437), failing the snapshot and silently dropping the
-              # cloud overlay, so cloud_fraction stayed 0. quick_check + the
-              # COUNT(*) keep the fresh-process on-disk verify fast/predictable
-              # while still catching page/truncation corruption.
-              r2 = subprocess.run(
-                  ['sqlite3', '/mnt/snap/geohazard_snapshot.db',
-                   'PRAGMA quick_check;\nSELECT COUNT(*) FROM cloud_fraction;'],
-                  capture_output=True, text=True, timeout=1200
-              )
-              first = (r2.stdout.strip().split('\n')[0] if r2.stdout.strip() else '').strip()
-              if r2.returncode != 0 or first != 'ok':
-                  print(f'REFUSING to upload corrupt snapshot (post-backup CLI verify):')
-                  print(f'  returncode={r2.returncode}')
-                  print(f'  stdout={r2.stdout[:400]}')
-                  print(f'  stderr={r2.stderr[:400]}')
+              with open('data/geohazard.db', 'rb') as f:
+                  hdr = f.read(100)
+              ps_raw = struct.unpack('>H', hdr[16:18])[0]
+              page_size = 65536 if ps_raw == 1 else ps_raw
+              page_count = struct.unpack('>I', hdr[28:32])[0]
+              expected = page_count * page_size
+              actual = os.path.getsize('data/geohazard.db')
+              if actual != expected:
+                  print(f'REFUSING to snapshot size-mismatched DB: header={expected} actual={actual} extra={actual-expected}')
                   sys.exit(1)
-              print(f'Snapshot verified (subprocess CLI): {r2.stdout.strip()[:200]}')
+              print(f'Snapshot finalised in place (integrity ok, size={actual} matches header pc*ps={expected})')
           except Exception as e:
               print(f'Snapshot failed: {e}')
               sys.exit(1)
           "
-          if [ -f /mnt/snap/geohazard_snapshot.db ]; then
-            mv /mnt/snap/geohazard_snapshot.db data/geohazard.db
-            # Strip stale WAL/SHM that mv preserved (it only renames .db).
-            # If old data/geohazard.db-wal survives, a subsequent SQLite open
-            # would re-apply those frames to the snapshot, re-introducing
-            # the WAL leakage we just guarded against.
-            rm -f data/geohazard.db-wal data/geohazard.db-shm
-          fi
-
       - name: Extract owned-table overlay (PR-2 artifact reduction)
         id: extract_overlay
         if: steps.snapshot.outcome == 'success'
@@ -1349,73 +1287,49 @@ jobs:
         if: always()
         run: |
           python3 -c "
-          import sqlite3, sys, os, struct, subprocess
+          import sqlite3, sys, os, struct
           def rm_sidefiles(base):
               for ext in ('-wal', '-shm'):
                   p = base + ext
                   if os.path.exists(p):
                       os.unlink(p)
           try:
-              subprocess.run(['sudo', 'mkdir', '-p', '/mnt/snap'], check=True)
-              subprocess.run(['sudo', 'chown', '%d:%d' % (os.getuid(), os.getgid()), '/mnt/snap'], check=True)
-              os.environ['SQLITE_TMPDIR'] = '/mnt/snap'
+              # Finalise the working DB in place. GitHub ubuntu-latest has a
+              # single root filesystem (no separate scratch mount), so the old
+              # full-copy snapshot made a 2nd ~24GB clone plus a 3rd ~24GB
+              # rebuild temp and overflowed root once cloud_fraction filled the
+              # DB (#177 fixed the light job; the fetch jobs hit the same wall:
+              # runs 26710814978/26717437400 'database or disk is full').
+              # extract_overlay reads data/geohazard.db next, so an in-place
+              # finalise is sufficient -- the full copy was only a staging step
+              # for the owned-table extraction.
               src = sqlite3.connect('data/geohazard.db')
               src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+              # journal_mode=DELETE rewrites the header WAL flag so a later open
+              # cannot checkpoint stray frames past header.page_count (root cause
+              # of 2026-05-08 Tree 98196 malformed-image).
+              src.execute('PRAGMA journal_mode = DELETE')
               r = src.execute('PRAGMA integrity_check').fetchone()[0]
+              src.close()
+              rm_sidefiles('data/geohazard.db')
               if r != 'ok':
                   print(f'REFUSING to snapshot corrupt DB: {r[:200]}')
-                  src.close()
                   sys.exit(1)
-              # Pre-clean any stale snapshot side-files
-              for p in ('/mnt/snap/geohazard_snapshot.db', '/mnt/snap/geohazard_snapshot.db-wal', '/mnt/snap/geohazard_snapshot.db-shm'):
-                  if os.path.exists(p):
-                      os.unlink(p)
-              dst = sqlite3.connect('/mnt/snap/geohazard_snapshot.db')
-              src.backup(dst)
-              # Force DELETE journal_mode on dst BEFORE close so the header
-              # WAL flag (inherited from src via backup) is rewritten. Without
-              # this, verify-side close can checkpoint stray frames into the
-              # main file, extending it past header.page_count and producing
-              # 'database disk image is malformed' on read (root cause of
-              # 2026-05-08 schedule cron Tree 98196 corruption).
-              dst.execute('PRAGMA journal_mode = DELETE')
-              dst.execute('VACUUM')
-              dst.close()
-              src.close()
-              rm_sidefiles('/mnt/snap/geohazard_snapshot.db')
-              verify = sqlite3.connect('/mnt/snap/geohazard_snapshot.db')
-              verify.execute('PRAGMA journal_mode = DELETE')
-              r2 = verify.execute('PRAGMA integrity_check').fetchone()[0]
-              verify.close()
-              rm_sidefiles('/mnt/snap/geohazard_snapshot.db')
-              if r2 != 'ok':
-                  print(f'REFUSING to upload corrupt snapshot (post-backup): {r2[:200]}')
-                  sys.exit(1)
-              # Defense-in-depth: header.page_count * page_size must equal file size
-              with open('/mnt/snap/geohazard_snapshot.db', 'rb') as f:
+              with open('data/geohazard.db', 'rb') as f:
                   hdr = f.read(100)
               ps_raw = struct.unpack('>H', hdr[16:18])[0]
               page_size = 65536 if ps_raw == 1 else ps_raw
               page_count = struct.unpack('>I', hdr[28:32])[0]
               expected = page_count * page_size
-              actual = os.path.getsize('/mnt/snap/geohazard_snapshot.db')
+              actual = os.path.getsize('data/geohazard.db')
               if actual != expected:
-                  print(f'REFUSING to upload size-mismatched snapshot: header={expected} actual={actual} extra={actual-expected}')
+                  print(f'REFUSING to snapshot size-mismatched DB: header={expected} actual={actual} extra={actual-expected}')
                   sys.exit(1)
-              print(f'Snapshot created (integrity ok, size={actual} matches header pc*ps={expected})')
+              print(f'Snapshot finalised in place (integrity ok, size={actual} matches header pc*ps={expected})')
           except Exception as e:
               print(f'Snapshot failed: {e}')
               sys.exit(1)
           "
-          if [ -f /mnt/snap/geohazard_snapshot.db ]; then
-            mv /mnt/snap/geohazard_snapshot.db data/geohazard.db
-            # Strip stale WAL/SHM that mv preserved (it only renames .db).
-            # If old data/geohazard.db-wal survives, a subsequent SQLite open
-            # would re-apply those frames to the snapshot, re-introducing
-            # the WAL leakage we just guarded against.
-            rm -f data/geohazard.db-wal data/geohazard.db-shm
-          fi
-
       - name: Extract owned-table overlay (PR-2 artifact reduction)
         id: extract_overlay
         if: steps.snapshot.outcome == 'success'
@@ -1677,72 +1591,49 @@ jobs:
         if: always()
         run: |
           python3 -c "
-          import sqlite3, sys, os, struct, subprocess
+          import sqlite3, sys, os, struct
           def rm_sidefiles(base):
               for ext in ('-wal', '-shm'):
                   p = base + ext
                   if os.path.exists(p):
                       os.unlink(p)
           try:
-              subprocess.run(['sudo', 'mkdir', '-p', '/mnt/snap'], check=True)
-              subprocess.run(['sudo', 'chown', '%d:%d' % (os.getuid(), os.getgid()), '/mnt/snap'], check=True)
-              os.environ['SQLITE_TMPDIR'] = '/mnt/snap'
+              # Finalise the working DB in place. GitHub ubuntu-latest has a
+              # single root filesystem (no separate scratch mount), so the old
+              # full-copy snapshot made a 2nd ~24GB clone plus a 3rd ~24GB
+              # rebuild temp and overflowed root once cloud_fraction filled the
+              # DB (#177 fixed the light job; the fetch jobs hit the same wall:
+              # runs 26710814978/26717437400 'database or disk is full').
+              # extract_overlay reads data/geohazard.db next, so an in-place
+              # finalise is sufficient -- the full copy was only a staging step
+              # for the owned-table extraction.
               src = sqlite3.connect('data/geohazard.db')
               src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+              # journal_mode=DELETE rewrites the header WAL flag so a later open
+              # cannot checkpoint stray frames past header.page_count (root cause
+              # of 2026-05-08 Tree 98196 malformed-image).
+              src.execute('PRAGMA journal_mode = DELETE')
               r = src.execute('PRAGMA integrity_check').fetchone()[0]
+              src.close()
+              rm_sidefiles('data/geohazard.db')
               if r != 'ok':
                   print(f'REFUSING to snapshot corrupt DB: {r[:200]}')
-                  src.close()
                   sys.exit(1)
-              # Pre-clean any stale snapshot side-files
-              for p in ('/mnt/snap/geohazard_snapshot.db', '/mnt/snap/geohazard_snapshot.db-wal', '/mnt/snap/geohazard_snapshot.db-shm'):
-                  if os.path.exists(p):
-                      os.unlink(p)
-              dst = sqlite3.connect('/mnt/snap/geohazard_snapshot.db')
-              src.backup(dst)
-              # Force DELETE journal_mode on dst BEFORE close so the header
-              # WAL flag (inherited from src via backup) is rewritten. Without
-              # this, verify-side close can checkpoint stray frames into the
-              # main file, extending it past header.page_count and producing
-              # 'database disk image is malformed' on read (root cause of
-              # 2026-05-08 schedule cron Tree 98196 corruption).
-              dst.execute('PRAGMA journal_mode = DELETE')
-              dst.execute('VACUUM')
-              dst.close()
-              src.close()
-              rm_sidefiles('/mnt/snap/geohazard_snapshot.db')
-              verify = sqlite3.connect('/mnt/snap/geohazard_snapshot.db')
-              verify.execute('PRAGMA journal_mode = DELETE')
-              r2 = verify.execute('PRAGMA integrity_check').fetchone()[0]
-              verify.close()
-              rm_sidefiles('/mnt/snap/geohazard_snapshot.db')
-              if r2 != 'ok':
-                  print(f'REFUSING to upload corrupt snapshot (post-backup): {r2[:200]}')
-                  sys.exit(1)
-              # Defense-in-depth: header.page_count * page_size must equal file size
-              with open('/mnt/snap/geohazard_snapshot.db', 'rb') as f:
+              with open('data/geohazard.db', 'rb') as f:
                   hdr = f.read(100)
               ps_raw = struct.unpack('>H', hdr[16:18])[0]
               page_size = 65536 if ps_raw == 1 else ps_raw
               page_count = struct.unpack('>I', hdr[28:32])[0]
               expected = page_count * page_size
-              actual = os.path.getsize('/mnt/snap/geohazard_snapshot.db')
+              actual = os.path.getsize('data/geohazard.db')
               if actual != expected:
-                  print(f'REFUSING to upload size-mismatched snapshot: header={expected} actual={actual} extra={actual-expected}')
+                  print(f'REFUSING to snapshot size-mismatched DB: header={expected} actual={actual} extra={actual-expected}')
                   sys.exit(1)
-              print(f'Snapshot created (integrity ok, size={actual} matches header pc*ps={expected})')
+              print(f'Snapshot finalised in place (integrity ok, size={actual} matches header pc*ps={expected})')
           except Exception as e:
               print(f'Snapshot failed: {e}')
               sys.exit(1)
           "
-          if [ -f /mnt/snap/geohazard_snapshot.db ]; then
-            mv /mnt/snap/geohazard_snapshot.db data/geohazard.db
-            # Strip stale WAL/SHM that mv preserved (it only renames .db).
-            # If old data/geohazard.db-wal survives, a subsequent SQLite open
-            # would re-apply those frames to the snapshot, re-introducing
-            # the WAL leakage we just guarded against.
-            rm -f data/geohazard.db-wal data/geohazard.db-shm
-          fi
       - name: Extract owned-table overlay (PR-2 artifact reduction)
         id: extract_overlay
         if: steps.snapshot.outcome == 'success'
