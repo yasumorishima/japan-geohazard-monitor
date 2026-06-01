@@ -1952,7 +1952,7 @@ jobs:
         id: fetch_gnss_tec
         if: inputs.target == 'all' || inputs.target == 'gnss_tec' || inputs.target == ''
         continue-on-error: true
-        timeout-minutes: 30
+        timeout-minutes: 90
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           GNSS_TEC_MAX_DATES: ${{ vars.GNSS_TEC_MAX_DATES || '200' }}
