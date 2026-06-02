@@ -3014,6 +3014,7 @@ jobs:
             || needs.fetch-so2.result == 'failure'
             || needs.fetch-cloud.result == 'failure'
             || needs.fetch-snet.result == 'failure'
+            || needs.fetch-gnss.result == 'failure'
             || needs.light.result == 'failure'
           )
         env:
@@ -3026,6 +3027,7 @@ jobs:
           echo "  fetch-so2 result:   ${{ needs.fetch-so2.result }}"
           echo "  fetch-cloud result: ${{ needs.fetch-cloud.result }}"
           echo "  fetch-snet result:  ${{ needs.fetch-snet.result }}"
+          echo "  fetch-gnss result:  ${{ needs.fetch-gnss.result }}"
           echo "  light result:       ${{ needs.light.result }}"
           OUT=$(timeout 30 gh api -X POST \
             "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/rerun-failed-jobs" \
