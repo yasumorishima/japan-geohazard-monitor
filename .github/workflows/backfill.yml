@@ -1667,7 +1667,6 @@ jobs:
       fetch_tec_random: ${{ steps.fetch_tec_random.outcome }}
       fetch_kp: ${{ steps.fetch_kp.outcome }}
       fetch_cmt: ${{ steps.fetch_cmt.outcome }}
-      fetch_gnss_tec: ${{ steps.fetch_gnss_tec.outcome }}
       fetch_ulf: ${{ steps.fetch_ulf.outcome }}
       fetch_cosmic_ray: ${{ steps.fetch_cosmic_ray.outcome }}
       fetch_iss_lis: ${{ steps.fetch_iss_lis.outcome }}
@@ -1947,17 +1946,6 @@ jobs:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
           python3 scripts/fetch_cmt.py
-
-      - name: Fetch GNSS-TEC high-resolution data (Nagoya University ISEE)
-        id: fetch_gnss_tec
-        if: inputs.target == 'all' || inputs.target == 'gnss_tec' || inputs.target == ''
-        continue-on-error: true
-        timeout-minutes: 90
-        env:
-          GEOHAZARD_DB_PATH: ./data/geohazard.db
-          GNSS_TEC_MAX_DATES: ${{ vars.GNSS_TEC_MAX_DATES || '200' }}
-        run: |
-          python3 scripts/fetch_gnss_tec.py
 
       - name: Fetch Kakioka ULF magnetic data
         id: fetch_ulf
@@ -2272,6 +2260,289 @@ jobs:
           retention-days: 7
 
   # =====================================================================
+  # FETCH-GNSS -- GNSS-TEC (Nagoya U. ISEE), split out of the light job so
+  # its long fetch (up to 120min) no longer consumes the light job's 200min
+  # budget. #181 raised the step 30->90 and the light monolith then timed
+  # out at ~200min mid-GNSS, failing the snapshot -> base-missing merge ->
+  # no checkpoint advance (fnet/gnss/ioc all stalled). Own overlay: gnss_tec.
+  # =====================================================================
+  fetch-gnss:
+    if: >-
+      github.event_name == 'schedule'
+      || inputs.target == 'all'
+      || inputs.target == ''
+      || inputs.target == 'gnss_tec'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    outputs:
+      fetch_gnss_tec: ${{ steps.fetch_gnss_tec.outcome }}
+      snapshot_outcome: ${{ steps.snapshot.outcome }}
+      restore_outcome: ${{ steps.restore.outcome }}
+      restore_restored: ${{ steps.restore.outputs.restored }}
+
+    steps:
+      # Free ~30GB of pre-installed software we never use. The 2026-05-28
+      # 15:00 UTC full-schedule run hit "no space left on device" while
+      # expanding the 17GB checkpoint into /tmp/db-restore; so2/modis/cloud/
+      # hinet all failed at the Restore step. The light job already does this
+      # and was the only fetch job to survive. Mirror that mitigation here.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/share/swift /usr/local/.ghcup /usr/local/share/boost 2>/dev/null || true
+          sudo docker image prune -af 2>/dev/null || true
+          df -h
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install aiohttp aiosqlite numpy scipy netCDF4 google-cloud-bigquery pyarrow scikit-learn h5py
+          sudo apt-get install -y ncompress
+
+      - name: Restore previous database checkpoint
+        id: restore
+        continue-on-error: true
+        timeout-minutes: 90
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash {0}
+        run: |
+          set +e
+          TS() { date -u +"%H:%M:%S"; }
+          log() { echo "[$(TS)] $*"; }
+          log "restore step starting (run_id=${{ github.run_id }}, job=${{ github.job }})"
+          mkdir -p data results
+          RESTORED=""
+          MAX_TRIES=5
+
+          # Fetch artifact list with up to 3 attempts and exponential backoff
+          # between attempts (1s, 3s). stderr goes to a temp file so it shows up
+          # in job logs without polluting the parsed run_id list.
+          fetch_artifact_list() {
+            local prefix="$1"
+            local attempt
+            local delay=1
+            local result rc
+            local stderr_file="/tmp/gh_api_stderr_$$.log"
+            for attempt in 1 2 3; do
+              log "gh api artifacts (prefix=${prefix}, attempt=${attempt})"
+              : > "$stderr_file"
+              result=$(timeout 30 gh api \
+                "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+                --jq "[.artifacts[] | select(.name | startswith(\"${prefix}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" \
+                2>"$stderr_file")
+              rc=$?
+              if [ -s "$stderr_file" ]; then
+                log "  gh stderr: $(head -c 500 "$stderr_file" | tr '\n' ' ')"
+              fi
+              if [ $rc -eq 0 ] && [ -n "$result" ]; then
+                rm -f "$stderr_file"
+                echo "$result"
+                return 0
+              fi
+              if [ $rc -eq 124 ]; then
+                log "gh api TIMEOUT (rc=124, 30s exceeded) -- attempt ${attempt}"
+              elif [ $rc -eq 137 ]; then
+                log "gh api SIGKILL (rc=137) -- attempt ${attempt}"
+              else
+                log "gh api attempt ${attempt} failed (rc=${rc}, stdout head: ${result:0:200})"
+              fi
+              if [ $attempt -lt 3 ]; then
+                log "sleeping ${delay}s before retry"
+                sleep $delay
+                delay=$((delay * 3))
+              fi
+            done
+            rm -f "$stderr_file"
+            return 1
+          }
+
+          for PREFIX in "backfill-checkpoint-" "database-checkpoint-"; do
+            [ -n "$RESTORED" ] && break
+            log "scanning prefix=${PREFIX}"
+            RUN_IDS=$(fetch_artifact_list "$PREFIX")
+            if [ -z "$RUN_IDS" ]; then
+              log "no artifacts found for prefix=${PREFIX}"
+              continue
+            fi
+            for PREV_RUN in $RUN_IDS; do
+              [ -z "$PREV_RUN" ] && continue
+              case "$PREV_RUN" in (*[!0-9]*) continue;; esac
+              [ "$PREV_RUN" = "${{ github.run_id }}" ] && continue
+              ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
+              log "trying artifact: ${ARTIFACT_NAME}"
+              rm -rf /tmp/db-restore
+              timeout 600 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+                --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
+              dl_rc=$?
+              if [ $dl_rc -ne 0 ]; then
+                log "  download failed (rc=${dl_rc}) -- skip"
+                continue
+              fi
+              DB_FILE="/tmp/db-restore/geohazard.db"
+              [ ! -f "$DB_FILE" ] && DB_FILE="/tmp/db-restore/data/geohazard.db"
+              if [ ! -f "$DB_FILE" ]; then
+                log "  no geohazard.db in artifact -- skip"
+                continue
+              fi
+              cp "$DB_FILE" data/geohazard.db
+              rm -f data/geohazard.db-wal data/geohazard.db-shm
+              DB_SIZE=$(du -h data/geohazard.db | cut -f1)
+              log "  copied (${DB_SIZE}) -- checking integrity"
+              timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
+              ic_rc=$?
+              if [ $ic_rc -eq 0 ]; then
+                RESTORED="${ARTIFACT_NAME}"
+                echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
+                log "Restored from ${ARTIFACT_NAME}"
+                break
+              else
+                log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
+                timeout 1800 python3 scripts/salvage_db.py --src data/geohazard.db --dst /tmp/salvaged.db
+                sv_rc=$?
+                if [ $sv_rc -eq 0 ] && [ -f /tmp/salvaged.db ]; then
+                  rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                  mv /tmp/salvaged.db data/geohazard.db
+                  RESTORED="${ARTIFACT_NAME}-salvaged"
+                  echo "restored=${ARTIFACT_NAME}-salvaged" >> "$GITHUB_OUTPUT"
+                  log "Salvaged via per-table copy from ${ARTIFACT_NAME}"
+                  break
+                fi
+                log "  salvage failed (rc=${sv_rc}) -- trying next artifact"
+                rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm /tmp/salvaged.db
+              fi
+            done
+          done
+          if [ -z "$RESTORED" ]; then
+            log "No usable checkpoint found -- will init fresh DB"
+            echo "restored=none" >> "$GITHUB_OUTPUT"
+          fi
+          log "restore step done (RESTORED=${RESTORED:-none})"
+          exit 0
+
+      - name: Init DB if missing or corrupt
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+        shell: bash {0}
+        run: |
+          set +e
+          NEEDS_INIT=0
+          if [ ! -f data/geohazard.db ]; then
+            NEEDS_INIT=1
+            echo "No DB file -- will init"
+          else
+            timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
+            integrity_rc=$?
+            case "$integrity_rc" in
+              124|137|143)
+                echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
+                ;;
+              0)
+                ;;
+              *)
+                echo "Existing DB is corrupt (rc=$integrity_rc) -- removing and re-initialising"
+                rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                NEEDS_INIT=1
+                ;;
+            esac
+          fi
+          if [ "$NEEDS_INIT" = "1" ]; then
+            python3 -c "
+          import asyncio, sys
+          sys.path.insert(0, 'src')
+          from db import init_db
+          asyncio.run(init_db())
+          print('DB initialised')
+          "
+            if [ $? -ne 0 ]; then
+              echo "::error::init_db failed"
+              exit 1
+            fi
+          fi
+
+      - name: Fetch GNSS-TEC high-resolution data (Nagoya University ISEE)
+        id: fetch_gnss_tec
+        if: inputs.target == 'all' || inputs.target == 'gnss_tec' || inputs.target == ''
+        continue-on-error: true
+        timeout-minutes: 120
+        env:
+          GEOHAZARD_DB_PATH: ./data/geohazard.db
+          GNSS_TEC_MAX_DATES: ${{ vars.GNSS_TEC_MAX_DATES || '200' }}
+        run: |
+          python3 scripts/fetch_gnss_tec.py
+
+      - name: Snapshot DB
+        id: snapshot
+        if: always()
+        run: |
+          python3 -c "
+          import sqlite3, sys, os, struct
+          def rm_sidefiles(base):
+              for ext in ('-wal', '-shm'):
+                  p = base + ext
+                  if os.path.exists(p):
+                      os.unlink(p)
+          try:
+              # Finalise the working DB in place. GitHub ubuntu-latest has a
+              # single root filesystem (no separate scratch mount), so the old
+              # full-copy snapshot made a 2nd ~24GB clone plus a 3rd ~24GB
+              # rebuild temp and overflowed root once cloud_fraction filled the
+              # DB (#177 fixed the light job; the fetch jobs hit the same wall:
+              # runs 26710814978/26717437400 'database or disk is full').
+              # extract_overlay reads data/geohazard.db next, so an in-place
+              # finalise is sufficient -- the full copy was only a staging step
+              # for the owned-table extraction.
+              src = sqlite3.connect('data/geohazard.db')
+              src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+              # journal_mode=DELETE rewrites the header WAL flag so a later open
+              # cannot checkpoint stray frames past header.page_count (root cause
+              # of 2026-05-08 Tree 98196 malformed-image).
+              src.execute('PRAGMA journal_mode = DELETE')
+              r = src.execute('PRAGMA integrity_check').fetchone()[0]
+              src.close()
+              rm_sidefiles('data/geohazard.db')
+              if r != 'ok':
+                  print(f'REFUSING to snapshot corrupt DB: {r[:200]}')
+                  sys.exit(1)
+              with open('data/geohazard.db', 'rb') as f:
+                  hdr = f.read(100)
+              ps_raw = struct.unpack('>H', hdr[16:18])[0]
+              page_size = 65536 if ps_raw == 1 else ps_raw
+              page_count = struct.unpack('>I', hdr[28:32])[0]
+              expected = page_count * page_size
+              actual = os.path.getsize('data/geohazard.db')
+              if actual != expected:
+                  print(f'REFUSING to snapshot size-mismatched DB: header={expected} actual={actual} extra={actual-expected}')
+                  sys.exit(1)
+              print(f'Snapshot finalised in place (integrity ok, size={actual} matches header pc*ps={expected})')
+          except Exception as e:
+              print(f'Snapshot failed: {e}')
+              sys.exit(1)
+          "
+      - name: Extract owned-table overlay (PR-2 artifact reduction)
+        id: extract_overlay
+        if: steps.snapshot.outcome == 'success'
+        continue-on-error: true
+        run: |
+          python3 scripts/extract_overlay.py \
+            --src data/geohazard.db \
+            --dst data/geohazard_overlay.db \
+            --tables gnss_tec \
+            && mv data/geohazard_overlay.db data/geohazard.db
+
+      - name: Upload gnss.db artifact
+        if: always() && steps.snapshot.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backfill-gnss-${{ github.run_id }}
+          path: data/geohazard.db
+          retention-days: 7
+
+  # =====================================================================
   # MERGE JOB -- combine light (base) with modis / so2 / cloud / snet
   # overlays, then snapshot / coverage / checkpoint / HF upload / Discord.
   # 2026-05-28: migrated off the RPi5 self-hosted runner + USB SSD (both
@@ -2283,7 +2554,7 @@ jobs:
   # if: always() so single-job failure still reports.
   # =====================================================================
   merge:
-    needs: [fetch-modis, fetch-so2, fetch-cloud, fetch-snet, fetch-hinet, light]
+    needs: [fetch-modis, fetch-so2, fetch-cloud, fetch-snet, fetch-hinet, fetch-gnss, light]
     if: always() && inputs.target != 'diagnostic'
     runs-on: ubuntu-latest
     # Bumped 60->150 after Hi-net Stage 1 (PR #127) pushed merge time past
@@ -2347,6 +2618,14 @@ jobs:
           name: backfill-cloud-${{ github.run_id }}
           path: /mnt/merge/cloud
 
+      - name: Download gnss.db artifact
+        id: download_gnss
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: backfill-gnss-${{ github.run_id }}
+          path: /mnt/merge/gnss
+
       - name: Download snet.db artifact
         id: download_snet
         continue-on-error: true
@@ -2373,6 +2652,7 @@ jobs:
             --base /mnt/merge/light/geohazard.db \
             --overlay /mnt/merge/modis/geohazard.db:modis_lst \
             --overlay /mnt/merge/so2/geohazard.db:so2_column \
+            --overlay /mnt/merge/gnss/geohazard.db:gnss_tec \
             --overlay /mnt/merge/cloud/geohazard.db:cloud_fraction \
             --overlay /mnt/merge/snet/geohazard.db:snet_waveform \
             --overlay /mnt/merge/snet/geohazard.db:fnet_waveform \
@@ -2509,7 +2789,7 @@ jobs:
           FETCH_CMT: ${{ needs.light.outputs.fetch_cmt }}
           FETCH_SNET_WAVEFORM: ${{ needs.fetch-snet.outputs.fetch_snet_waveform }}
           FETCH_FNET_WAVEFORM: ${{ needs.fetch-snet.outputs.fetch_fnet_waveform }}
-          FETCH_GNSS_TEC: ${{ needs.light.outputs.fetch_gnss_tec }}
+          FETCH_GNSS_TEC: ${{ needs.fetch-gnss.outputs.fetch_gnss_tec }}
           FETCH_MODIS_LST: ${{ needs.fetch-modis.outputs.fetch_modis_lst }}
           FETCH_ULF: ${{ needs.light.outputs.fetch_ulf }}
           FETCH_COSMIC_RAY: ${{ needs.light.outputs.fetch_cosmic_ray }}
@@ -2775,7 +3055,7 @@ jobs:
             needs.light.outputs.fetch_cmt == 'failure' ||
             needs.fetch-snet.outputs.fetch_snet_waveform == 'failure' ||
             needs.fetch-snet.outputs.fetch_fnet_waveform == 'failure' ||
-            needs.light.outputs.fetch_gnss_tec == 'failure' ||
+            needs.fetch-gnss.outputs.fetch_gnss_tec == 'failure' ||
             needs.fetch-modis.outputs.fetch_modis_lst == 'failure' ||
             needs.light.outputs.fetch_ulf == 'failure' ||
             needs.light.outputs.fetch_cosmic_ray == 'failure' ||
@@ -2813,7 +3093,7 @@ jobs:
           [ "${{ needs.light.outputs.fetch_cmt }}" = "failure" ] && FAILED="$FAILED cmt"
           [ "${{ needs.fetch-snet.outputs.fetch_snet_waveform }}" = "failure" ] && FAILED="$FAILED snet_waveform"
           [ "${{ needs.fetch-snet.outputs.fetch_fnet_waveform }}" = "failure" ] && FAILED="$FAILED fnet_waveform"
-          [ "${{ needs.light.outputs.fetch_gnss_tec }}" = "failure" ] && FAILED="$FAILED gnss_tec"
+          [ "${{ needs.fetch-gnss.outputs.fetch_gnss_tec }}" = "failure" ] && FAILED="$FAILED gnss_tec"
           [ "${{ needs.fetch-modis.outputs.fetch_modis_lst }}" = "failure" ] && FAILED="$FAILED modis_lst"
           [ "${{ needs.light.outputs.fetch_ulf }}" = "failure" ] && FAILED="$FAILED ulf"
           [ "${{ needs.light.outputs.fetch_cosmic_ray }}" = "failure" ] && FAILED="$FAILED cosmic_ray"
