@@ -2273,7 +2273,7 @@ jobs:
       || inputs.target == ''
       || inputs.target == 'gnss_tec'
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 210
     outputs:
       fetch_gnss_tec: ${{ steps.fetch_gnss_tec.outcome }}
       snapshot_outcome: ${{ steps.snapshot.outcome }}
