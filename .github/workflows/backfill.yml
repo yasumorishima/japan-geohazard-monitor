@@ -184,6 +184,21 @@ jobs:
           mkdir -p data results
           RESTORED=""
           MAX_TRIES=5
+          # Per-job owned-table overlay. Each fetch job uploads a small
+          # backfill-<job>- overlay (its owned table(s) only); preferring that over
+          # the full ~28GB backfill-checkpoint- avoids expanding a 17GB artifact on a
+          # disk/RAM-constrained ubuntu-latest runner -- the runner abort that was
+          # stalling fetch-hinet mid-restore. modis (needs the cross-table earthquakes
+          # master) and light (base builder) keep full-checkpoint restore via default.
+          case "${{ github.job }}" in
+            fetch-hinet) OWN_PREFIX="backfill-hinet-"; OWN_TABLES="hinet_waveform";;
+            fetch-gnss)  OWN_PREFIX="backfill-gnss-";  OWN_TABLES="gnss_tec";;
+            fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column";;
+            fetch-cloud) OWN_PREFIX="backfill-cloud-"; OWN_TABLES="cloud_fraction";;
+            fetch-snet)  OWN_PREFIX="backfill-snet-";  OWN_TABLES="snet_waveform fnet_waveform";;
+            *)           OWN_PREFIX="";               OWN_TABLES="";;
+          esac
+          log "own-overlay prefix: ${OWN_PREFIX:-<none; full-checkpoint restore>}"
 
           # Fetch artifact list with up to 3 attempts and exponential backoff
           # between attempts (1s, 3s). stderr goes to a temp file so it shows up
@@ -227,7 +242,7 @@ jobs:
             return 1
           }
 
-          for PREFIX in "backfill-checkpoint-" "database-checkpoint-"; do
+          for PREFIX in ${OWN_PREFIX:+"$OWN_PREFIX"} "backfill-checkpoint-" "database-checkpoint-"; do
             [ -n "$RESTORED" ] && break
             log "scanning prefix=${PREFIX}"
             RUN_IDS=$(fetch_artifact_list "$PREFIX")
@@ -261,6 +276,27 @@ jobs:
               log "  copied (${DB_SIZE}) -- checking integrity"
               timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
               ic_rc=$?
+              # --- Own-overlay fast path (per-table overlay restore) ---
+              # Strict: accept only a clean (rc=0) own-overlay whose owned table(s) hold
+              # rows; otherwise discard and fall through to the full checkpoint (which is
+              # reproducible and always carries every table).
+              if [ -n "$OWN_PREFIX" ] && [ "$PREFIX" = "$OWN_PREFIX" ]; then
+                if [ $ic_rc -ne 0 ]; then
+                  log "  own-overlay ${ARTIFACT_NAME} quick_check rc=${ic_rc} -- discard, try next/full"
+                  rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                  continue
+                fi
+                OVL_ROWS=$(timeout 120 python3 -c "import sqlite3; c=sqlite3.connect('data/geohazard.db'); print(sum(c.execute('SELECT COUNT(*) FROM '+t).fetchone()[0] for t in '''${OWN_TABLES}'''.split()))" 2>/dev/null)
+                if [ -z "$OVL_ROWS" ] || [ "$OVL_ROWS" = "0" ]; then
+                  log "  own-overlay ${ARTIFACT_NAME} empty/unreadable for (${OWN_TABLES}) -- discard, try full checkpoint"
+                  rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                  continue
+                fi
+                RESTORED="${ARTIFACT_NAME}"
+                echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
+                log "Restored from own-overlay ${ARTIFACT_NAME} (${OWN_TABLES} total=${OVL_ROWS} rows)"
+                break
+              fi
               # A quick_check TIMEOUT (124/137/143) is NOT corruption: the ~28GB
               # DB exceeds the quick_check window. The checkpoint was already
               # integrity-verified when the merge job created it, and the Init DB
@@ -474,6 +510,21 @@ jobs:
           mkdir -p data results
           RESTORED=""
           MAX_TRIES=5
+          # Per-job owned-table overlay. Each fetch job uploads a small
+          # backfill-<job>- overlay (its owned table(s) only); preferring that over
+          # the full ~28GB backfill-checkpoint- avoids expanding a 17GB artifact on a
+          # disk/RAM-constrained ubuntu-latest runner -- the runner abort that was
+          # stalling fetch-hinet mid-restore. modis (needs the cross-table earthquakes
+          # master) and light (base builder) keep full-checkpoint restore via default.
+          case "${{ github.job }}" in
+            fetch-hinet) OWN_PREFIX="backfill-hinet-"; OWN_TABLES="hinet_waveform";;
+            fetch-gnss)  OWN_PREFIX="backfill-gnss-";  OWN_TABLES="gnss_tec";;
+            fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column";;
+            fetch-cloud) OWN_PREFIX="backfill-cloud-"; OWN_TABLES="cloud_fraction";;
+            fetch-snet)  OWN_PREFIX="backfill-snet-";  OWN_TABLES="snet_waveform fnet_waveform";;
+            *)           OWN_PREFIX="";               OWN_TABLES="";;
+          esac
+          log "own-overlay prefix: ${OWN_PREFIX:-<none; full-checkpoint restore>}"
 
           # Fetch artifact list with up to 3 attempts and exponential backoff
           # between attempts (1s, 3s). stderr goes to a temp file so it shows up
@@ -517,7 +568,7 @@ jobs:
             return 1
           }
 
-          for PREFIX in "backfill-checkpoint-" "database-checkpoint-"; do
+          for PREFIX in ${OWN_PREFIX:+"$OWN_PREFIX"} "backfill-checkpoint-" "database-checkpoint-"; do
             [ -n "$RESTORED" ] && break
             log "scanning prefix=${PREFIX}"
             RUN_IDS=$(fetch_artifact_list "$PREFIX")
@@ -551,6 +602,27 @@ jobs:
               log "  copied (${DB_SIZE}) -- checking integrity"
               timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
               ic_rc=$?
+              # --- Own-overlay fast path (per-table overlay restore) ---
+              # Strict: accept only a clean (rc=0) own-overlay whose owned table(s) hold
+              # rows; otherwise discard and fall through to the full checkpoint (which is
+              # reproducible and always carries every table).
+              if [ -n "$OWN_PREFIX" ] && [ "$PREFIX" = "$OWN_PREFIX" ]; then
+                if [ $ic_rc -ne 0 ]; then
+                  log "  own-overlay ${ARTIFACT_NAME} quick_check rc=${ic_rc} -- discard, try next/full"
+                  rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                  continue
+                fi
+                OVL_ROWS=$(timeout 120 python3 -c "import sqlite3; c=sqlite3.connect('data/geohazard.db'); print(sum(c.execute('SELECT COUNT(*) FROM '+t).fetchone()[0] for t in '''${OWN_TABLES}'''.split()))" 2>/dev/null)
+                if [ -z "$OVL_ROWS" ] || [ "$OVL_ROWS" = "0" ]; then
+                  log "  own-overlay ${ARTIFACT_NAME} empty/unreadable for (${OWN_TABLES}) -- discard, try full checkpoint"
+                  rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                  continue
+                fi
+                RESTORED="${ARTIFACT_NAME}"
+                echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
+                log "Restored from own-overlay ${ARTIFACT_NAME} (${OWN_TABLES} total=${OVL_ROWS} rows)"
+                break
+              fi
               # A quick_check TIMEOUT (124/137/143) is NOT corruption: the ~28GB
               # DB exceeds the quick_check window. The checkpoint was already
               # integrity-verified when the merge job created it, and the Init DB
@@ -783,6 +855,21 @@ jobs:
           mkdir -p data results
           RESTORED=""
           MAX_TRIES=5
+          # Per-job owned-table overlay. Each fetch job uploads a small
+          # backfill-<job>- overlay (its owned table(s) only); preferring that over
+          # the full ~28GB backfill-checkpoint- avoids expanding a 17GB artifact on a
+          # disk/RAM-constrained ubuntu-latest runner -- the runner abort that was
+          # stalling fetch-hinet mid-restore. modis (needs the cross-table earthquakes
+          # master) and light (base builder) keep full-checkpoint restore via default.
+          case "${{ github.job }}" in
+            fetch-hinet) OWN_PREFIX="backfill-hinet-"; OWN_TABLES="hinet_waveform";;
+            fetch-gnss)  OWN_PREFIX="backfill-gnss-";  OWN_TABLES="gnss_tec";;
+            fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column";;
+            fetch-cloud) OWN_PREFIX="backfill-cloud-"; OWN_TABLES="cloud_fraction";;
+            fetch-snet)  OWN_PREFIX="backfill-snet-";  OWN_TABLES="snet_waveform fnet_waveform";;
+            *)           OWN_PREFIX="";               OWN_TABLES="";;
+          esac
+          log "own-overlay prefix: ${OWN_PREFIX:-<none; full-checkpoint restore>}"
 
           # Fetch artifact list with up to 3 attempts and exponential backoff
           # between attempts (1s, 3s). stderr goes to a temp file so it shows up
@@ -826,7 +913,7 @@ jobs:
             return 1
           }
 
-          for PREFIX in "backfill-checkpoint-" "database-checkpoint-"; do
+          for PREFIX in ${OWN_PREFIX:+"$OWN_PREFIX"} "backfill-checkpoint-" "database-checkpoint-"; do
             [ -n "$RESTORED" ] && break
             log "scanning prefix=${PREFIX}"
             RUN_IDS=$(fetch_artifact_list "$PREFIX")
@@ -860,6 +947,27 @@ jobs:
               log "  copied (${DB_SIZE}) -- checking integrity"
               timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
               ic_rc=$?
+              # --- Own-overlay fast path (per-table overlay restore) ---
+              # Strict: accept only a clean (rc=0) own-overlay whose owned table(s) hold
+              # rows; otherwise discard and fall through to the full checkpoint (which is
+              # reproducible and always carries every table).
+              if [ -n "$OWN_PREFIX" ] && [ "$PREFIX" = "$OWN_PREFIX" ]; then
+                if [ $ic_rc -ne 0 ]; then
+                  log "  own-overlay ${ARTIFACT_NAME} quick_check rc=${ic_rc} -- discard, try next/full"
+                  rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                  continue
+                fi
+                OVL_ROWS=$(timeout 120 python3 -c "import sqlite3; c=sqlite3.connect('data/geohazard.db'); print(sum(c.execute('SELECT COUNT(*) FROM '+t).fetchone()[0] for t in '''${OWN_TABLES}'''.split()))" 2>/dev/null)
+                if [ -z "$OVL_ROWS" ] || [ "$OVL_ROWS" = "0" ]; then
+                  log "  own-overlay ${ARTIFACT_NAME} empty/unreadable for (${OWN_TABLES}) -- discard, try full checkpoint"
+                  rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                  continue
+                fi
+                RESTORED="${ARTIFACT_NAME}"
+                echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
+                log "Restored from own-overlay ${ARTIFACT_NAME} (${OWN_TABLES} total=${OVL_ROWS} rows)"
+                break
+              fi
               # A quick_check TIMEOUT (124/137/143) is NOT corruption: the ~28GB
               # DB exceeds the quick_check window. The checkpoint was already
               # integrity-verified when the merge job created it, and the Init DB
@@ -1107,6 +1215,21 @@ jobs:
           mkdir -p data results
           RESTORED=""
           MAX_TRIES=5
+          # Per-job owned-table overlay. Each fetch job uploads a small
+          # backfill-<job>- overlay (its owned table(s) only); preferring that over
+          # the full ~28GB backfill-checkpoint- avoids expanding a 17GB artifact on a
+          # disk/RAM-constrained ubuntu-latest runner -- the runner abort that was
+          # stalling fetch-hinet mid-restore. modis (needs the cross-table earthquakes
+          # master) and light (base builder) keep full-checkpoint restore via default.
+          case "${{ github.job }}" in
+            fetch-hinet) OWN_PREFIX="backfill-hinet-"; OWN_TABLES="hinet_waveform";;
+            fetch-gnss)  OWN_PREFIX="backfill-gnss-";  OWN_TABLES="gnss_tec";;
+            fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column";;
+            fetch-cloud) OWN_PREFIX="backfill-cloud-"; OWN_TABLES="cloud_fraction";;
+            fetch-snet)  OWN_PREFIX="backfill-snet-";  OWN_TABLES="snet_waveform fnet_waveform";;
+            *)           OWN_PREFIX="";               OWN_TABLES="";;
+          esac
+          log "own-overlay prefix: ${OWN_PREFIX:-<none; full-checkpoint restore>}"
 
           # Fetch artifact list with up to 3 attempts and exponential backoff
           # between attempts (1s, 3s). stderr goes to a temp file so it shows up
@@ -1150,7 +1273,7 @@ jobs:
             return 1
           }
 
-          for PREFIX in "backfill-checkpoint-" "database-checkpoint-"; do
+          for PREFIX in ${OWN_PREFIX:+"$OWN_PREFIX"} "backfill-checkpoint-" "database-checkpoint-"; do
             [ -n "$RESTORED" ] && break
             log "scanning prefix=${PREFIX}"
             RUN_IDS=$(fetch_artifact_list "$PREFIX")
@@ -1184,6 +1307,27 @@ jobs:
               log "  copied (${DB_SIZE}) -- checking integrity"
               timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
               ic_rc=$?
+              # --- Own-overlay fast path (per-table overlay restore) ---
+              # Strict: accept only a clean (rc=0) own-overlay whose owned table(s) hold
+              # rows; otherwise discard and fall through to the full checkpoint (which is
+              # reproducible and always carries every table).
+              if [ -n "$OWN_PREFIX" ] && [ "$PREFIX" = "$OWN_PREFIX" ]; then
+                if [ $ic_rc -ne 0 ]; then
+                  log "  own-overlay ${ARTIFACT_NAME} quick_check rc=${ic_rc} -- discard, try next/full"
+                  rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                  continue
+                fi
+                OVL_ROWS=$(timeout 120 python3 -c "import sqlite3; c=sqlite3.connect('data/geohazard.db'); print(sum(c.execute('SELECT COUNT(*) FROM '+t).fetchone()[0] for t in '''${OWN_TABLES}'''.split()))" 2>/dev/null)
+                if [ -z "$OVL_ROWS" ] || [ "$OVL_ROWS" = "0" ]; then
+                  log "  own-overlay ${ARTIFACT_NAME} empty/unreadable for (${OWN_TABLES}) -- discard, try full checkpoint"
+                  rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                  continue
+                fi
+                RESTORED="${ARTIFACT_NAME}"
+                echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
+                log "Restored from own-overlay ${ARTIFACT_NAME} (${OWN_TABLES} total=${OVL_ROWS} rows)"
+                break
+              fi
               # A quick_check TIMEOUT (124/137/143) is NOT corruption: the ~28GB
               # DB exceeds the quick_check window. The checkpoint was already
               # integrity-verified when the merge job created it, and the Init DB
@@ -1452,6 +1596,21 @@ jobs:
           mkdir -p data results
           RESTORED=""
           MAX_TRIES=5
+          # Per-job owned-table overlay. Each fetch job uploads a small
+          # backfill-<job>- overlay (its owned table(s) only); preferring that over
+          # the full ~28GB backfill-checkpoint- avoids expanding a 17GB artifact on a
+          # disk/RAM-constrained ubuntu-latest runner -- the runner abort that was
+          # stalling fetch-hinet mid-restore. modis (needs the cross-table earthquakes
+          # master) and light (base builder) keep full-checkpoint restore via default.
+          case "${{ github.job }}" in
+            fetch-hinet) OWN_PREFIX="backfill-hinet-"; OWN_TABLES="hinet_waveform";;
+            fetch-gnss)  OWN_PREFIX="backfill-gnss-";  OWN_TABLES="gnss_tec";;
+            fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column";;
+            fetch-cloud) OWN_PREFIX="backfill-cloud-"; OWN_TABLES="cloud_fraction";;
+            fetch-snet)  OWN_PREFIX="backfill-snet-";  OWN_TABLES="snet_waveform fnet_waveform";;
+            *)           OWN_PREFIX="";               OWN_TABLES="";;
+          esac
+          log "own-overlay prefix: ${OWN_PREFIX:-<none; full-checkpoint restore>}"
           # Fetch artifact list with up to 3 attempts and exponential backoff
           # between attempts (1s, 3s). stderr goes to a temp file so it shows up
           # in job logs without polluting the parsed run_id list.
@@ -1493,7 +1652,7 @@ jobs:
             rm -f "$stderr_file"
             return 1
           }
-          for PREFIX in "backfill-checkpoint-" "database-checkpoint-"; do
+          for PREFIX in ${OWN_PREFIX:+"$OWN_PREFIX"} "backfill-checkpoint-" "database-checkpoint-"; do
             [ -n "$RESTORED" ] && break
             log "scanning prefix=${PREFIX}"
             RUN_IDS=$(fetch_artifact_list "$PREFIX")
@@ -1527,6 +1686,27 @@ jobs:
               log "  copied (${DB_SIZE}) -- checking integrity"
               timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
               ic_rc=$?
+              # --- Own-overlay fast path (per-table overlay restore) ---
+              # Strict: accept only a clean (rc=0) own-overlay whose owned table(s) hold
+              # rows; otherwise discard and fall through to the full checkpoint (which is
+              # reproducible and always carries every table).
+              if [ -n "$OWN_PREFIX" ] && [ "$PREFIX" = "$OWN_PREFIX" ]; then
+                if [ $ic_rc -ne 0 ]; then
+                  log "  own-overlay ${ARTIFACT_NAME} quick_check rc=${ic_rc} -- discard, try next/full"
+                  rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                  continue
+                fi
+                OVL_ROWS=$(timeout 120 python3 -c "import sqlite3; c=sqlite3.connect('data/geohazard.db'); print(sum(c.execute('SELECT COUNT(*) FROM '+t).fetchone()[0] for t in '''${OWN_TABLES}'''.split()))" 2>/dev/null)
+                if [ -z "$OVL_ROWS" ] || [ "$OVL_ROWS" = "0" ]; then
+                  log "  own-overlay ${ARTIFACT_NAME} empty/unreadable for (${OWN_TABLES}) -- discard, try full checkpoint"
+                  rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                  continue
+                fi
+                RESTORED="${ARTIFACT_NAME}"
+                echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
+                log "Restored from own-overlay ${ARTIFACT_NAME} (${OWN_TABLES} total=${OVL_ROWS} rows)"
+                break
+              fi
               # A quick_check TIMEOUT (124/137/143) is NOT corruption: the ~28GB
               # DB exceeds the quick_check window. The checkpoint was already
               # integrity-verified when the merge job created it, and the Init DB
@@ -1794,6 +1974,21 @@ jobs:
           mkdir -p data results
           RESTORED=""
           MAX_TRIES=5
+          # Per-job owned-table overlay. Each fetch job uploads a small
+          # backfill-<job>- overlay (its owned table(s) only); preferring that over
+          # the full ~28GB backfill-checkpoint- avoids expanding a 17GB artifact on a
+          # disk/RAM-constrained ubuntu-latest runner -- the runner abort that was
+          # stalling fetch-hinet mid-restore. modis (needs the cross-table earthquakes
+          # master) and light (base builder) keep full-checkpoint restore via default.
+          case "${{ github.job }}" in
+            fetch-hinet) OWN_PREFIX="backfill-hinet-"; OWN_TABLES="hinet_waveform";;
+            fetch-gnss)  OWN_PREFIX="backfill-gnss-";  OWN_TABLES="gnss_tec";;
+            fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column";;
+            fetch-cloud) OWN_PREFIX="backfill-cloud-"; OWN_TABLES="cloud_fraction";;
+            fetch-snet)  OWN_PREFIX="backfill-snet-";  OWN_TABLES="snet_waveform fnet_waveform";;
+            *)           OWN_PREFIX="";               OWN_TABLES="";;
+          esac
+          log "own-overlay prefix: ${OWN_PREFIX:-<none; full-checkpoint restore>}"
 
           # Fetch artifact list with up to 3 attempts and exponential backoff
           # between attempts (1s, 3s). stderr goes to a temp file so it shows up
@@ -1837,7 +2032,7 @@ jobs:
             return 1
           }
 
-          for PREFIX in "backfill-checkpoint-" "database-checkpoint-"; do
+          for PREFIX in ${OWN_PREFIX:+"$OWN_PREFIX"} "backfill-checkpoint-" "database-checkpoint-"; do
             [ -n "$RESTORED" ] && break
             log "scanning prefix=${PREFIX}"
             RUN_IDS=$(fetch_artifact_list "$PREFIX")
@@ -1871,6 +2066,27 @@ jobs:
               log "  copied (${DB_SIZE}) -- checking integrity"
               timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
               ic_rc=$?
+              # --- Own-overlay fast path (per-table overlay restore) ---
+              # Strict: accept only a clean (rc=0) own-overlay whose owned table(s) hold
+              # rows; otherwise discard and fall through to the full checkpoint (which is
+              # reproducible and always carries every table).
+              if [ -n "$OWN_PREFIX" ] && [ "$PREFIX" = "$OWN_PREFIX" ]; then
+                if [ $ic_rc -ne 0 ]; then
+                  log "  own-overlay ${ARTIFACT_NAME} quick_check rc=${ic_rc} -- discard, try next/full"
+                  rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                  continue
+                fi
+                OVL_ROWS=$(timeout 120 python3 -c "import sqlite3; c=sqlite3.connect('data/geohazard.db'); print(sum(c.execute('SELECT COUNT(*) FROM '+t).fetchone()[0] for t in '''${OWN_TABLES}'''.split()))" 2>/dev/null)
+                if [ -z "$OVL_ROWS" ] || [ "$OVL_ROWS" = "0" ]; then
+                  log "  own-overlay ${ARTIFACT_NAME} empty/unreadable for (${OWN_TABLES}) -- discard, try full checkpoint"
+                  rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                  continue
+                fi
+                RESTORED="${ARTIFACT_NAME}"
+                echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
+                log "Restored from own-overlay ${ARTIFACT_NAME} (${OWN_TABLES} total=${OVL_ROWS} rows)"
+                break
+              fi
               # A quick_check TIMEOUT (124/137/143) is NOT corruption: the ~28GB
               # DB exceeds the quick_check window. The checkpoint was already
               # integrity-verified when the merge job created it, and the Init DB
@@ -2390,6 +2606,21 @@ jobs:
           mkdir -p data results
           RESTORED=""
           MAX_TRIES=5
+          # Per-job owned-table overlay. Each fetch job uploads a small
+          # backfill-<job>- overlay (its owned table(s) only); preferring that over
+          # the full ~28GB backfill-checkpoint- avoids expanding a 17GB artifact on a
+          # disk/RAM-constrained ubuntu-latest runner -- the runner abort that was
+          # stalling fetch-hinet mid-restore. modis (needs the cross-table earthquakes
+          # master) and light (base builder) keep full-checkpoint restore via default.
+          case "${{ github.job }}" in
+            fetch-hinet) OWN_PREFIX="backfill-hinet-"; OWN_TABLES="hinet_waveform";;
+            fetch-gnss)  OWN_PREFIX="backfill-gnss-";  OWN_TABLES="gnss_tec";;
+            fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column";;
+            fetch-cloud) OWN_PREFIX="backfill-cloud-"; OWN_TABLES="cloud_fraction";;
+            fetch-snet)  OWN_PREFIX="backfill-snet-";  OWN_TABLES="snet_waveform fnet_waveform";;
+            *)           OWN_PREFIX="";               OWN_TABLES="";;
+          esac
+          log "own-overlay prefix: ${OWN_PREFIX:-<none; full-checkpoint restore>}"
 
           # Fetch artifact list with up to 3 attempts and exponential backoff
           # between attempts (1s, 3s). stderr goes to a temp file so it shows up
@@ -2433,7 +2664,7 @@ jobs:
             return 1
           }
 
-          for PREFIX in "backfill-checkpoint-" "database-checkpoint-"; do
+          for PREFIX in ${OWN_PREFIX:+"$OWN_PREFIX"} "backfill-checkpoint-" "database-checkpoint-"; do
             [ -n "$RESTORED" ] && break
             log "scanning prefix=${PREFIX}"
             RUN_IDS=$(fetch_artifact_list "$PREFIX")
@@ -2467,6 +2698,27 @@ jobs:
               log "  copied (${DB_SIZE}) -- checking integrity"
               timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
               ic_rc=$?
+              # --- Own-overlay fast path (per-table overlay restore) ---
+              # Strict: accept only a clean (rc=0) own-overlay whose owned table(s) hold
+              # rows; otherwise discard and fall through to the full checkpoint (which is
+              # reproducible and always carries every table).
+              if [ -n "$OWN_PREFIX" ] && [ "$PREFIX" = "$OWN_PREFIX" ]; then
+                if [ $ic_rc -ne 0 ]; then
+                  log "  own-overlay ${ARTIFACT_NAME} quick_check rc=${ic_rc} -- discard, try next/full"
+                  rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                  continue
+                fi
+                OVL_ROWS=$(timeout 120 python3 -c "import sqlite3; c=sqlite3.connect('data/geohazard.db'); print(sum(c.execute('SELECT COUNT(*) FROM '+t).fetchone()[0] for t in '''${OWN_TABLES}'''.split()))" 2>/dev/null)
+                if [ -z "$OVL_ROWS" ] || [ "$OVL_ROWS" = "0" ]; then
+                  log "  own-overlay ${ARTIFACT_NAME} empty/unreadable for (${OWN_TABLES}) -- discard, try full checkpoint"
+                  rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
+                  continue
+                fi
+                RESTORED="${ARTIFACT_NAME}"
+                echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
+                log "Restored from own-overlay ${ARTIFACT_NAME} (${OWN_TABLES} total=${OVL_ROWS} rows)"
+                break
+              fi
               # A quick_check TIMEOUT (124/137/143) is NOT corruption: the ~28GB
               # DB exceeds the quick_check window. The checkpoint was already
               # integrity-verified when the merge job created it, and the Init DB
