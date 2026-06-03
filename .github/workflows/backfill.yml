@@ -261,10 +261,22 @@ jobs:
               log "  copied (${DB_SIZE}) -- checking integrity"
               timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
               ic_rc=$?
-              if [ $ic_rc -eq 0 ]; then
+              # A quick_check TIMEOUT (124/137/143) is NOT corruption: the ~28GB
+              # DB exceeds the quick_check window. The checkpoint was already
+              # integrity-verified when the merge job created it, and the Init DB
+              # step re-checks afterwards, so accept the restored full DB instead
+              # of discarding it for a salvage that also times out. (run
+              # 26817022739: light spent its entire 90min restore budget on two
+              # quick_check+salvage timeouts -> no restore -> 200min job timeout
+              # -> base-missing merge -> stalled chain.)
+              if [ $ic_rc -eq 0 ] || [ $ic_rc -eq 124 ] || [ $ic_rc -eq 137 ] || [ $ic_rc -eq 143 ]; then
                 RESTORED="${ARTIFACT_NAME}"
                 echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
-                log "Restored from ${ARTIFACT_NAME}"
+                if [ $ic_rc -eq 0 ]; then
+                  log "Restored from ${ARTIFACT_NAME}"
+                else
+                  log "Restored from ${ARTIFACT_NAME} (quick_check timed out rc=${ic_rc}; verified at creation, accepting)"
+                fi
                 break
               else
                 log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
@@ -539,10 +551,22 @@ jobs:
               log "  copied (${DB_SIZE}) -- checking integrity"
               timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
               ic_rc=$?
-              if [ $ic_rc -eq 0 ]; then
+              # A quick_check TIMEOUT (124/137/143) is NOT corruption: the ~28GB
+              # DB exceeds the quick_check window. The checkpoint was already
+              # integrity-verified when the merge job created it, and the Init DB
+              # step re-checks afterwards, so accept the restored full DB instead
+              # of discarding it for a salvage that also times out. (run
+              # 26817022739: light spent its entire 90min restore budget on two
+              # quick_check+salvage timeouts -> no restore -> 200min job timeout
+              # -> base-missing merge -> stalled chain.)
+              if [ $ic_rc -eq 0 ] || [ $ic_rc -eq 124 ] || [ $ic_rc -eq 137 ] || [ $ic_rc -eq 143 ]; then
                 RESTORED="${ARTIFACT_NAME}"
                 echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
-                log "Restored from ${ARTIFACT_NAME}"
+                if [ $ic_rc -eq 0 ]; then
+                  log "Restored from ${ARTIFACT_NAME}"
+                else
+                  log "Restored from ${ARTIFACT_NAME} (quick_check timed out rc=${ic_rc}; verified at creation, accepting)"
+                fi
                 break
               else
                 log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
@@ -836,10 +860,22 @@ jobs:
               log "  copied (${DB_SIZE}) -- checking integrity"
               timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
               ic_rc=$?
-              if [ $ic_rc -eq 0 ]; then
+              # A quick_check TIMEOUT (124/137/143) is NOT corruption: the ~28GB
+              # DB exceeds the quick_check window. The checkpoint was already
+              # integrity-verified when the merge job created it, and the Init DB
+              # step re-checks afterwards, so accept the restored full DB instead
+              # of discarding it for a salvage that also times out. (run
+              # 26817022739: light spent its entire 90min restore budget on two
+              # quick_check+salvage timeouts -> no restore -> 200min job timeout
+              # -> base-missing merge -> stalled chain.)
+              if [ $ic_rc -eq 0 ] || [ $ic_rc -eq 124 ] || [ $ic_rc -eq 137 ] || [ $ic_rc -eq 143 ]; then
                 RESTORED="${ARTIFACT_NAME}"
                 echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
-                log "Restored from ${ARTIFACT_NAME}"
+                if [ $ic_rc -eq 0 ]; then
+                  log "Restored from ${ARTIFACT_NAME}"
+                else
+                  log "Restored from ${ARTIFACT_NAME} (quick_check timed out rc=${ic_rc}; verified at creation, accepting)"
+                fi
                 break
               else
                 log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
@@ -1148,10 +1184,22 @@ jobs:
               log "  copied (${DB_SIZE}) -- checking integrity"
               timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
               ic_rc=$?
-              if [ $ic_rc -eq 0 ]; then
+              # A quick_check TIMEOUT (124/137/143) is NOT corruption: the ~28GB
+              # DB exceeds the quick_check window. The checkpoint was already
+              # integrity-verified when the merge job created it, and the Init DB
+              # step re-checks afterwards, so accept the restored full DB instead
+              # of discarding it for a salvage that also times out. (run
+              # 26817022739: light spent its entire 90min restore budget on two
+              # quick_check+salvage timeouts -> no restore -> 200min job timeout
+              # -> base-missing merge -> stalled chain.)
+              if [ $ic_rc -eq 0 ] || [ $ic_rc -eq 124 ] || [ $ic_rc -eq 137 ] || [ $ic_rc -eq 143 ]; then
                 RESTORED="${ARTIFACT_NAME}"
                 echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
-                log "Restored from ${ARTIFACT_NAME}"
+                if [ $ic_rc -eq 0 ]; then
+                  log "Restored from ${ARTIFACT_NAME}"
+                else
+                  log "Restored from ${ARTIFACT_NAME} (quick_check timed out rc=${ic_rc}; verified at creation, accepting)"
+                fi
                 break
               else
                 log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
@@ -1479,10 +1527,22 @@ jobs:
               log "  copied (${DB_SIZE}) -- checking integrity"
               timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
               ic_rc=$?
-              if [ $ic_rc -eq 0 ]; then
+              # A quick_check TIMEOUT (124/137/143) is NOT corruption: the ~28GB
+              # DB exceeds the quick_check window. The checkpoint was already
+              # integrity-verified when the merge job created it, and the Init DB
+              # step re-checks afterwards, so accept the restored full DB instead
+              # of discarding it for a salvage that also times out. (run
+              # 26817022739: light spent its entire 90min restore budget on two
+              # quick_check+salvage timeouts -> no restore -> 200min job timeout
+              # -> base-missing merge -> stalled chain.)
+              if [ $ic_rc -eq 0 ] || [ $ic_rc -eq 124 ] || [ $ic_rc -eq 137 ] || [ $ic_rc -eq 143 ]; then
                 RESTORED="${ARTIFACT_NAME}"
                 echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
-                log "Restored from ${ARTIFACT_NAME}"
+                if [ $ic_rc -eq 0 ]; then
+                  log "Restored from ${ARTIFACT_NAME}"
+                else
+                  log "Restored from ${ARTIFACT_NAME} (quick_check timed out rc=${ic_rc}; verified at creation, accepting)"
+                fi
                 break
               else
                 log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
@@ -1811,10 +1871,22 @@ jobs:
               log "  copied (${DB_SIZE}) -- checking integrity"
               timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
               ic_rc=$?
-              if [ $ic_rc -eq 0 ]; then
+              # A quick_check TIMEOUT (124/137/143) is NOT corruption: the ~28GB
+              # DB exceeds the quick_check window. The checkpoint was already
+              # integrity-verified when the merge job created it, and the Init DB
+              # step re-checks afterwards, so accept the restored full DB instead
+              # of discarding it for a salvage that also times out. (run
+              # 26817022739: light spent its entire 90min restore budget on two
+              # quick_check+salvage timeouts -> no restore -> 200min job timeout
+              # -> base-missing merge -> stalled chain.)
+              if [ $ic_rc -eq 0 ] || [ $ic_rc -eq 124 ] || [ $ic_rc -eq 137 ] || [ $ic_rc -eq 143 ]; then
                 RESTORED="${ARTIFACT_NAME}"
                 echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
-                log "Restored from ${ARTIFACT_NAME}"
+                if [ $ic_rc -eq 0 ]; then
+                  log "Restored from ${ARTIFACT_NAME}"
+                else
+                  log "Restored from ${ARTIFACT_NAME} (quick_check timed out rc=${ic_rc}; verified at creation, accepting)"
+                fi
                 break
               else
                 log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
@@ -2395,10 +2467,22 @@ jobs:
               log "  copied (${DB_SIZE}) -- checking integrity"
               timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
               ic_rc=$?
-              if [ $ic_rc -eq 0 ]; then
+              # A quick_check TIMEOUT (124/137/143) is NOT corruption: the ~28GB
+              # DB exceeds the quick_check window. The checkpoint was already
+              # integrity-verified when the merge job created it, and the Init DB
+              # step re-checks afterwards, so accept the restored full DB instead
+              # of discarding it for a salvage that also times out. (run
+              # 26817022739: light spent its entire 90min restore budget on two
+              # quick_check+salvage timeouts -> no restore -> 200min job timeout
+              # -> base-missing merge -> stalled chain.)
+              if [ $ic_rc -eq 0 ] || [ $ic_rc -eq 124 ] || [ $ic_rc -eq 137 ] || [ $ic_rc -eq 143 ]; then
                 RESTORED="${ARTIFACT_NAME}"
                 echo "restored=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
-                log "Restored from ${ARTIFACT_NAME}"
+                if [ $ic_rc -eq 0 ]; then
+                  log "Restored from ${ARTIFACT_NAME}"
+                else
+                  log "Restored from ${ARTIFACT_NAME} (quick_check timed out rc=${ic_rc}; verified at creation, accepting)"
+                fi
                 break
               else
                 log "  corrupted (rc=${ic_rc}) -- attempting per-table salvage"
