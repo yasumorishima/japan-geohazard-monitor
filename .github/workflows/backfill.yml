@@ -196,6 +196,7 @@ jobs:
             fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column";;
             fetch-cloud) OWN_PREFIX="backfill-cloud-"; OWN_TABLES="cloud_fraction";;
             fetch-snet)  OWN_PREFIX="backfill-snet-";  OWN_TABLES="snet_waveform fnet_waveform";;
+            fetch-modis) OWN_PREFIX=""; OWN_TABLES="";;  # full restore: fetch reads cross-table earthquakes master
             *)           OWN_PREFIX="";               OWN_TABLES="";;
           esac
           log "own-overlay prefix: ${OWN_PREFIX:-<none; full-checkpoint restore>}"
@@ -522,6 +523,7 @@ jobs:
             fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column";;
             fetch-cloud) OWN_PREFIX="backfill-cloud-"; OWN_TABLES="cloud_fraction";;
             fetch-snet)  OWN_PREFIX="backfill-snet-";  OWN_TABLES="snet_waveform fnet_waveform";;
+            fetch-modis) OWN_PREFIX=""; OWN_TABLES="";;  # full restore: fetch reads cross-table earthquakes master
             *)           OWN_PREFIX="";               OWN_TABLES="";;
           esac
           log "own-overlay prefix: ${OWN_PREFIX:-<none; full-checkpoint restore>}"
@@ -867,6 +869,7 @@ jobs:
             fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column";;
             fetch-cloud) OWN_PREFIX="backfill-cloud-"; OWN_TABLES="cloud_fraction";;
             fetch-snet)  OWN_PREFIX="backfill-snet-";  OWN_TABLES="snet_waveform fnet_waveform";;
+            fetch-modis) OWN_PREFIX=""; OWN_TABLES="";;  # full restore: fetch reads cross-table earthquakes master
             *)           OWN_PREFIX="";               OWN_TABLES="";;
           esac
           log "own-overlay prefix: ${OWN_PREFIX:-<none; full-checkpoint restore>}"
@@ -1227,6 +1230,7 @@ jobs:
             fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column";;
             fetch-cloud) OWN_PREFIX="backfill-cloud-"; OWN_TABLES="cloud_fraction";;
             fetch-snet)  OWN_PREFIX="backfill-snet-";  OWN_TABLES="snet_waveform fnet_waveform";;
+            fetch-modis) OWN_PREFIX=""; OWN_TABLES="";;  # full restore: fetch reads cross-table earthquakes master
             *)           OWN_PREFIX="";               OWN_TABLES="";;
           esac
           log "own-overlay prefix: ${OWN_PREFIX:-<none; full-checkpoint restore>}"
@@ -1608,6 +1612,7 @@ jobs:
             fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column";;
             fetch-cloud) OWN_PREFIX="backfill-cloud-"; OWN_TABLES="cloud_fraction";;
             fetch-snet)  OWN_PREFIX="backfill-snet-";  OWN_TABLES="snet_waveform fnet_waveform";;
+            fetch-modis) OWN_PREFIX=""; OWN_TABLES="";;  # full restore: fetch reads cross-table earthquakes master
             *)           OWN_PREFIX="";               OWN_TABLES="";;
           esac
           log "own-overlay prefix: ${OWN_PREFIX:-<none; full-checkpoint restore>}"
@@ -1986,6 +1991,7 @@ jobs:
             fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column";;
             fetch-cloud) OWN_PREFIX="backfill-cloud-"; OWN_TABLES="cloud_fraction";;
             fetch-snet)  OWN_PREFIX="backfill-snet-";  OWN_TABLES="snet_waveform fnet_waveform";;
+            fetch-modis) OWN_PREFIX=""; OWN_TABLES="";;  # full restore: fetch reads cross-table earthquakes master
             *)           OWN_PREFIX="";               OWN_TABLES="";;
           esac
           log "own-overlay prefix: ${OWN_PREFIX:-<none; full-checkpoint restore>}"
@@ -2618,6 +2624,7 @@ jobs:
             fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column";;
             fetch-cloud) OWN_PREFIX="backfill-cloud-"; OWN_TABLES="cloud_fraction";;
             fetch-snet)  OWN_PREFIX="backfill-snet-";  OWN_TABLES="snet_waveform fnet_waveform";;
+            fetch-modis) OWN_PREFIX=""; OWN_TABLES="";;  # full restore: fetch reads cross-table earthquakes master
             *)           OWN_PREFIX="";               OWN_TABLES="";;
           esac
           log "own-overlay prefix: ${OWN_PREFIX:-<none; full-checkpoint restore>}"
