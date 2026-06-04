@@ -54,8 +54,8 @@ jobs:
                   # Step 1: Raw fetch to see actual data format
                   url = (
                       'https://acdisc.gesdisc.eosdis.nasa.gov/opendap/HDF-EOS5/'
-                      'Aura_OMI_Level2G/OMSO2G.003/2024/'
-                      'OMI-Aura_L2G-OMSO2G_2024m0101_v003-2024m0103t164059.he5.ascii'
+                      'Aura_OMI_Level2G/OMSO2G.004/2024/'
+                      'OMI-Aura_L2G-OMSO2G_2024m0101_v004-2025m0904t091514.he5.ascii'
                       '?ColumnAmountSO2_PBL[0:0][455:543][1207:1319]'
                   )
                   status, text = await earthdata_fetch(session, url, timeout=aiohttp.ClientTimeout(total=60))
@@ -136,8 +136,8 @@ jobs:
               session = await get_earthdata_session()
               url = (
                   'https://acdisc.gesdisc.eosdis.nasa.gov/opendap/HDF-EOS5/'
-                  'Aura_OMI_Level2G/OMSO2G.003/2024/'
-                  'OMI-Aura_L2G-OMSO2G_2024m0101_v003-2024m0103t164059.he5.ascii'
+                  'Aura_OMI_Level2G/OMSO2G.004/2024/'
+                  'OMI-Aura_L2G-OMSO2G_2024m0101_v004-2025m0904t091514.he5.ascii'
                   '?ColumnAmountSO2_PBL[0:0][500:500][1250:1250]'
               )
               try:
