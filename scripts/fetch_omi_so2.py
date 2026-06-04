@@ -400,7 +400,7 @@ async def main():
             "SO2 fetch complete: 0 records from %d dates. "
             "Likely cause: no OMI OMSO2G archive files exist for these dates "
             "(if persistent, check Earthdata auth or the OMSO2G.004 listing for these dates). "
-            "If auth failed, 'HTTP 4' errors appear in WARNING logs above.",
+            "If auth failed, 'auth failed (HTTP 401/403)' entries appear in the INFO logs above.",
             len(dates_to_fetch),
         )
     else:
