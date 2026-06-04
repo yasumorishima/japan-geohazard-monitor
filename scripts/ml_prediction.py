@@ -2671,8 +2671,8 @@ async def run_ml_prediction():
     snet_waveform_data, snet_velocity_data, snet_highgain_data = await load_phase18_snet_waveform(DB_PATH)
 
     # --- Phase 20: Monthly lightning climatology ---
-    logger.info("--- Loading Phase 20 data (LIS/OTD flash rate, WWLLN thunder hour) ---")
-    lightning_lis_otd_data = await load_phase20_lightning_lis_otd(DB_PATH)
+    logger.info("--- Loading Phase 20 data (WWLLN thunder hour; LIS/OTD excluded from forward features) ---")
+    lightning_lis_otd_data = None  # LIS/OTD satellite ended 2014 -> always 0 for forward (>=2015) dates (temporal confound); live lightning is covered by WWLLN (lightning_thunder_hour). Pass None so get_active_feature_names() excludes the group from train and predict. Raw table retained as backtest/research asset.
     lightning_thunder_hour_data = await load_phase20_lightning_thunder_hour(DB_PATH)
 
     # Multi-target loop
