@@ -99,6 +99,12 @@ RATE_LIMIT_SLEEP = float(os.environ.get("IOC_RATE_LIMIT_SLEEP", "1.0"))
 # and finishes the 5,500-day backfill in days, not months.
 CHUNK_DAYS = int(os.environ.get("IOC_CHUNK_DAYS", "30"))
 MAX_CHUNKS_PER_CRON = int(os.environ.get("IOC_MAX_CHUNKS", "72"))
+# Of each run's chunk budget, this many are fetched newest-first so the recent
+# frontier the prediction model reads at t_now stays fresh. The rest backfill
+# 2011 history oldest-first. Default: one-third of the budget.
+RECENT_RESERVE_CHUNKS = int(
+    os.environ.get("IOC_RECENT_CHUNKS", str(max(1, MAX_CHUNKS_PER_CRON // 3)))
+)
 # Legacy MAX_FETCHES retained for backward compatibility but unused once
 # chunk fetcher is wired through. New deployments should set IOC_MAX_CHUNKS.
 MAX_FETCHES = int(os.environ.get("IOC_MAX_FETCHES", "200"))
@@ -540,8 +546,14 @@ def build_target_chunks(
     existing_per_station: dict[str, set[str]],
     failed_chunks: set[tuple[str, str]],
     max_chunks: int,
+    recent_reserve: int = 0,
 ) -> list[tuple[datetime, dict]]:
-    """Compute oldest-first (chunk_start, station) chunks to fetch this run.
+    """Compute (chunk_start, station) chunks to fetch this run, dual-ended.
+
+    Up to ``recent_reserve`` chunks are picked newest-first so the recent
+    frontier (consumed by the prediction model at t_now) stays fresh, then the
+    remaining budget up to ``max_chunks`` is filled oldest-first to backfill
+    2011 history. A (station, chunk) pair is never picked twice.
 
     A chunk is skipped only if the failed_chunks table marks it definitively
     failed (retry-after still active), or if every day inside the chunk is
@@ -552,7 +564,9 @@ def build_target_chunks(
     if max_chunks <= 0:
         return []
     target: list[tuple[datetime, dict]] = []
-    for chunk_start in all_chunk_starts:
+    seen: set[tuple[str, str]] = set()
+
+    def _consider(chunk_start: datetime, limit: int) -> bool:
         chunk_start_str = chunk_start.strftime("%Y-%m-%d")
         chunk_dates = {
             (chunk_start + timedelta(days=i)).strftime("%Y-%m-%d")
@@ -560,14 +574,29 @@ def build_target_chunks(
         }
         for station in stations:
             code = station["code"]
-            if (code, chunk_start_str) in failed_chunks:
+            key = (code, chunk_start_str)
+            if key in seen:
+                continue
+            if key in failed_chunks:
                 continue
             existing = existing_per_station.get(code, set())
             if chunk_dates.issubset(existing):
                 continue
             target.append((chunk_start, station))
-            if len(target) >= max_chunks:
-                return target
+            seen.add(key)
+            if len(target) >= limit:
+                return True
+        return False
+
+    recent_cap = min(max(recent_reserve, 0), max_chunks)
+    if recent_cap > 0:
+        for chunk_start in reversed(all_chunk_starts):
+            if _consider(chunk_start, recent_cap):
+                break
+
+    for chunk_start in all_chunk_starts:
+        if _consider(chunk_start, max_chunks):
+            break
     return target
 
 
@@ -621,6 +650,7 @@ async def main():
     target_chunks = build_target_chunks(
         all_chunk_starts, CHUNK_DAYS, stations,
         existing_per_station, failed_chunks, MAX_CHUNKS_PER_CRON,
+        RECENT_RESERVE_CHUNKS,
     )
 
     total_existing_pairs = sum(len(s) for s in existing_per_station.values())
@@ -631,8 +661,8 @@ async def main():
     )
     logger.info(
         "Stage 2.C chunk fetch: %d (chunk_start, station) chunks "
-        "(chunk_days=%d, parallelism=%d, rate_limit_sleep=%.2fs)",
-        len(target_chunks), CHUNK_DAYS, PARALLEL_FETCHES, RATE_LIMIT_SLEEP,
+        "(chunk_days=%d, recent_reserve=%d, parallelism=%d, rate_limit_sleep=%.2fs)",
+        len(target_chunks), CHUNK_DAYS, RECENT_RESERVE_CHUNKS, PARALLEL_FETCHES, RATE_LIMIT_SLEEP,
     )
 
     if not target_chunks:
