@@ -50,8 +50,10 @@ logger = logging.getLogger(__name__)
 
 # GES DISC OPeNDAP for OMSO2G (OMI Level 2G daily gridded, 0.25° grid)
 # OMSO2e was removed from GES DISC; OMSO2G is the replacement (2004-present)
+# V003 archive froze ~2025-06; V004 is the live continuation to present
+# (identical 0.25-deg 720x1440 grid + ColumnAmountSO2 variable, verified via OPeNDAP .dds)
 # Note: GES DISC requires URS redirect + Basic Auth (Bearer returns 401)
-GESDISC_OPENDAP = "https://acdisc.gesdisc.eosdis.nasa.gov/opendap/HDF-EOS5/Aura_OMI_Level2G/OMSO2G.003"
+GESDISC_OPENDAP = "https://acdisc.gesdisc.eosdis.nasa.gov/opendap/HDF-EOS5/Aura_OMI_Level2G/OMSO2G.004"
 
 # Japan bbox in grid indices (0.25° resolution)
 # Lat: -89.875 to 89.875 (720 cells), Lon: -179.875 to 179.875 (1440 cells)
@@ -122,7 +124,7 @@ async def _resolve_so2_filename(session: aiohttp.ClientSession, year: int, date_
     """Resolve OMSO2G filename from OPeNDAP contents listing.
 
     OMSO2G files are stored directly under year/ (no DOY subdirectory).
-    Filename: OMI-Aura_L2G-OMSO2G_{YYYY}m{MMDD}_v003-{revision}.he5
+    Filename: OMI-Aura_L2G-OMSO2G_{YYYY}m{MMDD}_v004-{revision}.he5
     """
 
     mmdd = date_str[5:7] + date_str[8:10]  # "2024-01-15" -> "0115"
@@ -397,7 +399,7 @@ async def main():
         logger.info(
             "SO2 fetch complete: 0 records from %d dates. "
             "Likely cause: no OMI OMSO2G archive files exist for these dates "
-            "(OMI data physically ends ~2025-06-08 due to instrument coverage degradation). "
+            "(if persistent, check Earthdata auth or the OMSO2G.004 listing for these dates). "
             "If auth failed, 'HTTP 4' errors appear in WARNING logs above.",
             len(dates_to_fetch),
         )
