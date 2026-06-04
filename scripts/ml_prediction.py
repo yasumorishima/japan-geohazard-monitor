@@ -2636,7 +2636,7 @@ async def run_ml_prediction():
     # --- Phase 9: Load non-traditional precursor data ---
     logger.info("--- Loading Phase 9 data (cosmic ray, lightning, geomag, animal) ---")
     cosmic_ray_data = await load_phase9_cosmic_ray(DB_PATH)
-    lightning_data = await load_phase9_lightning(DB_PATH)
+    lightning_data = None  # Daily 'lightning' group is fed only by iss_lis_lightning (ISS LIS, ended 2023-11) -- the Blitzortung 'lightning' table is a permanent 0-row deprecated no-op, so lightning_count_7d/anomaly are always 0 for forward (>=2024) dates (temporal confound). No live daily-lightning source exists (WWLLN feeds the separate monthly lightning_thunder_hour group). Excluded from forward features via get_active_feature_names. iss_lis data retained as a backtest asset.
     geomag_spectral_data = await load_phase9_geomag_spectral(DB_PATH)
     animal_data = await load_phase9_animal(DB_PATH)
 
