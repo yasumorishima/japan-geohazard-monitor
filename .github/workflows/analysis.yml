@@ -18,11 +18,17 @@ on:
         required: false
         default: 'all'
 
+      skip_fetch:
+        description: 'Skip the fetch job and restore the latest complete backfill-checkpoint DB directly (true/false)'
+        required: false
+        default: 'false'
+
 jobs:
   # ====== JOB 1: FETCH ======
   # Data collection + validation + gap diagnosis.
   # Runs independently with its own 6-hour budget.
   fetch:
+    if: ${{ github.event.inputs.skip_fetch != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 330  # Must be < GitHub's 360min hard limit so if: always() steps can save DB
 
@@ -877,14 +883,46 @@ jobs:
           pip install aiohttp aiosqlite scikit-learn scipy numpy netCDF4
 
       - name: Restore database from fetch job
+        if: ${{ github.event.inputs.skip_fetch != 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: database-checkpoint-${{ github.run_id }}
           path: .
 
+      - name: Restore database from latest backfill checkpoint (skip_fetch)
+        if: ${{ github.event.inputs.skip_fetch == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash {0}
+        run: |
+          set +e
+          mkdir -p data
+          BF_RUN=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100"             --jq '[.artifacts[] | select(.name | startswith("backfill-checkpoint-")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0].workflow_run.id // empty')
+          if [ -z "$BF_RUN" ]; then
+            echo "::error::No backfill-checkpoint artifact found -- cannot restore complete DB"
+            exit 1
+          fi
+          echo "Restoring backfill-checkpoint-$BF_RUN ..."
+          rm -rf /tmp/bf-restore
+          gh run download "$BF_RUN" --repo ${{ github.repository }} --name "backfill-checkpoint-$BF_RUN" --dir /tmp/bf-restore
+          if [ $? -ne 0 ]; then
+            echo "::error::Download of backfill-checkpoint-$BF_RUN failed"
+            exit 1
+          fi
+          DB_FILE="/tmp/bf-restore/geohazard.db"
+          [ ! -f "$DB_FILE" ] && DB_FILE="/tmp/bf-restore/data/geohazard.db"
+          if [ ! -f "$DB_FILE" ]; then
+            echo "::error::No geohazard.db inside backfill-checkpoint-$BF_RUN"
+            exit 1
+          fi
+          mv "$DB_FILE" data/geohazard.db
+          rm -f data/geohazard.db-wal data/geohazard.db-shm
+          echo "Restored backfill DB ($(du -h data/geohazard.db | cut -f1)) from run $BF_RUN"
+
       # Needed by the final Discord notification step to read
       # results/midrun/snapshot.log and surface snapshot step status.
       - name: Restore midrun report from fetch job
+        if: ${{ github.event.inputs.skip_fetch != 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: midrun-fetch-${{ github.run_id }}
