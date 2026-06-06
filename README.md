@@ -1031,6 +1031,8 @@ Phase 8.0 revealed critical bugs in stacking:
 | ConvLSTM | Regular grid CNN | 90-day LSTM | **0.8013** |
 | SeismoGNN | Fault network graph | 90-day GRU | 0.7925 |
 
+> Note: HistGBT 0.7485 above is from an earlier Phase-14 split and is not directly comparable; for all models on one identical 9-fold scheme see the 2026-06-07 benchmark below (HistGBT 0.7839 there).
+
 **2026-06-06 walk-forward CV benchmark** (complete-data `feature_matrix.json`, 85 features, 1816 timesteps x 11x11 grid, 6-fold expanding-window, pooled AUC — the first valid retrain after PR #195/#196 restored the ML pipeline from a ~2.5-month `safe_connect` `NameError` regression that the `|| echo` non-fatal pattern had been masking):
 
 | Model | Pooled AUC | Note |
@@ -1068,7 +1070,7 @@ Four of six folds clear 0.80; the two oldest folds (0.767, 0.781) hold the poole
 | SeismoGNN (GATv2x3 + GRU) | 0.7925 | 0.7969 | graph spatiotemporal |
 | **ConvLSTM (2-layer + SE attention, 90-day)** | **0.8013** | **0.8013** | grid spatiotemporal |
 
-**ConvLSTM is the only model that clears a robust 0.80 on both pooled and mean AUC** (std 0.0124; trains in 8.6 min on one T4), edging the best flat-tabular ensemble (0.7992) and beating the graph model. For this regular 11x11x2-degree grid the grid-convolution receptive field outperforms the fault-network graph. The flat-tabular ceiling (~0.799) holds even under this split scheme -- crossing it required learned spatiotemporal structure, confirming the third-stage hypothesis. Reproduced on Kaggle with `feature_matrix.json` as a private dataset; the only fixes needed were a `total_mem` -> `total_memory` attribute name and selecting a T4 (Kaggle's default P100/sm_60 is unsupported by the current PyTorch).
+**ConvLSTM is the only model whose pooled and mean AUC both reach 0.80** (0.8013/0.8013; std 0.0124; 8.6 min on one T4). But read this honestly: the margin over the best flat-tabular ensemble (0.7992) is only +0.2pt, **within the per-fold std (~0.012) and therefore not statistically distinguishable** -- the spatiotemporal model *matches and marginally exceeds* the flat-tabular ceiling rather than decisively breaking it, and ~0.799 is essentially where both land. ConvLSTM does beat the graph model (0.7925), so for this regular 11x11x2-degree grid the grid-convolution receptive field at least matches the fault-network graph. **Caveats:** (1) all models share the same fold boundaries and `feature_matrix.json`, but inputs are *not* symmetric -- the neural models consume a 90-day history window (train mask starts 90 days in) while the tabular models use a single timestep; (2) ConvLSTM's lowest fold is 0.783, so 0.80 holds on the aggregate, not every fold; (3) its pooled and mean coincide at 0.8013 by rounding, not by independent measurement. Reproduced on Kaggle with `feature_matrix.json` as a private dataset; the only code fixes were `total_mem` -> `total_memory` and selecting a T4 (Kaggle's default P100/sm_60 is unsupported by the current PyTorch).
 
 **Initiative 2: CSEP-Compatible Format + Benchmark**
 - ML probability → CSEP XML rate forecast (2°×2° grid, 4 magnitude bins)
