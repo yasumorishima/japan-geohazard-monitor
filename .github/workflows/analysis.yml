@@ -1077,10 +1077,11 @@ jobs:
               print('No ML results')
           else:
               d = json.loads(open(files[-1]).read())
-              cv = d.get('cv_auc_pooled', '?')
-              test = d.get('test_auc', {}).get('rf', '?')
-              features = d.get('n_features_active', '?')
-              print(f'CV={cv} Test={test} feat={features}')
+              t = d.get('targets', {}).get('M5+', {})
+              cv = t.get('walk_forward_cv', {}).get('aggregate', {}).get('pooled_auc', '?')
+              test = t.get('final_model', {}).get('performance', {}).get('auc_roc_test', '?')
+              features = d.get('metadata', {}).get('n_features', '?')
+              print(f'M5+ CV={cv} Test={test} feat={features}')
           " 2>/dev/null || echo "AUC: unavailable")
           # Save to log file for artifact retrieval
           echo "=== ML Phase Complete ===" > results/midrun/ml_report.txt
