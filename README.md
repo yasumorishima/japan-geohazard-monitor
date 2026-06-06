@@ -1031,6 +1031,18 @@ Phase 8.0 revealed critical bugs in stacking:
 | ConvLSTM | Regular grid CNN | 90-day LSTM | pending |
 | SeismoGNN | Fault network graph | 90-day GRU | pending |
 
+**2026-06-06 walk-forward CV benchmark** (complete-data `feature_matrix.json`, 85 features, 1816 timesteps x 11x11 grid, 6-fold expanding-window, pooled AUC — the first valid retrain after PR #195/#196 restored the ML pipeline from a ~2.5-month `safe_connect` `NameError` regression that the `|| echo` non-fatal pattern had been masking):
+
+| Model | Pooled AUC | Note |
+|---|---|---|
+| HistGBT (same splits) | 0.7518 | tree baseline |
+| Bayesian Horseshoe (numpyro SVI) | 0.7643 | |
+| L2 logistic (balanced) | 0.7761 | |
+| L1 sparse logistic | 0.7794 | best single model; fold max 0.804 |
+| rank-ensemble (0.7*L1 + 0.3*GBT) | **0.7834** | best overall |
+
+**Key finding:** linear/sparse models beat HistGBT by ~2.8pt on *identical* splits — the precursor features (`polar_motion_speed`, `xray_flux_max_24h`, `geomag_fractal_dim`, proton/particle flux) carry linear signal the tree model fragmented, validating the data-completeness investment. Flat per-cell tabular models plateau at ~0.78 pooled (individual folds reach 0.81); robust 0.80 not yet crossed. Next levers: spatial-neighbour aggregation features, then the spatiotemporal ConvLSTM/GNN. All validation runs on a Raspberry Pi 5 (CPU) — no GPU required.
+
 **Initiative 2: CSEP-Compatible Format + Benchmark**
 - ML probability → CSEP XML rate forecast (2°×2° grid, 4 magnitude bins)
 - 4 reference models: Uniform Poisson, Smoothed Seismicity (Helmstetter 2007), Relative Intensity (Rhoades 2004), Simple ETAS
@@ -1333,7 +1345,7 @@ Feature matrix exported to Google Drive for Colab GPU experiments. (Historical: 
 | **Phase 17** | ❌ Cancelled | CI 2ジョブ分割 + ギャップ診断。手動キャンセル |
 | **Phase 18** | ✅ Complete | **S-net波形特徴量**: 1→7特徴量（RMS/HV比/帯域パワー/スペクトル傾斜/空間勾配/セグメント最大anomaly）。75→84特徴量 |
 | **BQ Integration** | 🛑 Retired (2026-05-11) | Sandbox 10 GB 上限 98 % 到達 + READ パスゼロにつき PR #156 で upload step を全削除。 過去の貢献: Phase 15h の座標ミスマッチバグを集計クエリで即座に発見。 一次保存先は RPi5 SSD (PR #157) へ移行 |
-| **Bayesian Horseshoe** | 🧪 Tested | Stage 1 smoke test: **Test AUC 0.8029** (1 fold, 2ch×200+500). Top: xray_flux, geomag_fractal, polar_motion. Needs walk-forward CV validation |
+| **Bayesian Horseshoe** | 🧪 CV-tested | 1-fold smoke **0.8029 did not hold under 6-fold walk-forward CV** (numpyro SVI pooled AUC 0.7643). Top features (xray_flux, geomag_fractal, polar_motion) confirmed informative, but the single-fold 0.80 was optimistic — see the 2026-06-06 walk-forward benchmark above |
 | **ConvLSTM** | 🟢 Colab-ready | Spatiotemporal neural network. Script + feature_matrix.json deployed to Drive |
 | **SeismoGNN** | 🟢 Colab-ready | Graph Attention Network with fault-network topology. Script deployed to Drive |
 | **Transformer** | 📋 Next | SafeNet-style multi-window features (7/14/30/90/365d) + attention (SafeNet, Sci. Reports 2025) |
