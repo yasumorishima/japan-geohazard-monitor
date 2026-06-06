@@ -1043,6 +1043,8 @@ Phase 8.0 revealed critical bugs in stacking:
 
 **Key finding:** linear/sparse models beat HistGBT by ~2.8pt on *identical* splits — the precursor features (`polar_motion_speed`, `xray_flux_max_24h`, `geomag_fractal_dim`, proton/particle flux) carry linear signal the tree model fragmented, validating the data-completeness investment. Flat per-cell tabular models plateau at ~0.78 pooled (individual folds reach 0.81); robust 0.80 not yet crossed. Next levers: spatial-neighbour aggregation features, then the spatiotemporal ConvLSTM/GNN. All validation runs on a Raspberry Pi 5 (CPU) — no GPU required.
 
+**Temporal augmentation (tested, ruled out):** adding per-cell 3-day deltas + acceleration (255 features) did *not* help — L1 pooled 0.7716 / ensemble 0.7780, slightly below the 85-feature version (folds 4-5 degraded). Crude differencing adds more noise than signal; spatial-neighbour aggregation (each cell + its 8 neighbours) is the next lever to try.
+
 **Initiative 2: CSEP-Compatible Format + Benchmark**
 - ML probability → CSEP XML rate forecast (2°×2° grid, 4 magnitude bins)
 - 4 reference models: Uniform Poisson, Smoothed Seismicity (Helmstetter 2007), Relative Intensity (Rhoades 2004), Simple ETAS
