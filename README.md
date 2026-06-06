@@ -1028,8 +1028,8 @@ Phase 8.0 revealed critical bugs in stacking:
 | Model | Spatial Structure | Temporal Structure | Current AUC |
 |---|---|---|---|
 | HistGBT (baseline) | Cell-independent | 7-day statistics | **0.7485** |
-| ConvLSTM | Regular grid CNN | 90-day LSTM | pending |
-| SeismoGNN | Fault network graph | 90-day GRU | pending |
+| ConvLSTM | Regular grid CNN | 90-day LSTM | **0.8013** |
+| SeismoGNN | Fault network graph | 90-day GRU | 0.7925 |
 
 **2026-06-06 walk-forward CV benchmark** (complete-data `feature_matrix.json`, 85 features, 1816 timesteps x 11x11 grid, 6-fold expanding-window, pooled AUC — the first valid retrain after PR #195/#196 restored the ML pipeline from a ~2.5-month `safe_connect` `NameError` regression that the `|| echo` non-fatal pattern had been masking):
 
@@ -1054,7 +1054,21 @@ Phase 8.0 revealed critical bugs in stacking:
 | **Elastic-net (+gradient, 170 feat)** | **0.7960** | 0.765..0.823 |
 | ensemble (ENET 0.6 + spatial-GBT 0.2 + GBT 0.2) | **0.7987** | 0.767..0.825 |
 
-Four of six folds clear 0.80; the two oldest folds (0.767, 0.781) hold the pooled score just short of a robust 0.80. Elastic-net hyperparameters are saturated (C 0.05-0.3 x l1_ratio 0.3-0.7 all give 0.7959-0.7961), and richer spatial features (neighbour std, 2-ring gradient) and SGD-elasticnet did *not* beat the simple 8-neighbour gradient. **Conclusion: the spatial gradient is the single most effective tabular feature (base 0.772 -> 0.796), confirming spatial structure is the right direction, but flat per-cell models top out at ~0.799 pooled. Crossing a robust 0.80 is the next lever to attempt with genuine spatiotemporal modelling (ConvLSTM/GNN, GPU) -- the third stage (ConvLSTM/GNN have not yet been shown to clear 0.80 here, so this is a direction, not a promise).** All runs on Raspberry Pi 5 CPU.
+Four of six folds clear 0.80; the two oldest folds (0.767, 0.781) hold the pooled score just short of a robust 0.80. Elastic-net hyperparameters are saturated (C 0.05-0.3 x l1_ratio 0.3-0.7 all give 0.7959-0.7961), and richer spatial features (neighbour std, 2-ring gradient) and SGD-elasticnet did *not* beat the simple 8-neighbour gradient. **Conclusion: the spatial gradient is the single most effective tabular feature (base 0.772 -> 0.796), confirming spatial structure is the right direction, but flat per-cell models top out at ~0.799 pooled. Crossing a robust 0.80 is the next lever to attempt with genuine spatiotemporal modelling (ConvLSTM/GNN, GPU) -- the third stage (now confirmed in the benchmark below -- ConvLSTM reaches pooled 0.8013).** Tabular runs on a Raspberry Pi 5 CPU; the neural runs are on a Kaggle T4.
+
+**2026-06-07 spatiotemporal neural benchmark** (Kaggle Tesla T4, *identical* 9-fold year-based expanding-window walk-forward -- 5-yr initial / 1-yr step / 1-yr test -- all models on the same `feature_matrix.json`):
+
+| Model | Pooled AUC | Mean AUC | Type |
+|---|---|---|---|
+| L2 logistic (85 feat) | 0.7747 | 0.7754 | flat tabular |
+| HistGBT (85 feat) | 0.7839 | 0.7846 | flat tabular tree |
+| HistGBT + 8-neighbour gradient | 0.7905 | 0.7917 | tabular + spatial |
+| Elastic-net + 8-neighbour gradient | 0.7955 | 0.7957 | tabular + spatial |
+| tabular ensemble (ENET + GBT) | 0.7992 | 0.7999 | flat-tabular ceiling |
+| SeismoGNN (GATv2x3 + GRU) | 0.7925 | 0.7969 | graph spatiotemporal |
+| **ConvLSTM (2-layer + SE attention, 90-day)** | **0.8013** | **0.8013** | grid spatiotemporal |
+
+**ConvLSTM is the only model that clears a robust 0.80 on both pooled and mean AUC** (std 0.0124; trains in 8.6 min on one T4), edging the best flat-tabular ensemble (0.7992) and beating the graph model. For this regular 11x11x2-degree grid the grid-convolution receptive field outperforms the fault-network graph. The flat-tabular ceiling (~0.799) holds even under this split scheme -- crossing it required learned spatiotemporal structure, confirming the third-stage hypothesis. Reproduced on Kaggle with `feature_matrix.json` as a private dataset; the only fixes needed were a `total_mem` -> `total_memory` attribute name and selecting a T4 (Kaggle's default P100/sm_60 is unsupported by the current PyTorch).
 
 **Initiative 2: CSEP-Compatible Format + Benchmark**
 - ML probability → CSEP XML rate forecast (2°×2° grid, 4 magnitude bins)
