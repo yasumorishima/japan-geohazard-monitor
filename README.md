@@ -1045,6 +1045,17 @@ Phase 8.0 revealed critical bugs in stacking:
 
 **Temporal augmentation (tested, ruled out):** adding per-cell 3-day deltas + acceleration (255 features) did *not* help — L1 pooled 0.7716 / ensemble 0.7780, slightly below the 85-feature version (folds 4-5 degraded). Crude differencing adds more noise than signal; spatial-neighbour aggregation (each cell + its 8 neighbours) is the next lever to try.
 
+**Spatial-neighbour aggregation (tested, the strongest tabular lever so far):** appending each cell's 8-neighbour *gradient* (cell value minus neighbourhood mean; 85 extra columns -> 170 total) lifts the linear model materially. Same 6-fold expanding-window splits:
+
+| Model (F + 8-neighbour gradient) | Pooled AUC | Folds (min..max) |
+|---|---|---|
+| L2 logistic (base 85 feat) | 0.7716 | 0.742..0.800 |
+| L2 logistic (+gradient, 170 feat) | 0.7865 | 0.753..0.821 |
+| **Elastic-net (+gradient, 170 feat)** | **0.7960** | 0.765..0.823 |
+| ensemble (ENET 0.6 + spatial-GBT 0.2 + GBT 0.2) | **0.7987** | 0.767..0.825 |
+
+Four of six folds clear 0.80; the two oldest folds (0.767, 0.781) hold the pooled score just short of a robust 0.80. Elastic-net hyperparameters are saturated (C 0.05-0.3 x l1_ratio 0.3-0.7 all give 0.7959-0.7961), and richer spatial features (neighbour std, 2-ring gradient) and SGD-elasticnet did *not* beat the simple 8-neighbour gradient. **Conclusion: the spatial gradient is the single most effective tabular feature (base 0.772 -> 0.796), confirming spatial structure is the right direction, but flat per-cell models top out at ~0.799 pooled. Crossing a robust 0.80 requires genuine spatiotemporal modelling (ConvLSTM/GNN, GPU) -- the third stage.** All runs on Raspberry Pi 5 CPU.
+
 **Initiative 2: CSEP-Compatible Format + Benchmark**
 - ML probability → CSEP XML rate forecast (2°×2° grid, 4 magnitude bins)
 - 4 reference models: Uniform Poisson, Smoothed Seismicity (Helmstetter 2007), Relative Intensity (Rhoades 2004), Simple ETAS
