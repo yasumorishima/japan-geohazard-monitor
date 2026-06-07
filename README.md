@@ -1107,6 +1107,8 @@ The ensemble beats *both* components (+0.7pt over tabular, +0.4pt over ConvLSTM)
 
 At a **34-day horizon the tabular ensemble (ENET + GBT + 8-neighbour gradient) reaches mean and pooled AUC 0.854 with every fold above 0.80 (min 0.819)** -- a robust 0.85, tabular-only (no neural model). A 34-day train/test embargo (purging train timesteps whose forward label overlaps the test period) costs only 0.3pt (0.857 to 0.854), confirming the gain is real predictability, not label leakage. Longer windows climb further (58d ~0.89, 88d ~0.92). The 7-day and 34-day forecasts are simply different operational products -- 0.80 is the ceiling for the weekly forecast, and ~0.85 is reached for the monthly one.
 
+**34-day ensemble (ConvLSTM + tabular):** re-running the ConvLSTM on a Kaggle T4 with the same 34-day relabelling and 34-day embargo, then rank-averaging its per-cell predictions with the tabular ensemble (exact (fold, t_day, cell) join, 132,616 rows, 0 misses, 0 label mismatches) lifts the monthly forecast to **mean and pooled AUC 0.859 with every fold above 0.82 (min 0.821)** -- a robust ~0.86, beating both components by ~0.5pt. The same test-set early-stopping caveat applies to the ConvLSTM component. Net result: weekly (7-day) M5+ forecasting tops out at AUC ~0.805, the monthly (34-day) forecast reaches ~0.86, and the decisive lever was the prediction horizon, not additional features.
+
 **Initiative 2: CSEP-Compatible Format + Benchmark**
 - ML probability → CSEP XML rate forecast (2°×2° grid, 4 magnitude bins)
 - 4 reference models: Uniform Poisson, Smoothed Seismicity (Helmstetter 2007), Relative Intensity (Rhoades 2004), Simple ETAS
