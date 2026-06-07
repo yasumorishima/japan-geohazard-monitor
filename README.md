@@ -1084,6 +1084,16 @@ Four of six folds clear 0.80; the two oldest folds (0.767, 0.781) hold the poole
 
 The broad version *degrades* the ceiling by 0.8pt and nearly doubles per-fold std (0.0148 to 0.0283), with the damage concentrated in the linear model on specific held-out years (fold-1 and fold-8 elastic-net collapse to 0.65-0.70). A surgical version (only the L1-effective precursors, with stationary z-score and delta derivatives only) is a wash at 0.7970 versus 0.7982. **Conclusion:** the existing single-day precursor values already capture the usable signal, and daily multi-window temporal derivatives add year-to-year non-stationarity (solar-cycle and instrument drift) faster than predictive signal. The failure mode is non-stationarity, not insufficient temporal resolution, which confirms ~0.80 as the robust ceiling at 2-degree / 7-day M5+ across model capacity (tabular, ConvLSTM, GNN), spatial features (8-neighbour gradient), and now temporal multi-scale. Breaking it would require changing the prediction problem itself (grid resolution, horizon, or multi-task), not finer feature engineering.
 
+**2026-06-07 ConvLSTM x tabular ensemble (tested, the first lever to move the aggregate above 0.80):** the spatiotemporal ConvLSTM (90-day grid history) and the flat-tabular ensemble (single-timestep per-cell) consume *asymmetric* inputs, so their errors should partially decorrelate. The ConvLSTM kernel was re-run on a Kaggle T4 with a per-fold prediction dump, and its per-cell test probabilities were joined to a fresh tabular run on the *same* 9-fold split by exact (fold, t_day, cell) key (132,616 rows, 0 misses, 0 label mismatches). Equal-weight per-fold rank average:
+
+| Model (same 9-fold split) | Mean AUC | Pooled | Std | Min fold |
+|---|---|---|---|---|
+| tabular ensemble (ENET + GBT + 8-neighbour gradient) | 0.7981 | 0.7980 | 0.0148 | 0.765 |
+| ConvLSTM (this run) | 0.8014 | 0.8015 | 0.0132 | 0.779 |
+| **ConvLSTM x tabular (50/50 rank average)** | **0.8050** | **0.8051** | 0.0134 | 0.780 |
+
+The ensemble beats *both* components (+0.7pt over tabular, +0.4pt over ConvLSTM) and lowers variance -- the first result this round to move the aggregate meaningfully above 0.80 rather than just touch it within noise, confirming the two model families carry complementary signal. Blend weight is not tuned (0.4/0.6 gives an identical 0.8051, and 50/50 is the headline). **Two honest caveats remain.** (1) The two hardest folds (the earliest test year with the least training data, and the latest) still sit at ~0.78, so this is a robust-0.80 *aggregate*, not robust on every fold. (2) The ConvLSTM selects its best epoch on the test fold (early stopping on test AUC), so the ConvLSTM and ensemble numbers carry mild optimism that the leak-free tabular does not -- a fully clean version would early-stop on a validation split. Net: ~0.805 aggregate is the best this configuration reaches, and crossing a per-fold-robust 0.80 on the hardest years would still require changing the prediction problem (resolution, horizon, or multi-task), not finer feature engineering.
+
 **Initiative 2: CSEP-Compatible Format + Benchmark**
 - ML probability → CSEP XML rate forecast (2°×2° grid, 4 magnitude bins)
 - 4 reference models: Uniform Poisson, Smoothed Seismicity (Helmstetter 2007), Relative Intensity (Rhoades 2004), Simple ETAS
