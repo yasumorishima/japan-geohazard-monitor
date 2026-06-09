@@ -1,0 +1,46 @@
+name: Fetch Hi-net Research Window
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "Start datetime, HinetPy/JST convention (e.g. 2011-03-09T12:00)"
+        required: true
+        default: "2011-03-09T12:00"
+      hours:
+        description: "Number of 1-hour segments"
+        required: true
+        default: "1"
+      max_sta:
+        description: "Max NE-Honshu stations (lat 36-41, lon 140-143.5)"
+        required: true
+        default: "10"
+      memo:
+        description: "Run intent (required)"
+        required: true
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install HinetPy obspy numpy
+      - name: Fetch Hi-net SAC
+        env:
+          HINET_USER: ${{ secrets.HINET_USER }}
+          HINET_PASS: ${{ secrets.HINET_PASS }}
+          FETCH_START: ${{ inputs.start }}
+          FETCH_HOURS: ${{ inputs.hours }}
+          FETCH_MAX_STA: ${{ inputs.max_sta }}
+        run: python scripts/fetch_hinet_research.py
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hinet-research
+          path: hinet_research.tar.gz
+          retention-days: 5
