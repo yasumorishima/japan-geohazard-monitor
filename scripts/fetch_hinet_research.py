@@ -1,7 +1,8 @@
 """One-off research fetch: NIED Hi-net continuous waveforms for a chosen
 window/region, extracted to SAC and tarred as a GHA artifact. Drives the
 raw-waveform nucleation concept test (separate from the production feature
-fetcher). Credentials come from HINET_USER/HINET_PASS (repo secrets)."""
+fetcher). Credentials come from HINET_USER/HINET_PASS (repo secrets).
+win32tools (catwin32/win2sac_32) must be built and on PATH by the workflow."""
 import os, sys, time, glob, tarfile, tempfile, shutil
 from datetime import datetime, timedelta
 
@@ -10,7 +11,7 @@ from HinetPy import Client, win32
 NET = "0101"
 USER = os.environ["HINET_USER"]
 PW = os.environ["HINET_PASS"]
-START = os.environ.get("FETCH_START", "2011-03-09T03:00")
+START = os.environ.get("FETCH_START", "2011-03-09T11:00")
 HOURS = int(os.environ.get("FETCH_HOURS", "1"))
 MAX_STA = int(os.environ.get("FETCH_MAX_STA", "10"))
 LAT0 = float(os.environ.get("FETCH_LAT0", "36.0"))
@@ -23,11 +24,6 @@ start_dt = datetime.fromisoformat(START.replace("Z", ""))
 print("window start (HinetPy local/JST convention):", start_dt, "hours", HOURS, flush=True)
 
 cl = Client(USER, PW)
-try:
-    cl._get_win32tools()
-    print("win32tools ready", flush=True)
-except Exception as e:
-    print("win32tools warn:", repr(e)[:150], flush=True)
 
 allst = cl.get_station_list(NET)
 sel = []
