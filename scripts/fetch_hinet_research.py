@@ -81,6 +81,17 @@ for seg in seg_starts:
     got = False
     for attempt in range(RETRIES):
         work = tempfile.mkdtemp(prefix="hn_")
+        # re-assert station selection right before each request: the production
+        # backfill hinet cron mutates the account-global selection mid-run
+        # (2026-06-10: 3.5h run raced 3-hourly cron, late segments returned a
+        # nationwide station set with only 3 in-box stations)
+        try:
+            cl.select_stations(NET, codes)
+        except Exception:
+            try:
+                cl.select_stations(NET, [c.split(".")[-1] for c in codes])
+            except Exception as e2:
+                print(tag, "re-select failed", repr(e2)[:100], flush=True)
         try:
             data = cl.get_continuous_waveform(NET, seg, 60, outdir=work)
             if (not (isinstance(data, tuple) and len(data) == 2)
