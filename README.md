@@ -572,6 +572,8 @@ Production confirmation that the two forward-stale fixes shipped on 2026-06-04 a
 
 Phase 1 indicators (b-value, Kp, low-res TEC) were all negative after bias correction. Phase 2 found 3 physics-based signals that survived aftershock isolation and prospective testing. **Phase 4 forward-looking evaluation achieved 62.5% precision (7.8x gain) by combining ETAS residual + cumulative CFS + foreshock alarms.**
 
+**2026-06 update**: a full skill decomposition showed the monthly ML ceiling (AUC 0.871 @ 34 days) is ~98% static spatial climatology plus aftershock clustering, with all exogenous channels at net zero; re-measured on the CSEP information-gain axis, properly-fit continuous ETAS adds a genuine 1.6-3x probability gain over climatology (post-mainshock ~10x). Research focus has moved to nucleation from raw waveforms. See the three 2026-06 sections below.
+
 Two methodological artifacts were responsible for all false positives found during the investigation:
 
 1. **Aftershock contamination**: Without isolating independent events, clustering inflates apparent signals (b-value: 90% → 15%, Kp -12h: 62% → 11%)
@@ -819,6 +821,46 @@ The fundamental shift: from "given earthquake, was there anomaly?" to **"given a
 **Key finding**: When ETAS residual, cumulative CFS, and foreshock alarms fire simultaneously, 62.5% of the time an M5+ earthquake follows within 7 days — **7.8 times better than random**. The ETAS residual (rate exceeding aftershock model prediction) is the strongest individual signal at 52.6% precision.
 
 **Pattern Informatics (Rundle 2003)**: Prospective Molchan AUC = 0.349 (< 0.5 = better than random). PI hotspots preferentially attract future M5+ events. Top hotspots: Iburi (42.75°N), Izu-Bonin (32.75°N, 29.75°N).
+
+### 2026-06: Skill decomposition — what the AUC actually measures
+
+A systematic audit (2026-06-08) of where the monthly-forecast skill comes from, using an independently harvested complete ISC/JMA M3+ catalogue (108,808 events) and region-split walk-forward evaluation:
+
+- **Offshore AUC 0.83 > onshore 0.72** (M5+/34d, cells split by GNSS-station presence as a crustal/subduction proxy). The pooled 0.79-0.87 is dominated by "the next M5+ in already-active subduction zones" — aftershock clustering, not rare-mainshock precursors.
+- **19 current-activity features (rate / ETAS residual / days-since / neighbour rate) match the full 85-feature set.** The other 66 — b-value, CFS, Pattern Informatics, Benioff strain, and *every* exogenous channel (cosmic ray, geomagnetic ULF, OLR, SO2, soil moisture, cloud, X-ray, ionospheric TEC, S-net VLF, lightning, GNSS strain) — contribute net zero or negative. Onshore, the 44 exogenous features alone score **AUC 0.517 ≈ coin flip**.
+- **A single clustering feature (pi_score, AUC 0.770) nearly matches the full 85-feature GBT (0.79)**; features + ML add only ~+0.02 on top of it.
+- **A static spatial climatology (per-cell 2011-2020 M5+ frequency, time-invariant) scores AUC 0.862** on the 2020-2026 test labels — 0.009 below the 0.871 GBT ceiling. Pooled AUC is saturated by the "Tohoku-oki is always active" map.
+- The temporal skill that remains is **sparse but real**: given an M5+ in a cell, the next-7-day M5+ probability is **2.2x** baseline (Omori clustering). It is concentrated in post-mainshock windows (~2% of cell-time), which is why it barely moves a pooled all-window AUC.
+
+**Complete-catalogue precursor precision (buildup watch)**: rate-ratio buildup precursors are real but specific to shallow crustal earthquakes — Noto 2024 M7.5 ranks **1st of 114 cells with 32x lift using only data up to 30 days before**, and Kumamoto 2016 shows a 483x fused anomaly; subduction M7s show no catalogue precursor (activity saturation at 400-934 events/yr). Operating point: recall ~18%, lift ~2.6-3x, false-alarm rate ~7%.
+
+**GNSS strain channel (NGL tenv3, 1,217 Japanese stations) — publication-grade null** (2026-06-08): strain-anomaly fusion correctly ranks Noto 2024 M7.5 #1 one month ahead and diagnoses the documented slow-slip precursor, but in systematic prospective evaluation it never beats seismicity-only scoring across months, and adding real GEONET-derived features to the ML changes AUC by −0.0007. Physically real, case-diagnostic, zero aggregate forecast skill.
+
+### 2026-06: CSEP information gain — the right metric, and where ETAS wins
+
+Pooled AUC saturates on spatial climatology and under-measures temporal skill. Re-evaluating on the CSEP standard axis — Poisson forecast log-likelihood gain over the time-invariant climatology baseline — fit on 2012-2020, scored prospectively on 2020-2026 (M3.5+ driver catalogue, 54,075 events; M5+ targets):
+
+| Model | Information gain (nats/event) | Probability gain |
+|---|---|---|
+| Gridded ETAS (2°/daily, proper likelihood fit) | +0.46 | 1.58x |
+| **Continuous grid-free ETAS (point-process MLE)** | **+3.63** | median 2.52x |
+| **+ regional kernels (crustal vs subduction)** | **+3.69** | median 3.11x |
+| Post-mainshock regime (<7d, <100 km of M≥6) | +9.10 | ~9000x (n=92) |
+
+- The continuous model recovers textbook physics (Omori p=1.15, no degenerate parameters) and 100% of test events score above climatology. Continuous (per-event) and gridded (cell-window) evaluation frames differ, so the rows are not strictly comparable — the robust statement is that both beat climatology prospectively and gridding destroys most of the resolvable skill.
+- **The regional split is real physics**: subduction kernels fit larger aftershock zones, stronger magnitude scaling and faster Omori decay than crustal ones (+0.055 nats, train and test agree; offshore-target IG 4.01 > onshore 3.48).
+- Anisotropic (trench-elongated) kernels and spatially-varying b-value magnitude forecasting were both tested and rejected (overfit −0.009 / aggregate null +0.0005, with one weak real signal: causal b drops to 0.86 before M≥6.5 vs 0.94 before M5-6).
+- Short-horizon research validation: weekly 7-day M5+ maps at 0.5° resolution score **1.83x climatology overall and 6.9x in post-mainshock windows** (0.25°: 1.94x / 15.9x, post-mainshock alerting only). A USGS near-real-time driver variant loses little (1.67x / 6.8x), so the approach survives on a live feed.
+
+**Conclusion of the arc**: earthquake forecast skill exists and decomposes cleanly — a static hazard map is an AUC-0.86 product; properly-fit ETAS aftershock forecasting adds a genuine 1.6-3x (post-mainshock ~10x) probability gain on top; exogenous precursor channels add nothing measurable in aggregate. The catalogue/ETAS occurrence axis is at its ceiling.
+
+### 2026-06: Next frontier — nucleation from raw waveforms (in progress)
+
+The remaining unsolved problem is **nucleation of independent mainshocks**, and that information cannot be in the M3.5+ catalogue — it discards >99% of the waveform record, while the candidate precursors (Mc<2 micro-foreshocks, tremor, slow slip) live below catalogue completeness. New approach: build Mc≈1-2 micro-earthquake catalogues directly from continuous raw waveforms with deep-learning phase pickers (SeisBench PhaseNet + PyOcto association, Kaggle GPU), and test whether documented foreshock acceleration/migration is detectable prospectively.
+
+- **Pipeline validated on Iquique 2014** (public GEOFON/IPOC data): 17 foreshock days → 4,806 auto-located micro-events; the catalogue reproduces the documented foreshock migration toward the mainshock epicentre (median distance 182 km → 28 km over 9 days, consistent with Kato & Nakagawa 2014).
+- **Tohoku 2011 (Hi-net; ground truth = Kato et al. 2012)**: a dedicated research fetch workflow (`fetch-hinet-research.yml`, window-scoped SAC export) feeds the 2011-03-09 M7.3 foreshock → 03-11 M9 window; PhaseNet on real Hi-net SAC already spike-detects the M7.3 in a smoke window. Micro-catalogue construction and prospective migration/rate analysis in progress.
+- Strictly research — no productization or public alerting.
 
 ## Automated Analysis (GitHub Actions)
 
@@ -1423,6 +1465,9 @@ Feature matrix exported to Google Drive for Colab GPU experiments. (Historical: 
 | **Phase 19** | 🔄 Running | S-netマルチセンサー（0120速度+0120C高感度+0120A加速度）+ VLFスペクトル。84→92特徴量。ワークフロー修正: S-net前半移動+incremental save（タイムアウト時データ喪失防止）+SMAP無効化 |
 | **S-net** | ✅ Active | NIED承認済。圧力チャンネル不在→**波形特徴量**に転換。0120A(加速度)確認済み、0120(速度)+0120C(高感度)をPhase 19で追加 |
 | **Data Backfill** | 🔄 Running | `backfill.yml`: 全28+ fetcher を3時間毎cron（8スケジュール、24/7）で実行。 **fully cloud-native (PR #166、 2026-05-28)**: merge job は `ubuntu-latest` で走り、 scratch artifacts (light/modis/so2/cloud/snet/hinet) は runner の `/mnt/merge` (ephemeral disk ~74 GB) に展開、 結果 `geohazard.db` は **Hugging Face dataset [`yasumorishima/japan-geohazard`](https://huggingface.co/datasets/yasumorishima/japan-geohazard)** へ一次保存 (UTC 00:00 cron のみ + LFS history squash)。 GH Actions checkpoint artifact (30-day) が per-run working tier。 退役した RPi5 self-hosted runner + USB SSD primary tier (PR #157/#159) を置換。 Discord通知（coverage %） + 失敗時Issue自動作成。 100%到達でcron頻度削減 |
+| **Operational OEF** | 🟢 Live | `scripts/operational_forecast.py`: monthly 34-day M5+ cell probabilities (calibrated ensemble), prospective commits to `forecasts/`, self-scoring after each window closes (AUC/Brier + CSEP information gain vs climatology). RPi5 cron, 1st of each month. Honest framing: OOS AUC 0.863 is mostly spatial climatology (0.854); the actionable signal is the above-normal ratio |
+| **Skill decomposition + CSEP reframing** | ✅ Complete (2026-06) | Pooled-AUC skill = static climatology (0.862) + aftershock clustering; exogenous channels null; continuous regional ETAS +3.69 nats/event over climatology (see the 2026-06 sections under Analysis Results) |
+| **Nucleation (raw waveforms)** | 🔄 Running | SeisBench PhaseNet + PyOcto micro-catalogues from continuous waveforms (Kaggle GPU); Iquique 2014 pipeline validated (4,806 events, documented foreshock migration recovered); Tohoku 2011 Hi-net episode in progress |
 
 ### Persistence Tiers
 
@@ -1455,7 +1500,7 @@ GCP プロジェクト `data-platform-490901` の `geohazard` データセット
 | Blitzortung lightning | Archive access restricted (403). Sferics Bonn DNS 失効 (`sferics.uni-bonn.de`)。代替として ISS LIS (NASA GHRC, 2017-2023) + WWLLN Monthly Thunder Hour (NASA GHRC `wwllnmth`, 2013-2025 月次) で補完 |
 | CSES satellite EM | Registration required at CSES data center |
 | Radon / He isotopes | AIST monitoring data has limited public access |
-| Hi-net waveforms | NIED registration + large data volume |
+| Hi-net waveforms | Research fetch workflow live (2026-06-10, `fetch-hinet-research.yml`: window-scoped SAC export for the nucleation study). Continuous bulk ingestion into the feature DB remains out of scope (volume) |
 | VLF radio propagation | Research data only (Tokai/Chiba University) |
 | Schumann resonance | No documented download API (HeartMath GCI live only) |
 | CTBTO infrasound | IMS data restricted (vDEC contract) |
