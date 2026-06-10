@@ -49,16 +49,20 @@ for s in allst:
     la = float(la); lo = float(lo)
     if LAT0 <= la <= LAT1 and LON0 <= lo <= LON1:
         sel.append((str(sid), la, lo))
-sel = sorted(sel)[:MAX_STA]
-print("selected", len(sel), "stations:", sel, flush=True)
+sel_all = sorted(sel)
+sel = sel_all[:MAX_STA]
+print("selected", len(sel), "of", len(sel_all), "in-box stations:", sel, flush=True)
 if not sel:
     print("NO STATIONS IN BOX", flush=True)
     sys.exit(1)
 codes = [c for c, _, _ in sel]
 
+# coords for ALL in-box stations: Hi-net can return more stations than
+# selected (account-global selection state), and association silently
+# drops picks from stations without coordinates
 with open("station_coords.csv", "w") as f:
     f.write("station,latitude,longitude\n")
-    for c, la, lo in sel:
+    for c, la, lo in sel_all:
         f.write(c + "," + str(la) + "," + str(lo) + "\n")
 
 try:
