@@ -16,9 +16,25 @@ on:
         required: false
         default: ""
       max_sta:
-        description: "Max NE-Honshu stations (lat 36-41, lon 140-143.5)"
+        description: "Max in-box stations"
         required: true
         default: "10"
+      lat0:
+        description: "Station box south latitude"
+        required: false
+        default: "36.0"
+      lat1:
+        description: "Station box north latitude"
+        required: false
+        default: "41.0"
+      lon0:
+        description: "Station box west longitude"
+        required: false
+        default: "140.0"
+      lon1:
+        description: "Station box east longitude"
+        required: false
+        default: "143.5"
       memo:
         description: "Run intent (required)"
         required: true
@@ -55,6 +71,10 @@ jobs:
           FETCH_HOURS: ${{ inputs.hours }}
           FETCH_HOURS_LIST: ${{ inputs.hours_list }}
           FETCH_MAX_STA: ${{ inputs.max_sta }}
+          FETCH_LAT0: ${{ inputs.lat0 }}
+          FETCH_LAT1: ${{ inputs.lat1 }}
+          FETCH_LON0: ${{ inputs.lon0 }}
+          FETCH_LON1: ${{ inputs.lon1 }}
         run: python scripts/fetch_hinet_research.py
       - name: Upload artifact
         uses: actions/upload-artifact@v4
