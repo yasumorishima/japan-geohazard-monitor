@@ -572,7 +572,7 @@ Production confirmation that the two forward-stale fixes shipped on 2026-06-04 a
 
 Phase 1 indicators (b-value, Kp, low-res TEC) were all negative after bias correction. Phase 2 found 3 physics-based signals that survived aftershock isolation and prospective testing. **Phase 4 forward-looking evaluation achieved 62.5% precision (7.8x gain) by combining ETAS residual + cumulative CFS + foreshock alarms.**
 
-**2026-06 update**: a full skill decomposition showed the monthly ML ceiling (AUC 0.871 @ 34 days) is ~98% static spatial climatology plus aftershock clustering, with all exogenous channels at net zero; re-measured on the CSEP information-gain axis, properly-fit continuous ETAS adds a genuine 1.6-3x probability gain over climatology (post-mainshock ~10x). Research focus has moved to nucleation from raw waveforms. See the three 2026-06 sections below.
+**2026-06 update**: a full skill decomposition showed the monthly ML ceiling (AUC 0.871 @ 34 days) is ~98% static spatial climatology plus aftershock clustering, with all exogenous channels at net zero; re-measured on the CSEP information-gain axis, properly-fit continuous ETAS adds a genuine 1.6-3x probability gain over climatology (post-mainshock ~10x). Research focus moved to nucleation from raw waveforms; the Tohoku 2011 pre-registered prospective test closed at 0/3 - the apparent near-hypocentre rate excess proved to be a detection-sensitivity artifact (see the three 2026-06 sections below).
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
 
@@ -854,7 +854,7 @@ Pooled AUC saturates on spatial climatology and under-measures temporal skill. R
 
 **Conclusion of the arc**: earthquake forecast skill exists and decomposes cleanly — a static hazard map is an AUC-0.86 product; properly-fit ETAS aftershock forecasting adds a genuine 1.6-3x (post-mainshock ~10x) probability gain on top; exogenous precursor channels add nothing measurable in aggregate. The catalogue/ETAS occurrence axis is at its ceiling.
 
-### 2026-06: Next frontier — nucleation from raw waveforms (in progress)
+### 2026-06: Next frontier — nucleation from raw waveforms (Tohoku episode complete - honest null)
 
 The remaining unsolved problem is **nucleation of independent mainshocks**, and that information cannot be in the M3.5+ catalogue — it discards >99% of the waveform record, while the candidate precursors (Mc<2 micro-foreshocks, tremor, slow slip) live below catalogue completeness. New approach: build Mc≈1-2 micro-earthquake catalogues directly from continuous raw waveforms with deep-learning phase pickers (SeisBench PhaseNet + PyOcto association, Kaggle GPU), and test whether documented foreshock acceleration/migration is detectable prospectively.
 
@@ -1472,7 +1472,7 @@ Feature matrix exported to Google Drive for Colab GPU experiments. (Historical: 
 | **Data Backfill** | 🔄 Running | `backfill.yml`: 全28+ fetcher を3時間毎cron（8スケジュール、24/7）で実行。 **fully cloud-native (PR #166、 2026-05-28)**: merge job は `ubuntu-latest` で走り、 scratch artifacts (light/modis/so2/cloud/snet/hinet) は runner の `/mnt/merge` (ephemeral disk ~74 GB) に展開、 結果 `geohazard.db` は **Hugging Face dataset [`yasumorishima/japan-geohazard`](https://huggingface.co/datasets/yasumorishima/japan-geohazard)** へ一次保存 (UTC 00:00 cron のみ + LFS history squash)。 GH Actions checkpoint artifact (30-day) が per-run working tier。 退役した RPi5 self-hosted runner + USB SSD primary tier (PR #157/#159) を置換。 Discord通知（coverage %） + 失敗時Issue自動作成。 100%到達でcron頻度削減 |
 | **Operational OEF** | 🟢 Live | `scripts/operational_forecast.py`: monthly 34-day M5+ cell probabilities (calibrated ensemble), prospective commits to `forecasts/`, self-scoring after each window closes (AUC/Brier + CSEP information gain vs climatology). RPi5 cron, 1st of each month. Honest framing: OOS AUC 0.863 is mostly spatial climatology (0.854); the actionable signal is the above-normal ratio |
 | **Skill decomposition + CSEP reframing** | ✅ Complete (2026-06) | Pooled-AUC skill = static climatology (0.862) + aftershock clustering; exogenous channels null; continuous regional ETAS +3.69 nats/event over climatology (see the 2026-06 sections under Analysis Results) |
-| **Nucleation (raw waveforms)** | 🔄 Running | SeisBench PhaseNet + PyOcto micro-catalogues from continuous waveforms (Kaggle GPU); Iquique 2014 pipeline validated (4,806 events, documented foreshock migration recovered); Tohoku 2011 Hi-net episode complete - pre-registered prospective test final verdict 0/3 after detection-sensitivity equalization (matched filter; see the 2026-06 nucleation section) |
+| **Nucleation (raw waveforms)** | ✅ Complete (honest null) | SeisBench PhaseNet + PyOcto micro-catalogues from continuous waveforms (Kaggle GPU); Iquique 2014 pipeline validated (4,806 events, documented foreshock migration recovered); Tohoku 2011 Hi-net episode complete - pre-registered prospective test final verdict 0/3 after detection-sensitivity equalization (matched filter; see the 2026-06 nucleation section) |
 
 ### Persistence Tiers
 
