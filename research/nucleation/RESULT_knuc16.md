@@ -1,0 +1,1 @@
+knuc16 Iquique SSL nucleation probe (test 10) = NULL. Multi-case extension of knuc15. Verdict by analyze_iquique_ssl.py (commit 8146c2ba) on yasunorim/ssl-iquique. 4463 events, 6 core CX stations, bins=31. P1 FAIL P2 FAIL C1 FAIL C2 FAIL C3 PASS -> NULL. Cleaner null than Kumamoto (no temporal drift at all). Kumamoto + Iquique both NULL.
