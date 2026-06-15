@@ -24,3 +24,14 @@
 **Conclusion.** SSE detection requires BOTH a low noise floor AND near-field coverage of the slip. Offshore shallow sources defeat onshore GNSS regardless of its noise floor (Hikurangi), which is the quantitative case for seafloor geodesy — but seafloor OBP carries its own ocean-noise floor (~Mw6.3, twelfth test). This unifies the onshore-GNSS nucleation arc and the seafloor-OBP arc into one network-design curve, and corrects the earlier "noise environment, not offshore-ness" framing: offshore-ness matters precisely *through* near-field coverage. Reaching the ~Mw6 inferred-precursor scale for an offshore source needs dense seafloor instrumentation AND ocean-noise reduction (regional assimilative model), neither available in open form.
 
 Harness: RPi5 `~/geo-ml/floor_curve.py` (+ `floor_plot.py`); data `~/geo-ml/fc_{cascadia,guerrero,hikurangi,boso}/`. Research only; not productized.
+
+## Addendum — detection floor vs network density (station-subsampling curves)
+
+Turning the 5-point scatter into actual curves: for the two detected cases, random station subsets (N = 4…all, 25 draws each) are run through the identical harness and the floor / realized detection is tabulated vs N (`floor_density.py`, fixed seed).
+
+- **Boso onshore (strong near-field signal):** the documented SSE is detected at **pct 100 for every N down to 4 stations** — the slip is directly under the network, so even a handful of gauges suffice; added stations only refine the analytic noise floor (Mw 5.50 at N=4 → 5.31 at N=19, monotone).
+- **Cascadia ETS (weak, distributed ~few-mm signal):** realized detection **climbs monotonically with density — pct 32 (N=4) → 97 (N=34), crossing 95% only near N≈28.** A weak signal needs many stations to beat the noise; near-field presence alone is not enough when the per-station displacement is millimetric.
+
+**Caveat (honest):** the analytic floor computed at very low N is biased optimistically because per-epoch common-mode removal estimated from few stations overfits and erases real correlated variance (visible as Cascadia's low-N floor sitting *below* its high-N floor). The realized-detection-vs-N curve (which uses the real event) is the robust deliverable; the analytic-floor-vs-N is clean only where N is not tiny (Boso).
+
+**Takeaway:** "detection floor vs network" is two regimes — for a strong near-field source a few stations suffice and density buys a lower floor; for a weak/distributed source density is the binding requirement to reach detection at all. (`research/nucleation/floor_density.png`)
