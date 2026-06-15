@@ -60,3 +60,15 @@ The headline floors above use a Gaussian 1.96σ analytic floor, which assumes th
 | Guerrero (offset) | 6.77 | 6.83 | +0.06 |
 
 **The floors are robust to the noise-distribution assumption: the colored-noise/heavy-tail correction moves them by ≤0.25 Mw (largest where the std is smallest, Boso), and is negligible elsewhere.** The earlier Gaussian floors were at most marginally optimistic. **Area sensitivity:** since M0 = μ·A·slip, the floor Mw carries a systematic of ±0.40 Mw per factor-of-4 change in the assumed fault area A (a concentrated slip patch of A/4 lowers the floor by 0.40 Mw; a 4× larger patch raises it by 0.40). The honest headline is therefore: **empirical detection floor Mw ~5.6–6.8 across the five open networks, with a ±0.4 Mw area systematic** — and all qualitative conclusions (noise sets the floor; near-field coverage decides realization; Hikurangi's offshore Mw7.0 invisible onshore) are unchanged. Remaining論文-grade item: a full cross-station correlated surrogate (block bootstrap of the multi-station residuals) would tighten the colored-noise treatment beyond the single-trace empirical percentile used here.
+
+## Correlated-noise floor with confidence intervals (moving-block bootstrap) — corrects the headline
+
+The single-trace empirical percentile still rests on one realization of the network noise. A **moving-block bootstrap of the multi-station residual matrix** (block length L = 2×window; the *same* random block indices applied to every station and both components, so cross-station and E/N spatial correlation are preserved; K = 400 surrogates; blocks drawn only from the event-free record) gives the sampling distribution of the floor and a proper spatially-correlated colored-noise null.
+
+| network | single-trace empirical floor Mw | **block-bootstrap floor Mw (median, 90% CI)** |
+|---|---|---|
+| Cascadia | 6.11 | **6.14 (6.07 – 6.22)** |
+| Boso onshore | 5.56 | **6.14 (6.01 – 6.28)** |
+| Hikurangi | 5.99 | **6.34 (6.24 – 6.43)** |
+
+**This corrects the headline.** The single-trace estimate underestimated the floor where the noise is strongly cross-correlated and the CMC was aggressive — most severely for Boso (5.56 → 6.14): its apparently ultra-low floor was an artifact of one low-variance realization plus near-complete common-mode removal, not a real sensitivity. Under the correlated-noise null **all three onshore networks converge to a tight floor of Mw ≈ 6.1 – 6.4**, with the offshore-poor Hikurangi geometry highest. This *strengthens* the central result: across every open onshore network the single-matched-filter floor is ~Mw6.1–6.4, so inferred ~Mw6 precursors sit at or below the floor everywhere, and the seafloor-OBP floor (~Mw6.3, Boso) is no better in open form. Realized-detection verdicts are unchanged (Boso obs slip-step 64 mm ≫ the 6.14 floor → detected at SNR 58; Cascadia 19 mm ≈ floor → detected, marginal; Hikurangi 1.4 mm ≪ floor → not detected). Block-length sensitivity: longer L (more autocorrelation preserved) raises the floor slightly; L = 2×detection-window is the principled choice. (`floor_bootstrap.py`)
