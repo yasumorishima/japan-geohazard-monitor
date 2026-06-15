@@ -81,3 +81,38 @@ To extend beyond the original five networks (reviewer caution: small N), two lon
 - **Tokai 2000–2005 (Mw~6.8, depth ~25 km):** **detector-limited null, excluded from the curve** — this is an *ultra-long* (~5-year) SSE that exceeds the analyzable baseline, so the secular-trend fit (post-event anchor at 2003 still falls mid-event) absorbs the gradual signal. This is a harness limitation for multi-year transients, not a network/floor measurement; a proper test needs a continuous 1997–2007 window (pre and post both outside the event). Recorded honestly rather than presented as a network result.
 
 With Bungo added, the onshore positive controls span **six networks across four plate boundaries** (Japan ×1 valid, Cascadia, New Zealand ×2 [Gisborne shallow-offshore null + Manawatu deep detected], Mexico) plus seafloor OBP — all consistent with the noise-limited floor of Mw ≈ 6.1–6.4 (block-bootstrap) and the rule that realized detection requires near-field coverage of the slip.
+
+## Borehole strainmeter modality - 2012 Cascadia ETS (overturns the earlier "strainmeter dead-end")
+
+An earlier probe concluded the PBO/NOTA borehole strainmeter (BSM) record was unusable because the processed level-2b `dtc` (detrended, tide-corrected) field is over-smoothed - at native resolution it is a featureless straight line with no tectonic transient. **That conclusion was a processing artifact and is now overturned.** The fix is to use the *raw calibrated* strain field `s` (not `dtc`), daily-median it (which removes the sub-daily tides naturally), and apply our own SSE-window-masked detrend so the slow transient is preserved rather than absorbed.
+
+Positive control: the **2012 northern Cascadia ETS** (PNSN: 2012-07-30 to 2012-10-12, a ~2.5-month rupture that migrated north from Puget Sound to Vancouver Island, total geodetic Mw ~6.8). Network: 9 NOTA BSM stations (B004, B005, B006, B017, B201, B204, B927, B928, B941), public NCEDC level-2b XML. Each station carries an areal channel (Eee+Enn) and two shear channels (Eee-Enn, 2Ene).
+
+**Method.** Per station and channel: daily-median raw `s`, linear detrend with the ETS window masked, then an **inverse-variance-weighted Okada strain-tensor matched filter** (finite-difference areal and shear Green's functions for unit slip on a single equivalent patch matched to the GNSS Cascadia geometry). Inverse-variance weighting is essential - the areal channel is about 7x noisier than shear (barometric and hydrologic loading), so equal weighting drowns the signal. Common-mode removal is *not* applied: with only 9 widely-spaced stations the ETS strain is spatially coherent, so CMC subtracts the signal itself (CMC collapses the peak SNR from 8.2 to 1.1).
+
+**Detection.** The migrating rupture defeats a stationary window-mean statistic (window-mean only pct 87, SNR 1.6 - the signal arrives at different stations at different times, diluting a fixed-window average). A **peak statistic** (max |a| inside the ETS window, with the null built from the same max-over-window operator slid across the event-free record, so the look-elsewhere penalty is carried) recovers it cleanly: **pct 100, SNR 8.2**. This is the same long/migrating-event accommodation used elsewhere in this study and is specified by the event class, not chosen post hoc. Single-station shear channels independently confirm (B004 5.8 sigma, B928 5.2 sigma).
+
+**Robustness.** The detection and floor are stable across detrend order and channel selection:
+
+| configuration | peak SNR | floor Mw |
+|---|---|---|
+| full tensor + linear detrend | 8.2 | 5.78 |
+| shear-only + linear (areal dropped) | 8.5 | 5.75 |
+| full tensor + quadratic detrend | 9.0 | 5.77 |
+
+Dropping the areal channel entirely (removing any barometric contamination) leaves the result essentially unchanged - the detection is shear-driven. A quadratic detrend (absorbing nonlinear grout-curing trend) likewise leaves it unchanged. The low-noise stations that drive the result have stationary pre-event vs post-event noise (B004, B941, B927 ratios 0.87-1.08); the few non-stationary stations (B017, B204) carry ~2-3 microstrain noise and are down-weighted to near zero.
+
+**Floor - matched-geometry comparison (the honest number).** Floor Mw is confounded by the assumed source area, so the BSM floor is compared to GNSS **on the identical patch** (A = L x W = 150 x 50 km, depth 35 km). At that geometry:
+
+| modality | detectable slip floor (95th-pct null) | floor Mw |
+|---|---|---|
+| GNSS (27 stn) | 0.0047 - 0.0056 m | 5.98 - 6.03 |
+| **BSM (9 stn)** | **0.0021 - 0.0023 m (peak)** | **5.75 - 5.78** |
+
+The BSM network detects roughly **2.4x smaller slip** than the GNSS network on the same patch - a floor about **0.25 Mw lower**. (A window-mean BSM floor reaches 0.0011 m / Mw 5.57, ~0.45 lower, but uses a 74-day average versus the GNSS 28-day step, so the peak comparison is the fair one. An earlier loose claim of "0.5-0.8 Mw lower" was inflated by a geometry mismatch and is retracted.) The template-projected moment of the real event is Mw 6.33 versus the catalog ~6.8 - the deficit is expected from projecting a 2.5-month migrating rupture onto one static patch.
+
+**What this adds to the curve.** A third independent modality (GNSS / seafloor OBP / borehole strainmeter) now sits on the floor-vs-network picture. The strainmeter pushes the noise floor modestly below the onshore GNSS floor (~0.25 Mw) where stations sit near the slip - and it reinforces the central thesis: realized detection is template- and geometry-limited (the migrating rupture breaks the stationary matched filter, requiring the peak statistic) even when the noise floor sits well below the event size. (`bsm_fetch2.py`, `bsm_detect3.py`, `bsm_robust.py`)
+
+![BSM 2012 Cascadia ETS detection](bsm_cascadia.png)
+
+*Top: inverse-variance strain-tensor matched-filter output (slip-equivalent) for the 9-station NOTA borehole-strainmeter network across 2012, with the ETS window shaded and the peak (SNR 8.2, pct 100) marked. Bottom: shear-strain (2Ene) residuals at the three clean stations independently showing the transient over the ETS window.*
