@@ -35,3 +35,14 @@ Turning the 5-point scatter into actual curves: for the two detected cases, rand
 **Caveat (honest):** the analytic floor computed at very low N is biased optimistically because per-epoch common-mode removal estimated from few stations overfits and erases real correlated variance (visible as Cascadia's low-N floor sitting *below* its high-N floor). The realized-detection-vs-N curve (which uses the real event) is the robust deliverable; the analytic-floor-vs-N is clean only where N is not tiny (Boso).
 
 **Takeaway:** "detection floor vs network" is two regimes — for a strong near-field source a few stations suffice and density buys a lower floor; for a weak/distributed source density is the binding requirement to reach detection at all. (`research/nucleation/floor_density.png`)
+
+## Controlled test — same margin, depth as the only major variable (Hikurangi deep vs shallow)
+
+To de-confound "network quality vs source location" directly, two SSEs on the **same Hikurangi subduction margin**, recorded by the **same onshore NZ GeoNet network type** (NGL kenv), differing mainly in source depth/location:
+
+- **Gisborne 2014 — shallow (~12 km), offshore** (short ~2-week event, centered-step detector): **NOT detected, pct 10 / SNR 0.2** (28 stations).
+- **Manawatu 2010–11 — deep (30–40 km), inland-projecting** (long ~1.5-yr event, post-minus-pre **offset detector** — the centered-step detector is blind to a multi-month ramp and must be replaced for long SSEs): **DETECTED, pct 100** (offset −24 mm, the largest among 362 baseline windows; 35 stations).
+
+The deep, inland-projecting SSE produces a clear cumulative onshore offset that no baseline window matches; the shallow offshore SSE of *higher* published magnitude (Mw7.0 vs ~7.0) is invisible to the same onshore network because the slip sits offshore beyond the near field. **This confirms, with depth as the dominant variable, that detectability is governed by the source's position relative to the network (near-field coverage), not by network quality.** (`research/nucleation/hik_compare.png`)
+
+*Honest caveats:* the two events differ in duration (hence different, duration-appropriate detectors) and use different station subsets (East Cape vs lower North Island), so depth/offshore-ness is the dominant but not the sole difference. The long-event offset detector was added so that slow ramps (Manawatu, Guerrero) are not spuriously nulled by the centered-step statistic; under it Guerrero improves to pct 78 (still marginal — only one near-field open-holding station).
