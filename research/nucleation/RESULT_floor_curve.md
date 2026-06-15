@@ -46,3 +46,17 @@ To de-confound "network quality vs source location" directly, two SSEs on the **
 The deep, inland-projecting SSE produces a clear cumulative onshore offset that no baseline window matches; the shallow offshore SSE of *higher* published magnitude (Mw7.0 vs ~7.0) is invisible to the same onshore network because the slip sits offshore beyond the near field. **This confirms, with depth as the dominant variable, that detectability is governed by the source's position relative to the network (near-field coverage), not by network quality.** (`research/nucleation/hik_compare.png`)
 
 *Honest caveats:* the two events differ in duration (hence different, duration-appropriate detectors) and use different station subsets (East Cape vs lower North Island), so depth/offshore-ness is the dominant but not the sole difference. The long-event offset detector was added so that slow ramps (Manawatu, Guerrero) are not spuriously nulled by the centered-step statistic; under it Guerrero improves to pct 78 (still marginal — only one near-field open-holding station).
+
+## Robustness — colored-noise / heavy-tail floor and area sensitivity (reviewer hardening)
+
+The headline floors above use a Gaussian 1.96σ analytic floor, which assumes the matched-filter baseline-step distribution is normal. To address that (and to ground the floor in an empirical, threshold-consistent statistic rather than a parametric one), the floor is recomputed as the **95th percentile of the empirical |baseline step| distribution** — which automatically absorbs temporal autocorrelation (colored noise) and heavy tails, and is exactly the threshold the detection percentile uses.
+
+| network | Gaussian 1.96σ floor Mw | empirical 95th-pct floor Mw | shift |
+|---|---|---|---|
+| Boso onshore | 5.31 | 5.56 | +0.25 |
+| Cascadia | 6.07 | 6.11 | +0.03 |
+| Hikurangi | 6.01 | 5.99 | −0.02 |
+| Manawatu (offset) | 6.50 | 6.39 | −0.11 |
+| Guerrero (offset) | 6.77 | 6.83 | +0.06 |
+
+**The floors are robust to the noise-distribution assumption: the colored-noise/heavy-tail correction moves them by ≤0.25 Mw (largest where the std is smallest, Boso), and is negligible elsewhere.** The earlier Gaussian floors were at most marginally optimistic. **Area sensitivity:** since M0 = μ·A·slip, the floor Mw carries a systematic of ±0.40 Mw per factor-of-4 change in the assumed fault area A (a concentrated slip patch of A/4 lowers the floor by 0.40 Mw; a 4× larger patch raises it by 0.40). The honest headline is therefore: **empirical detection floor Mw ~5.6–6.8 across the five open networks, with a ±0.4 Mw area systematic** — and all qualitative conclusions (noise sets the floor; near-field coverage decides realization; Hikurangi's offshore Mw7.0 invisible onshore) are unchanged. Remaining論文-grade item: a full cross-station correlated surrogate (block bootstrap of the multi-station residuals) would tighten the colored-noise treatment beyond the single-trace empirical percentile used here.
