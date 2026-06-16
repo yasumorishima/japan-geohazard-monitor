@@ -155,3 +155,23 @@ The onshore positives so far were broad or large networks. Costa Rica's Nicoya P
 ![Nicoya 2007 SSE detection](nicoya_detect.png)
 
 *Left: matched-filter output (tenv3 daily, CMC) peaking at the documented May 2007 SSE (pct 100, SNR 10.2). Right: observed per-station displacement vectors (navy) versus the shallow-updip Okada prediction (red), correlation 0.87 (permutation p < 0.003).*
+
+## Spatial-pattern verification audit of the whole curve
+
+The Nicoya cautionary tale showed a step-statistic detection can be spurious if the observed displacement field does not match the predicted Okada pattern. That test - per-station displacement vectors versus the predicted pattern, with a permutation null (station vectors shuffled, geometry fixed at the pre-specified value, 400-500 draws) - was applied retroactively to every detection in the curve.
+
+| case | N | spatial r (obs vs Okada) | permutation p | verdict |
+|---|---|---|---|---|
+| Boso 2018 onshore | 19 | +0.81 | <0.002 | confirmed |
+| Bungo 2009-10 | 35 | +0.91 | <0.002 | confirmed |
+| Manawatu 2010-11 | 35 | -0.64 (sign = offset/rake convention) | 0.002 | confirmed |
+| Nicoya 2007 | 9 | +0.87 | <0.003 | confirmed |
+| Guerrero 2009-10 | 5 | +0.69 | 0.036 | confirmed (marginal) |
+| Hikurangi 2014 | 28 | -0.12 | 0.76 | genuine null (spatial) |
+| **Cascadia 2012 GNSS** | 33 | -0.04 (best grid-search 0.61) | 0.27 | **spatially unconfirmed - downgraded** |
+
+Five onshore detections have a displacement field that matches the predicted SSE pattern at high, permutation-significant correlation. Hikurangi's null is confirmed at the pattern level: the onshore field does not match the offshore SSE pattern (r=-0.12, p=0.76), so the Mw7.0 event is genuinely invisible onshore, not merely low-SNR. This is the spatial counterpart to the SNR-based null and strengthens the decisive Hikurangi case.
+
+**One correction.** The 2012 Cascadia ETS, listed earlier as an onshore-GNSS detection (pct 97 / SNR 2.5), does NOT pass the spatial test: at the catalogued geometry r = -0.04, and even a geometry grid search with a whole-ETS offset detector reaches only |r| = 0.61, below the permutation null 95th percentile (0.67, p = 0.27). The onshore GNSS network does not spatially resolve this event - its few-mm, 2.5-month migrating signal sits at the GNSS noise floor. It is downgraded to spatially-unconfirmed. Crucially the SAME event is detected at 8 sigma by the borehole strainmeters in this study, so the event is real - the strainmeter modality (lower floor) succeeds where onshore GNSS is marginal, which is exactly the floor-vs-modality point of the curve.
+
+This audit hardens the curve: every retained onshore detection is now spatially verified, the single marginal GNSS case is honestly downgraded, and the decisive Hikurangi null is confirmed at the pattern level. The verification protocol (temporal localization + spatial-pattern correlation + permutation null) is the standard any future case must pass. (`verify_case.py`, `casc_grid.py`)
