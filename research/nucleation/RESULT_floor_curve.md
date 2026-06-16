@@ -203,3 +203,15 @@ This is the quantitative basis of the near-field-coverage thesis: detection is s
 ![Sensitivity at slip explains the offshore null](sens_at_slip.png)
 
 *Network sensitivity (surface displacement per unit slip) at each event's actual slip location. Detected SSEs cluster at ~20-26 mm/m; the Hikurangi 2014 offshore slip is ~30x lower (0.7), mechanically invisible to the onshore network.*
+
+## Distributed-slip inversion validates the magnitude - Boso 2018
+
+The floor Mw values assume a fault area, giving a +/-0.4 Mw systematic. For the strongest detection (Boso 2018, onshore GEONET, SNR 58) the moment can instead be recovered directly from the data by inverting the observed displacement field for distributed slip, with no assumed area.
+
+A non-negative least-squares inversion (NNLS with damping) on a 36-patch grid of the Sagami / Philippine-Sea interface, fitting the 19-station offset field (RMS 10 mm), recovers a data-driven moment of **Mw 6.45-6.53 across the damping range (variance reduction 0.5-0.6)** - matching the catalogued Mw ~6.5 of the 2018 Boso SSE. The slip localizes on the interface beneath and east of the peninsula with peak slip ~0.1-0.4 m. (An unconstrained damped inversion gives a wider Mw 6.5-6.9 because negative-slip patches trade off against the moment - the physical non-negative solution is the stable one and pins Mw to 6.5.)
+
+This validates that the detection pipeline recovers the correct moment from the data, independent of any area assumption, for the best-resolved case. It does not eliminate the +/-0.4 Mw area systematic for the marginal or offshore cases (where a sparse onshore network under-determines the slip), but it confirms the magnitudes of the well-resolved onshore detections are physically correct. (`boso_inversion.py`, `boso_nnls.py`)
+
+![Boso 2018 distributed-slip inversion](boso_inversion.png)
+
+*NNLS distributed-slip inversion of the 2018 Boso SSE from 19 onshore GEONET stations - inverted slip (color) with observed (navy) and modelled (green) displacement vectors. The data-driven moment Mw 6.51 matches the catalogue ~6.5 with no assumed fault area.*
