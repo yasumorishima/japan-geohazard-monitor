@@ -181,3 +181,25 @@ This audit hardens the curve: every retained onshore detection is now spatially 
 To test repeatability at Nicoya, the same pipeline was run on the next major Nicoya SSE in the Jiang et al. (2012) catalogue (event middle times 2003 / 2005 / 2007 / 2009 / 2011). The 2009 shallow event (catalogue ~2009.4) appears as a coherent trenchward (SW) step of ~1.6 mm RMS across the nine clean stations (baseline scatter 1.5-3 mm) at June 2009 - the documented time, found by a window-agnostic scan. A geometry grid search matches the observed field at r = 0.79 (permutation p = 0.025), with the best patch shifted NW relative to 2007, consistent with the catalogue placing the 2009 shallow slip in the NW peninsula. The detection is marginal - the 2009 surface signal (~1.6 mm) is roughly half the 2007 event and near the daily-GNSS scatter - but it is a second independent Nicoya SSE recovered at the documented time with a significant spatial pattern, so the margin is not a one-event fluke.
 
 Caveat recorded honestly: the matched-filter slip-equivalent amplitude is unreliable for geometries where the predicted surface displacement is small (the normalization Sum(uE^2 + uN^2) becomes tiny and inflates the amplitude), so for the 2009 case only the detection significance via percentile, SNR and spatial correlation is reported, not a slip or Mw value. The main curve cases use pre-specified geometries with well-conditioned predicted displacement, so their floors are unaffected. (`tenv3_2009.py`, `nicoya2009_grid.py`)
+
+## Mechanism of the offshore null - sensitivity at the actual slip location
+
+The detection verdicts across the whole curve are explained mechanistically by one robust quantity: the network's sensitivity at the actual slip location, S = RMS surface displacement (E and N) across the network per 1 m of slip on a 25x25 km patch (the column norm of the Okada Green operator). It needs no fault grid and, being a magnitude, is insensitive to dip-direction convention.
+
+| event | verdict | sensitivity at slip (mm per m) | nearest station (km) |
+|---|---|---|---|
+| Nicoya 2007 | detected | 20.8 | 44 |
+| Boso 2018 | detected | 26.5 | 41 |
+| Bungo 2009-10 | detected | 19.9 | 11 |
+| Manawatu 2010-11 | detected | 20.0 | 9 |
+| Guerrero 2009-10 | detected (marginal) | 22.0 | 21 |
+| Cascadia 2012 (GNSS) | downgraded | 17.8 | 31 |
+| **Hikurangi 2014 (offshore slip)** | **null** | **0.7** | 84 |
+
+Every spatially-verified onshore detection has a network sensitivity of ~20-26 mm/m at its slip. The Hikurangi 2014 SSE, whose slip is offshore (beneath the HOBITSS seafloor array, ~84 km from the nearest onshore station), has a sensitivity of only 0.7 mm/m - about 30x lower, and robustly so across the plausible offshore slip range (0.7-1.2 mm/m for slip centroids from 178.8 to 179.3 E). For a ~0.2-0.3 m SSE that is ~0.15-0.2 mm of onshore displacement, far below the GNSS scatter. The event is mechanically invisible to the onshore network regardless of its 28-station count or its noise floor.
+
+This is the quantitative basis of the near-field-coverage thesis: detection is set first by whether the network can physically feel the slip (sensitivity at the source), and only then by noise. Two clarifications the metric exposes: the floor_curve Hikurangi geometry, placed too far inboard (178.5 E), gives a misleadingly high 12.4 mm/m - the offshore slip location is the relevant one; and Cascadia 2012's GNSS marginality is NOT a sensitivity problem (17.8 mm/m is in the detected band) but a consequence of the 2.5-month migrating rupture smearing the surface displacement below the GNSS noise at any instant - which is exactly why the lower-noise-floor borehole strainmeters detect the same event at 8 sigma. Sensitivity sets where detection is possible; noise floor and source duration set whether a given modality realises it. (`sens_at_slip.py`)
+
+![Sensitivity at slip explains the offshore null](sens_at_slip.png)
+
+*Network sensitivity (surface displacement per unit slip) at each event's actual slip location. Detected SSEs cluster at ~20-26 mm/m; the Hikurangi 2014 offshore slip is ~30x lower (0.7), mechanically invisible to the onshore network.*
