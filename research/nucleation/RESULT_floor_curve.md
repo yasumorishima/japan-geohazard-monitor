@@ -132,3 +132,26 @@ All three years are detected at pct 100, and in every year the blindly-located p
 ![BSM detection repeats across three ETS years](bsm_multiyear.png)
 
 *Window-agnostic matched-filter output for 2010, 2012, 2013. The blindly-located peak (red marker) falls inside the documented ETS season (shaded) in every year.*
+
+## Fifth plate boundary - Nicoya (Costa Rica) 2007 SSE, and a verification cautionary tale
+
+The onshore positives so far were broad or large networks. Costa Rica's Nicoya Peninsula gives the cleanest test of the near-field-coverage thesis from the *detected* side: a compact (~80 km) continuous-GPS network sitting directly above the seismogenic zone, recording the well-documented 2007 Nicoya SSE (Outerbridge et al. 2010 - May 2007, ~1-month event, Mw 6.6-7.2, with shallow updip and deep slip patches). This is the onshore-over-slip counterpart to the offshore Hikurangi null.
+
+**A false positive, caught.** The first attempt assumed a deep patch (30 km, under the peninsula) and, with common-mode removal off, produced an apparent +25 mm step at pct 95.3 - which looked like a detection. Two independent checks refuted it: the largest no-CMC step fell in *July* 2007, not the documented May, and the observed per-station displacement vectors correlated with the predicted Okada pattern at only r = 0.09. The apparent step was common-mode noise, not the SSE. It is recorded here as a caution: an apparent detection that turns on a processing switch (CMC off) must pass independent temporal-localization and spatial-pattern tests before it is believed.
+
+**The real detection.** The observed displacement field during May 2007 is a coherent trenchward (SW) motion across the peninsula - the SSE signature. A coarse grid search over source geometry recovers it as a *shallow updip* patch (depth ~12 km, near-trench), matching the predicted Okada pattern at r = 0.875, and a permutation test (station vectors shuffled, geometry re-fit each draw, 300 draws) puts this at p < 0.003 (null 99th percentile 0.774). The shallow updip location agrees with the published 2007 Nicoya shallow slip. With the correct geometry the event is detected cleanly across products and processing choices:
+
+| configuration | CMC | step | pct | SNR | peak date | spatial r | floor Mw |
+|---|---|---|---|---|---|---|---|
+| tenv3 daily | on | +10 mm | 100 | 10.2 | May 12-17 | 0.87 | 5.6 |
+| tenv3 daily | off | +24 mm | 100 | 4.4 | May 23-27 | 0.83 | 6.1 |
+| kenv 5-min | on | +10 mm | 100 | 6.4 | May 18-26 | 0.76 | 5.7 |
+| trench-fixed geom (tenv3) | on | +6 mm | 100 | 10.5 | May 13-20 | 0.66 | 5.4 |
+
+**Product was not the issue, geometry was.** The kenv 5-minute product detects the event just as cleanly as daily tenv3 once the geometry is correct (pct 100, SNR 6.4, r = 0.76), so the initial failure was the wrong (deep) source assumption, not data noise. The detection also survives at an *independent* trench-fixed geometry (strike 318, dip 19, depth 15 km, not tuned to the data: pct 100, SNR 10.5, r = 0.66), so it is not an artifact of the grid search. The ~10-day shift in peak date between CMC-on and CMC-off reflects common-mode removal absorbing part of the spatial gradient and shifting the recovered centroid, not resolved event migration. Floors are reported conditional on the assumed source geometry (the usual +/-0.4 Mw area systematic applies).
+
+**For the curve.** Nicoya adds a fifth plate boundary (Cocos-Caribbean) and the clean *detected* onshore-over-slip counterpart to the Hikurangi offshore null: where onshore stations overlie the slip, even a compact 9-station network detects an Mw ~6.6-7 SSE at SNR ~10 with a noise floor of Mw ~5.4-5.7 (among the lowest in the curve, because the network sits directly over a shallow updip patch). Where they do not (Hikurangi), the larger Mw 7.0 event is invisible. Near-field coverage governs detection - now confirmed from both the detected and the null side. (`tenv3_nicoya.py`, `verify_nicoya.py`, `perm_test.py`, `nicoya_plot.py`)
+
+![Nicoya 2007 SSE detection](nicoya_detect.png)
+
+*Left: matched-filter output (tenv3 daily, CMC) peaking at the documented May 2007 SSE (pct 100, SNR 10.2). Right: observed per-station displacement vectors (navy) versus the shallow-updip Okada prediction (red), correlation 0.87 (permutation p < 0.003).*
