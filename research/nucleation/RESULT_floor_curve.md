@@ -116,3 +116,19 @@ The BSM network detects roughly **2.4x smaller slip** than the GNSS network on t
 ![BSM 2012 Cascadia ETS detection](bsm_cascadia.png)
 
 *Top: inverse-variance strain-tensor matched-filter output (slip-equivalent) for the 9-station NOTA borehole-strainmeter network across 2012, with the ETS window shaded and the peak (SNR 8.2, pct 100) marked. Bottom: shear-strain (2Ene) residuals at the three clean stations independently showing the transient over the ETS window.*
+
+## Multi-year hardening - the strainmeter detection repeats across three independent ETS years
+
+A single positive control is only a single positive control. To test repeatability, the identical pipeline - now run **window-agnostic** (a whole-year scan with a data-driven peak window, no externally-supplied event dates) - was applied to the same 9-station network for two further northern Cascadia ETS years. The blind peak day-of-year is then cross-checked against the independent PNSN tremor catalogue rather than assumed.
+
+| year | blind peak (day-of-year / date) | documented ETS season | pct | SNR | floor Mw | stations |
+|---|---|---|---|---|---|---|
+| 2010 | 241 / Aug 29 | major August 2010 event | 100 | 2.7 | 6.19 | 8 (B006, B204 partial) |
+| 2012 | 256 / Sep 12 | 2012-07-30 to 10-12 | 100 | 10.1 | 5.79 | 9 |
+| 2013 | 278 / Oct 5 | September-October 2013 | 100 | 8.4 | 5.85 | 9 |
+
+All three years are detected at pct 100, and in every year the blindly-located peak lands inside that year's independently-documented ETS season - the detector is not told the dates, it finds them. The progression of peak dates (Aug 29 to Sep 12 to Oct 5) is consistent with the known multi-month recurrence and along-strike drift of the northern Cascadia ETS cycle. The floor is robust at Mw ~5.8-6.2 across years (highest in 2010, where two clean near-field stations had partial records). This turns the single 2012 positive control into a three-event series and addresses the small-N caution: the borehole-strainmeter modality detects the ETS repeatably, not as a one-off. (`bsm_fetchY.py`, `bsm_multiyear.py`)
+
+![BSM detection repeats across three ETS years](bsm_multiyear.png)
+
+*Window-agnostic matched-filter output for 2010, 2012, 2013. The blindly-located peak (red marker) falls inside the documented ETS season (shaded) in every year.*
