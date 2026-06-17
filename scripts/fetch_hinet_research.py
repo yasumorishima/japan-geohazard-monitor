@@ -17,6 +17,9 @@ START = os.environ.get("FETCH_START", "2011-03-09T11:00")
 HOURS = int(os.environ.get("FETCH_HOURS", "1"))
 HOURS_LIST = os.environ.get("FETCH_HOURS_LIST", "").strip()
 MAX_STA = int(os.environ.get("FETCH_MAX_STA", "10"))
+SPAN = int(os.environ.get("FETCH_SPAN_MIN", "60"))
+LATC = os.environ.get("FETCH_LAT_C", "").strip()
+LONC = os.environ.get("FETCH_LON_C", "").strip()
 RETRIES = int(os.environ.get("FETCH_RETRIES", "3"))
 RETRY_SLEEP = int(os.environ.get("FETCH_RETRY_SLEEP", "60"))
 LAT0 = float(os.environ.get("FETCH_LAT0", "36.0"))
@@ -32,7 +35,8 @@ if HOURS_LIST:
           len(seg_starts), "segments", flush=True)
 else:
     start_dt = datetime.fromisoformat(START.replace("Z", ""))
-    seg_starts = [start_dt + timedelta(hours=h) for h in range(HOURS)]
+    n_sub = max(1, (HOURS * 60) // SPAN)
+    seg_starts = [start_dt + timedelta(minutes=SPAN * i) for i in range(n_sub)]
     print("window start (HinetPy local/JST convention):", start_dt,
           "hours", HOURS, flush=True)
 
@@ -49,7 +53,11 @@ for s in allst:
     la = float(la); lo = float(lo)
     if LAT0 <= la <= LAT1 and LON0 <= lo <= LON1:
         sel.append((str(sid), la, lo))
-sel_all = sorted(sel)
+if LATC and LONC:
+    _latc = float(LATC); _lonc = float(LONC)
+    sel_all = sorted(sel, key=lambda v: (v[1] - _latc) ** 2 + ((v[2] - _lonc) * 0.77) ** 2)
+else:
+    sel_all = sorted(sel)
 sel = sel_all[:MAX_STA]
 print("selected", len(sel), "of", len(sel_all), "in-box stations:", sel, flush=True)
 if not sel:
@@ -93,7 +101,7 @@ for seg in seg_starts:
             except Exception as e2:
                 print(tag, "re-select failed", repr(e2)[:100], flush=True)
         try:
-            data = cl.get_continuous_waveform(NET, seg, 60, outdir=work)
+            data = cl.get_continuous_waveform(NET, seg, SPAN, outdir=work)
             if (not (isinstance(data, tuple) and len(data) == 2)
                     or data[0] is None or data[1] is None):
                 print(tag, "attempt", attempt + 1, "no data (quota/throttle?)", flush=True)
