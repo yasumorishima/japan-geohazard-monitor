@@ -35,6 +35,18 @@ on:
         description: "Station box east longitude"
         required: false
         default: "143.5"
+      span_min:
+        description: "Minutes per waveform request (Hi-net 60, S-net max 5)"
+        required: false
+        default: "60"
+      lat_c:
+        description: "Optional epicenter lat for nearest-station selection"
+        required: false
+        default: ""
+      lon_c:
+        description: "Optional epicenter lon for nearest-station selection"
+        required: false
+        default: ""
       net:
         description: "NIED network (0101=Hi-net onshore, 0120A=S-net accel offshore)"
         required: false
@@ -80,6 +92,9 @@ jobs:
           FETCH_LON0: ${{ inputs.lon0 }}
           FETCH_LON1: ${{ inputs.lon1 }}
           FETCH_NET: ${{ inputs.net }}
+          FETCH_SPAN_MIN: ${{ inputs.span_min }}
+          FETCH_LAT_C: ${{ inputs.lat_c }}
+          FETCH_LON_C: ${{ inputs.lon_c }}
         run: python scripts/fetch_hinet_research.py
       - name: Upload artifact
         uses: actions/upload-artifact@v4
