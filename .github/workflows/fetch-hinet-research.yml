@@ -35,6 +35,10 @@ on:
         description: "Station box east longitude"
         required: false
         default: "143.5"
+      net:
+        description: "NIED network (0101=Hi-net onshore, 0120A=S-net accel offshore)"
+        required: false
+        default: "0101"
       memo:
         description: "Run intent (required)"
         required: true
@@ -75,6 +79,7 @@ jobs:
           FETCH_LAT1: ${{ inputs.lat1 }}
           FETCH_LON0: ${{ inputs.lon0 }}
           FETCH_LON1: ${{ inputs.lon1 }}
+          FETCH_NET: ${{ inputs.net }}
         run: python scripts/fetch_hinet_research.py
       - name: Upload artifact
         uses: actions/upload-artifact@v4
