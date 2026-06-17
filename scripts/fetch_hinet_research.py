@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 
 from HinetPy import Client, win32
 
-NET = "0101"
+NET = os.environ.get("FETCH_NET", "0101")
 USER = os.environ["HINET_USER"]
 PW = os.environ["HINET_PASS"]
 START = os.environ.get("FETCH_START", "2011-03-09T11:00")
