@@ -66,3 +66,16 @@ above the source still does not reveal nucleation for this event.
 GHA `fetch-hinet-research.yml` (net=0120A, span_min=5); RPi5 `~/geo-ml/knuc18/`
 (`nucleation_snet_analysis.py`); Kaggle datasets `snet-m74-c1/c2/c3`, kernel
 `nucleation-snet-analysis`.
+
+
+## Robustness: association-independent near-source pick-rate (closes the completeness caveat)
+To rule out that association (n_picks>=6) hid a near-hypocentre cascade, the raw PhaseNet
+P-pick rate was examined per station over the final 24 h (no association). The station
+directly above the hypocentre, **N.S4N19 (10.2 km)**, shows **0-3 P-picks/hour, flat,
+near-zero, with Theil-Sen slope 0.000** and no rise toward the mainshock. The near group
+(<=40 km, 5 stations) is also flat (Theil-Sen 0.000; first-12 h 126 picks vs last-12 h 108,
+i.e. slightly decreasing), while far stations (60-150 km, 18 stations) carry the decaying
+regional swarm (slope -0.69/h). **The seafloor station 10 km above the source records no
+accelerating micro-seismicity before the M7.4**, confirming the NULL is not an
+association/completeness artefact: nucleation is absent (not merely unassociated) even at
+near-field resolution.
