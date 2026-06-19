@@ -97,3 +97,29 @@ resolution** - confirmed by both associated micro-catalogues and raw near-source
 (10-12 km) pick-rate. The offshore near-field NULL is not specific to one event; it
 generalises across the largest available cases, extending the onshore 11-NULL nucleation
 arc into the offshore near field.
+
+
+## Case 3: M7.1 Fukushima-oki (2021-02-13) - third case, southern segment / intraslab
+M7.1, 2021-02-13 23:07:49 JST, 37.7265N / 141.7751E, depth 44 km (intraslab, ~140 km south
+of cases 1-2). Final 8 h pre-mainshock: 423 picks -> 14 events (all pre-mainshock), 3 within
+60 km, migration slope +3.07 km/h (perm p=0.80), rate 7/7 flat -> **NULL**. Near-source: the
+nearest station **N.S2N02 (12.6 km)** shows no rise toward the mainshock (hourly
+[7,1,1,2,1,3,2,1], Theil-Sen 0.000; an early-hour burst then flat), near<=40 km decreasing
+(first-4 h 27 vs last-4 h 23).
+
+## Three-case conclusion (Japan Trench, S-net era)
+| case | event | depth | within 60 km (pre-MS) | near-source (<=13 km) slope | verdict |
+|---|---|---|---|---|---|
+| 1 | M7.4 Miyako-oki 2026-04-20  | 25 km | 9/68 (24 h) | S4N19 (10.2 km) 0.000 | NULL |
+| 2 | M7.6 Aomori-oki 2025-12-08  | 41 km | 3/14 (8 h)  | S4N02 (12.1 km) 0.000 | NULL |
+| 3 | M7.1 Fukushima-oki 2021-02-13 | 44 km | 3/14 (8 h) | S2N02 (12.6 km) 0.000 | NULL |
+
+Three independent offshore Japan-Trench earthquakes - spanning the Sanriku/Miyako, Aomori,
+and Fukushima segments and depths 25-44 km - **all nucleate with no detectable foreshock
+cascade at S-net near-field resolution**, in both associated micro-catalogues and raw
+near-source (10-13 km) pick-rate. The offshore near-field nucleation NULL **generalises
+across the trench**, extending the onshore 11-NULL arc: changing the observing system to
+seafloor coverage directly above the source still does not reveal nucleation. In every case
+the pipeline detects the contemporaneous distant regional seismicity (median ~90-112 km),
+confirming sensitivity - the near-hypocentre silence is a genuine absence, not a detection
+floor artefact.
