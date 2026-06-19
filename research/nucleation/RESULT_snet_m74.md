@@ -123,3 +123,22 @@ seafloor coverage directly above the source still does not reveal nucleation. In
 the pipeline detects the contemporaneous distant regional seismicity (median ~90-112 km),
 confirming sensitivity - the near-hypocentre silence is a genuine absence, not a detection
 floor artefact.
+
+
+## Detection floor (capstone) - bounded empirically, not by injection
+A waveform-injection floor (inject amplitude-scaled near-hypocentre templates, binary-search
+the minimum recoverable magnitude - the onshore arc's approach) was attempted but is not
+feasible here: the near-source seismicity is too sparse and thin to provide a clean template
+(the few detected within-60 km events are themselves near the completeness threshold,
+recorded on only a handful of stations), and the mainshock is clipped. That thinness is
+itself informative - near-source completeness is already being approached.
+
+The floor is therefore bounded empirically from demonstrated sensitivity: in every case the
+pipeline detects (a) the contemporaneous distant regional swarm and (b) scattered
+near-source events that are **absent from the global USGS catalogue** (USGS shows ~zero M3+
+at each hypocentre in the run-up). The S-net micro-catalogue thus reaches **below the
+regional USGS completeness (~M3-3.5)**. The conclusion: at all three hypocentres there is
+**no accelerating/migrating foreshock cascade down to ~M3** - neither in the associated
+micro-catalogue nor in the raw near-source (10-13 km) pick rate. Nucleation, if it occurs,
+is below ~M3 and below the resolution of even seafloor near-field coverage directly above
+the source.
