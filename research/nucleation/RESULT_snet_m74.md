@@ -79,3 +79,21 @@ regional swarm (slope -0.69/h). **The seafloor station 10 km above the source re
 accelerating micro-seismicity before the M7.4**, confirming the NULL is not an
 association/completeness artefact: nucleation is absent (not merely unassociated) even at
 near-field resolution.
+
+
+## Case 2: M7.6 Aomori-oki (2025-12-08) - multi-case generalization
+The same pipeline was applied to the **largest S-net-era event**, M7.6, 2025-12-08
+23:15:09 JST, 40.998N / 142.184E, depth 40.7 km. Final 8 h pre-mainshock (15:15-23:15 JST):
+509 picks -> **14 located events (all pre-mainshock), only 3 within 60 km** of the
+hypocentre (median ~112 km - dominated by distant regional activity), migration slope
++2.04 km/h (perm p=0.72), rate 7/7 flat, final-20% median farther -> **NULL**. The
+association-independent near-source check is identical: the nearest station **N.S4N02
+(12.1 km above the hypocentre) records 0-2 P-picks/hour, flat (Theil-Sen 0.000)** with no
+rise toward the mainshock; near<=40 km flat (first-4 h 10 vs last-4 h 11).
+
+**Two-case conclusion.** The two largest S-net-era offshore earthquakes (M7.4 Miyako-oki,
+M7.6 Aomori-oki) **both nucleate with no foreshock cascade detectable at S-net near-field
+resolution** - confirmed by both associated micro-catalogues and raw near-source
+(10-12 km) pick-rate. The offshore near-field NULL is not specific to one event; it
+generalises across the largest available cases, extending the onshore 11-NULL nucleation
+arc into the offshore near field.
