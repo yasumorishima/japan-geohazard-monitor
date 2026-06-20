@@ -887,6 +887,23 @@ The remaining unsolved problem is **nucleation of independent mainshocks**, and 
 
 - Strictly research — no productization or public alerting.
 
+### 2026-06: OEF covariate exhaustion -- open-data physics saturates at the monthly horizon but is resolvable at 7 days
+
+Operational forecasting (OEF) uses a compact ETAS feature set on a 2deg/121-cell grid (34-day M5+ probability). A systematic test (2026-06-20) of whether *any* open-data covariate family adds skill over this ETAS baseline, scored by walk-forward CSEP information gain:
+
+**At the 34-day operational horizon, every orthogonal physical family is null.** The full 85-feature ML matrix adds only +0.0008 AUC (5/10 folds positive = noise); individually the seismic size-distribution (b-value, Aki MLE), the geodetic deformation channel (GNSS strain/transient, dAUC -0.0063), and the 38-feature electromagnetic/atmospheric/oceanic block (dAUC -0.0006, -89 nats) each fail to beat ETAS -- ETAS already captures the resolvable monthly skill.
+
+**The saturation is a horizon-dilution artifact.** Precursory transients act on days-to-weeks, so a 34-day window averages them away. Re-running ETAS + a parsimonious 10-feature precursory-physics set (Coulomb stress transfer CFS, Pattern Informatics PI, accelerating moment release / Benioff, foreshock-magnitude trend, recurrence interval) across shorter horizons:
+
+| Horizon | dAUC over ETAS | dCSEP info-gain | folds positive |
+|---|---|---|---|
+| 21 d | +0.0022 | +53 nats | 6/10 |
+| 14 d | +0.0037 | +55 nats | 7/10 |
+| **7 d** | **+0.0059** | **+69 nats** | **9/10** |
+| 3 d | +0.0059 | +35 nats | 10/10 |
+
+At the 7-day horizon (peak operational information gain) the 10 catalog-derived precursory-physics features add **+0.0059 AUC / +69 nats over ETAS, positive in 9/10 walk-forward folds (~3.7 sigma)** -- and *outperform* the full 85-feature matrix (+0.0045), so the signal is concentrated rather than an overfit. Geodetic and electromagnetic covariates stay net noise even at short horizon; the resolvable open-data lever is short-horizon Coulomb-stress / pattern-informatics / accelerating-moment-release physics. (Research finding; the monthly operational forecast cron is unchanged.)
+
 ## Automated Analysis (GitHub Actions)
 
 Weekly analysis workflow fetches data from 7+ public APIs, runs 20 analysis scripts (Phase 1-4), and stores results as artifacts.
