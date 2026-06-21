@@ -880,7 +880,7 @@ def _fetch_and_save(
         logger.info("Authenticated to NIED Hi-net")
     except Exception as exc:
         logger.error("Authentication failed: %s", exc)
-        return 0, 0
+        raise HinetAuthError(str(exc)) from exc
 
     selected, station_coords = select_active_stations(client, MAX_ACTIVE_STATIONS)
     logger.info("Active F-net stations: %d", len(selected))
@@ -1099,18 +1099,26 @@ async def main() -> None:
     )
 
     loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(
-        None, _fetch_and_save, user, password, dates_to_fetch,
-    )
+    try:
+        result = await loop.run_in_executor(
+            None, _fetch_and_save, user, password, dates_to_fetch,
+        )
+    except HinetAuthError as exc:
+        logger.error("Authentication failed: %s", exc)
+        send_discord(
+            "⚠️ F-net Waveform — Auth Failed",
+            "Authentication to NIED failed. Check the network credentials.",
+            color=15158332,
+        )
+        return
     inserted, skipped = result
 
     if inserted == 0:
-        logger.warning("No waveform records retrieved")
-        send_discord(
-            "⚠️ F-net Waveform — No Data",
-            "Fetch completed but no records were retrieved. "
-            "Check Hi-net credentials and quota.",
-            color=15158332,
+        logger.warning(
+            "No new waveform records inserted this run (%d skipped/duplicate). "
+            "Routine when only very-recent (not-yet-published) or already-failed "
+            "dates were queued; genuine auth failures alert separately.",
+            skipped,
         )
         return
 
