@@ -158,3 +158,20 @@ A catalogue-only attempt to separate aseismic-slow-slip loading from cascade/tri
 
 ### Subduction null — power strengthened (2026-06-25 follow-up)
 To tighten the megathrust paired-specificity null (n=114 could reject a crustal-STRONG −0.048 at power 0.82 but only a crustal-WEAK −0.032 at 0.48), two routes were tried. (1) EXTENDING the baseline to ~10 yr by pooling the Atacama permanent-station catalogue (2014-2024) with the temp catalogue did NOT help — the permanent catalogue's higher completeness (Mc~2.0) starves the low-M foreshock supply, so at the MC=2.0 needed for joint completeness only n=32 sequences qualify (an honest negative on the pooling approach: completeness, not baseline length, is binding). (2) Lowering the mainshock threshold within the dense temp interface to M≥3.0 (MC1.0, R50 km) boosts to **n=184** sequences with the gate still passed (+0.047, p0.002) and the synthetic null still clean (−0.015, p0.56): **PAIRED main-minus-centroid = −0.005, CI95 [−0.032, +0.023], p0.41 — null.** This now rejects a crustal-strong specificity (−0.048) at power 0.93 and a crustal-weak (−0.032) at 0.63, and crucially the CI95 upper bound (−0.032) lies AT or above every actually-measured crustal paired value (JUICE −0.049, Apennines −0.065), so **all observed crustal mainshock-specificities are excluded from the megathrust 95% CI** — the megathrust paired specificity is significantly weaker than every crustal region's. (M≥2.5 was not used: at that threshold the aftershock gate weakens to +0.028 marginal and the synthetic null turns dirty, −0.018 p0.014 — M2.5 "mainshocks" have negligible aftershock zones.) Net: the crustal-vs-subduction contrast is firmed — crustal mainshock-specific migration is replicated in 4 dense catalogues / 3 faulting styles, and is absent (at every observed crustal magnitude) on the densest open subduction-megathrust interface. Asset: ~/geo-ml/atacama/migration_ata_long.py (pooled), migration_atacama.py (Mthr sweep).
+
+### DEFINITIVE pooled estimate — 4 crustal catalogues combined (2026-06-25)
+Pooling all four dense crustal catalogues into one population (uniform M≥4 mainshocks, each catalogue's own MC; JUICE at depth≤15 km, Apennines at depth≤20 km) gives the maximum-power, heterogeneity-tested grand estimate of the spatial precursor:
+| catalogue | style | n | mainshock-ref (p) | PAIRED main−centroid (p) |
+|---|---|---|---|---|
+| SoCal QTM | transform | 52 | −0.098 (0.006) | −0.104 (0.005) |
+| NorCal DD | transform | 146 | −0.113 (<1e-4) | −0.079 (0.005) |
+| JUICE Japan | reverse/strike-slip | 206 | −0.086 (<1e-4) | −0.049 (5e-4) |
+| Apennines Italy | normal | 20 | −0.122 (0.053) | −0.091 (0.165) |
+
+(Apennines at the uniform M≥4 cut has only n=20 — underpowered alone — but its M≥3.5 headline n=62 was significant; it is included here for a like-for-like M≥4 pool.)
+
+- **GRAND mainshock-ref = −0.099, CI95 [−0.123, −0.075], Wilcoxon p = 7.7e-14 (n=424)**
+- **GRAND PAIRED (mainshock-specificity) = −0.068, CI95 [−0.092, −0.044], Wilcoxon p = 1.6e-7, 59% of sequences <0**
+- **Cross-region heterogeneity (Kruskal-Wallis on PAIRED): p = 0.51 — NO significant heterogeneity; the effect is statistically consistent across all four catalogues / three faulting styles.**
+
+This is the definitive crustal estimate: a mainshock-specific foreshock migration of mean Spearman rho ≈ −0.10 (mainshock-ref) / −0.07 (specificity-isolated), consistent across transform, reverse/strike-slip and normal faulting on two continents, at p ~ 1e-7 to 1e-14. **It is significantly distinct from the subduction megathrust**, whose paired specificity (−0.005, CI [−0.032, +0.023], n=184) lies ENTIRELY above the crustal grand-PAIRED CI (the two confidence intervals do not overlap: crustal ≤ −0.044 vs megathrust ≥ −0.032). So the crustal-vs-subduction contrast is not a power artifact — the two regimes have statistically separable mainshock-specificity. Asset: ~/geo-ml/qtm/migration_pooled.py (loads all four catalogues, per-region + pooled + Kruskal-Wallis).
