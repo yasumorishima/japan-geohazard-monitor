@@ -74,3 +74,41 @@ null), whereas my crustal population median is radial-leaning. Same migration ph
 regimes, separated by directionality D. Research-only; not productionised.
 
 Assets (RPi5 ~/geo-ml/iquique/): geom_iquique.py, geom_sig.py, geom_ctrl.py.
+
+## Addendum: the crustal geometry DISTRIBUTION -- radial-dominant with a real directional tail
+
+The single-case Iquique result is sharpened by characterising the crustal migrating population geometry
+DISTRIBUTION (n=299 migrating sequences), not just its median.
+
+- D quantiles: p10 0.02, p25 0.07, median 0.14, p75 0.27, p90 0.42, p95 0.57 (right-skewed, skew 1.39);
+  EDGE median 0.44. The median sequence is radial-leaning, but the upper tail reaches front-like values.
+- ~17% (51/299) classify as front-like by the D+EDGE nearest-end-member rule (nearer synth FRONT than
+  synth RADIAL in standardised (D,EDGE)). NOTE: front-like is an OPERATIONAL geometry label (directional
+  + edge-loaded), NOT a propagating-front mechanism claim -- the isotropic-radial null cannot exclude an
+  anisotropic radial process; only the EDGE coupling mitigates that.
+- The directional tail is REAL, not small-n estimation noise: per sequence, comparing observed D to the
+  isotropic-radial null at that sequence OWN n, 24.4% exceed the 95th null percentile (chance 5%) and
+  14.0% exceed the 99th (chance 1%), binomial p=9.3e-30. It STRENGTHENS on well-resolved sequences
+  (n>=40: 30.7% exceed the 95th null) -- the opposite of what estimation noise would do.
+- NOT bimodal. Raw-D GMM appears to prefer 2 components (dBIC -107), but that is the known artifact of
+  fitting Gaussians to a bounded right-skewed variable; on the proper logit(D) scale GMM prefers ONE
+  component (dBIC +3.1). The honest statement is a single right-skewed mode with a real heavy directional
+  tail, not two modes.
+- The tail is MAGNITUDE-INDEPENDENT: front-like vs radial mainshock magnitude is indistinguishable
+  (median 4.30 both; Mann-Whitney p=0.41; Cliff delta 0.07), and D-vs-M is flat overall (rho -0.009,
+  p=0.88) and within the front-like subset (rho -0.13, p=0.38). The directional tail is not a magnitude
+  continuum toward the megathrust-front scale -- consistent with the arc scale-continuum rejection.
+- Iquique (documented megathrust front) sits at the 91st D / 87th EDGE crustal percentile -- at/beyond
+  the crustal directional tail.
+
+Refinement of the arc wording: the earlier uniformly-radial crustal characterisation was an
+OVERSTATEMENT and is corrected to RADIAL-DOMINANT. The pooled rho<0 and the radial median are the
+mean/majority behaviour; sequence-level the population carries a real (~17%), magnitude-independent,
+directionally-anisotropic minority that the average had hidden. This does NOT weaken contrast-not-
+confirmation: megathrust foreshock migration is front-TYPICAL whereas crustal is radial-MAJORITY with a
+front-like minority, and the documented great-earthquake front sits at the crustal directional extreme
+-- a distribution-shift contrast, not a binary split, and one internal to a weak, operationally-
+negligible migration signal. Iquique sharing the crustal directional tail is a geometric-continuity
+observation, not a same-mechanism claim.
+
+Assets (RPi5 ~/geo-ml/qtm/): geom_distribution.py, geom_dist_ctrl.py, geom_dist_fix.py.
