@@ -61,3 +61,20 @@ for kw in ["water","press","水圧","圧力","Download","download","not author",
     for mm in list(re.finditer(re.escape(kw),m2))[:2]:
         i=mm.start(); print("KW2[%s]: %r"%(kw,m2[max(0,i-40):i+80]),flush=True)
 print("OC_PROBE2_DONE",flush=True)
+
+# --- step 3: read the pressure download page (read-only) ---
+print("###### STEP3: GET oc/download/past/ (pressure portal, read-only) ######",flush=True)
+p=s.get(OC+"download/past/",timeout=40); mp=p.text
+print("past page len=%d status=%d"%(len(mp),p.status_code),flush=True)
+mlog3=re.search(r"auth_log(.*?)\.png",mp); print("past login marker:",mlog3.group(1) if mlog3 else "none",flush=True)
+print("has login form:",('auth_pw' in mp),flush=True)
+for f in re.findall(r"<form[^>]*>",mp,re.I): print("FORM3:",f[:200],flush=True)
+for blk in re.findall(r"<select.*?</select>",mp,re.S|re.I):
+    nm=re.search(r"name=['\"]?([\w]+)",blk); print("--SEL3 name=%s--"%(nm.group(1) if nm else "?"),flush=True)
+    for opt in re.findall(r"<option[^>]*value=['\"]?([^'\">]*)['\"]?[^>]*>([^<]*)</option>",blk)[:25]:
+        print("   value=%r text=%r"%(opt[0].strip(),opt[1].strip()),flush=True)
+for e in sorted(set(re.findall(r"[\w./]+\.php",mp)))[:30]: print("  php3:",e,flush=True)
+for kw in ["申請","承認","利用申請","not author","unauthor","permission","S-net","DONET","水圧","Download","download","button","disabled","ありません","できません"]:
+    for mm in list(re.finditer(re.escape(kw),mp))[:2]:
+        i=mm.start(); print("KW3[%s]: %r"%(kw,mp[max(0,i-30):i+80]),flush=True)
+print("OC_PROBE3_DONE",flush=True)
