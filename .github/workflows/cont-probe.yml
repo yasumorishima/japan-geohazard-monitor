@@ -1,0 +1,23 @@
+name: NIED cont portal probe
+on:
+  workflow_dispatch:
+    inputs:
+      memo:
+        description: "Run intent (required)"
+        required: true
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install requests certifi urllib3
+      - name: Probe cont portal
+        env:
+          HINET_USER: ${{ secrets.HINET_USER }}
+          HINET_PASS: ${{ secrets.HINET_PASS }}
+        run: python scripts/cont_probe.py
