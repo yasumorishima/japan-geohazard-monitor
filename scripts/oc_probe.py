@@ -40,3 +40,24 @@ for kw in ["press","Press","水圧","圧力","S-net","DONET","pressure","gauge",
     for mm in list(re.finditer(re.escape(kw),m))[:2]:
         i=mm.start(); print("KW[%s]: %r"%(kw,m[max(0,i-40):i+70]),flush=True)
 print("OC_PROBE_DONE",flush=True)
+
+# --- step 2: POST creds directly to oc portal (it has its own login form) ---
+print("###### STEP2: POST creds to oc portal ######",flush=True)
+s.get(OC,timeout=40)
+r2=s.post(OC,data={"auth_un":os.environ["HINET_USER"],"auth_pw":os.environ["HINET_PASS"][:12]},timeout=40)
+m2=r2.text
+print("after-oc-POST len=%d"%len(m2),flush=True)
+mlog2=re.search(r"auth_log(.*?)\.png",m2)
+print("oc login marker:",mlog2.group(1) if mlog2 else "none",flush=True)
+still_login = ('name="auth"' in m2 and 'auth_pw' in m2)
+print("still showing login form:",still_login,flush=True)
+for f in re.findall(r"<form[^>]*>",m2,re.I): print("FORM2:",f[:200],flush=True)
+for blk in re.findall(r"<select.*?</select>",m2,re.S|re.I):
+    nm=re.search(r"name=['\"]?([\w]+)",blk); print("--SEL2 name=%s--"%(nm.group(1) if nm else "?"),flush=True)
+    for opt in re.findall(r"<option[^>]*value=['\"]?([^'\">]*)['\"]?[^>]*>([^<]*)</option>",blk)[:20]:
+        print("   value=%r text=%r"%(opt[0].strip(),opt[1].strip()),flush=True)
+for e in sorted(set(re.findall(r"[\w./]+\.php",m2)))[:30]: print("  php2:",e,flush=True)
+for kw in ["water","press","水圧","圧力","Download","download","not author","permission","register","申請","許可","unauthor"]:
+    for mm in list(re.finditer(re.escape(kw),m2))[:2]:
+        i=mm.start(); print("KW2[%s]: %r"%(kw,m2[max(0,i-40):i+80]),flush=True)
+print("OC_PROBE2_DONE",flush=True)
