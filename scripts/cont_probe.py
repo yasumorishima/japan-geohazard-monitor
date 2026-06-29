@@ -38,3 +38,9 @@ for kw in ["press","Press","PRESS","OBP","水圧","圧力","pressure","S-net","s
 sn=dump(CONT+"st_snet_json.php","st_snet_json")
 print("st_snet_json head:",sn[:400],flush=True)
 print("CONT_PROBE_DONE",flush=True)
+
+# --- full networks[] dict dump (added) ---
+print("=== FULL networks[] entries ===",flush=True)
+for code,label in re.findall(r"networks\['([^']+)'\]\s*=\s*'([^']*)'",main):
+    print("  networks[%s] = %s"%(code,label),flush=True)
+print("NETDUMP_DONE",flush=True)
