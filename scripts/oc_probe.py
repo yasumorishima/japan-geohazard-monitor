@@ -78,3 +78,19 @@ for kw in ["申請","承認","利用申請","not author","unauthor","permission"
     for mm in list(re.finditer(re.escape(kw),mp))[:2]:
         i=mm.start(); print("KW3[%s]: %r"%(kw,mp[max(0,i-30):i+80]),flush=True)
 print("OC_PROBE3_DONE",flush=True)
+
+# --- step 4: compare oc seismometer form vs pressure form (is pressure a separate approval tier?) ---
+print("###### STEP4: compare oc/download/cont vs oc/download/past data forms ######",flush=True)
+for sub in ["download/cont/","download/past/"]:
+    u=OC+sub
+    rr=s.get(u,timeout=40); t=rr.text
+    sels=re.findall(r"<select[^>]*name=['\"]?([\w]+)",t,re.I)
+    hasnet=any(x in t for x in ["networks[","org1","org2","net1","select_net","st_snet"])
+    hasdate=("year" in [x.lower() for x in sels]) or ("yyyymmdd" in t)
+    notice=("承認作業が必要" in t) or ("利用申請" in t)
+    print("[%s] status=%d len=%d selects=%s net_widget=%s date=%s shows_application_notice=%s"%(sub,rr.status_code,len(t),sels[:8],hasnet,hasdate,notice),flush=True)
+    # any explicit not-authorized / request-needed banner specific to THIS subpage
+    for kw in ["未申請","申請してください","利用申請がありません","not authorized","権限","ご利用いただけません","申請済","承認済"]:
+        for mm in list(re.finditer(re.escape(kw),t))[:1]:
+            i=mm.start(); print("   [%s] KW4[%s]: %r"%(sub,kw,t[max(0,i-30):i+70]),flush=True)
+print("OC_PROBE4_DONE",flush=True)
