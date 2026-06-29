@@ -5,6 +5,10 @@ on:
       memo:
         description: "Run intent (required)"
         required: true
+      script:
+        description: "probe script under scripts/"
+        required: false
+        default: "oc_probe.py"
 jobs:
   probe:
     runs-on: ubuntu-latest
@@ -16,8 +20,8 @@ jobs:
           python-version: "3.11"
       - name: Install deps
         run: pip install requests certifi urllib3
-      - name: Probe cont portal
+      - name: Probe portal
         env:
           HINET_USER: ${{ secrets.HINET_USER }}
           HINET_PASS: ${{ secrets.HINET_PASS }}
-        run: python scripts/cont_probe.py
+        run: python "scripts/${{ inputs.script }}"
