@@ -1618,3 +1618,7 @@ Part of the [Realtime Open Data](https://github.com/yasumorishima/realtime-open-
 ## License
 
 MIT
+
+## Related (private)
+
+- Forecasting research probe & analysis tooling: <https://github.com/yasumorishima/geohazard-research-private> (private)
