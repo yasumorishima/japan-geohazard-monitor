@@ -1,0 +1,24 @@
+name: obp-tools
+on:
+  workflow_dispatch: {}
+jobs:
+  build:
+    runs-on: [self-hosted, geohazard-obp]
+    steps:
+      - name: fetch + build win32tools on RPi5 (persistent, HINET auth)
+        env:
+          HINET_USER: ${{ secrets.HINET_USER }}
+          HINET_PASS: ${{ secrets.HINET_PASS }}
+        run: |
+          set -e
+          D=/home/yasu/geo-ml/obp/win32tools
+          rm -rf "$D"; mkdir -p "$D"; cd "$D"
+          /home/yasu/geo-ml/venv/bin/python -c "import os;from HinetPy import Client;Client(os.environ['HINET_USER'],os.environ['HINET_PASS'])._get_win32tools()"
+          ls -la
+          tar -xf win32tools.tar.gz && rm -f win32tools.tar.gz
+          cd win32tools && make
+          mkdir -p "$D/bin"
+          mv catwin32.src/catwin32 win2sac.src/win2sac_32 "$D/bin/"
+          echo "--- built binaries ---"; ls -la "$D/bin/"
+          "$D/bin/win2sac_32" 2>&1 | head -2 || true
+          echo TOOLS_BUILT
