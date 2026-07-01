@@ -2,17 +2,17 @@ name: obp-request
 on:
   workflow_dispatch:
     inputs:
-      mode:
-        description: probe or submit
+      submit_limit:
+        description: number of windows to submit (start with 1 to test)
         required: true
-        default: "probe"
+        default: "1"
 jobs:
   request:
     runs-on: [self-hosted, geohazard-obp]
     steps:
-      - name: OBP data request (probe/submit) on RPi5
+      - name: submit OBP data requests on RPi5
         env:
           HINET_USER: ${{ secrets.HINET_USER }}
           HINET_PASS: ${{ secrets.HINET_PASS }}
-          MODE: ${{ github.event.inputs.mode }}
+          SUBMIT_LIMIT: ${{ github.event.inputs.submit_limit }}
         run: /home/yasu/geo-ml/venv/bin/python /home/yasu/geo-ml/obp/obp_request.py
