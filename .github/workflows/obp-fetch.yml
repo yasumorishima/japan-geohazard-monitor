@@ -1,0 +1,24 @@
+name: obp-fetch
+on:
+  workflow_dispatch:
+    inputs:
+      reqid:
+        description: NIED request ID
+        required: true
+        default: "0000022628"
+      dry:
+        description: dry run only (list links, no download)
+        required: true
+        default: "true"
+jobs:
+  fetch:
+    runs-on: [self-hosted, geohazard-obp]
+    steps:
+      - name: fetch OBP to RPi5 local (raw stays private, never uploaded)
+        env:
+          HINET_USER: ${{ secrets.HINET_USER }}
+          HINET_PASS: ${{ secrets.HINET_PASS }}
+          REQID: ${{ github.event.inputs.reqid }}
+          DRY: ${{ github.event.inputs.dry }}
+          OUT: /home/yasu/geo-ml/obp/raw
+        run: /home/yasu/geo-ml/venv/bin/python /home/yasu/geo-ml/obp/obp_download.py
