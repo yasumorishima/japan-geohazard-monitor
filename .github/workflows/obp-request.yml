@@ -2,8 +2,11 @@ name: obp-request
 on:
   workflow_dispatch:
     inputs:
+      memo:
+        description: intent of this manual run
+        required: true
       submit_limit:
-        description: number of windows to submit (start with 1 to test)
+        description: windows to submit (int) / "tiny" (10sta 60min test) / "probe"
         required: true
         default: "1"
 jobs:
