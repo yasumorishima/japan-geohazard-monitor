@@ -1,0 +1,27 @@
+name: obp-fetch-all
+on:
+  workflow_dispatch:
+    inputs:
+      memo:
+        description: intent
+        required: true
+      mode:
+        description: dry (list ready) or dl (download ready)
+        required: true
+        default: "dry"
+      only:
+        description: optional comma reqids to limit
+        required: false
+        default: ""
+jobs:
+  fetch:
+    runs-on: [self-hosted, geohazard-obp]
+    steps:
+      - name: batch DRY/DL all OBP requests to RPi5 local
+        env:
+          HINET_USER: ${{ secrets.HINET_USER }}
+          HINET_PASS: ${{ secrets.HINET_PASS }}
+          MODE: ${{ github.event.inputs.mode }}
+          ONLY: ${{ github.event.inputs.only }}
+          OUT: /home/yasu/geo-ml/obp/raw
+        run: /home/yasu/geo-ml/venv/bin/python /home/yasu/geo-ml/obp/obp_fetch_all.py
