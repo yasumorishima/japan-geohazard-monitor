@@ -6,16 +6,22 @@ on:
       run_id:
         description: Run ID holding the checkpoint artifact
         required: true
-        default: "25850138812"
+        default: "28721077491"
       artifact:
         description: Artifact name
         required: true
-        default: "backfill-checkpoint-25850138812"
+        default: "backfill-checkpoint-28721077491"
 
 jobs:
   upload:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Download checkpoint artifact
         env:
           GH_TOKEN: ${{ github.token }}
@@ -36,8 +42,16 @@ jobs:
       - name: Install huggingface_hub
         run: pip install --quiet "huggingface_hub>=0.26"
 
-      - name: Upload to Hugging Face
+      - name: Upload to Hugging Face (guarded via hf_sync.py)
+        # Use the guarded uploader (integrity + absolute floor + row-count
+        # no-regression manifest) instead of a raw `hf upload`, so a manual
+        # reseed cannot silently overwrite the canonical with a degraded DB and
+        # the row-count manifest stays in sync with the daily pipeline.
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          hf upload yasumorishima/japan-geohazard "${{ steps.db.outputs.path }}" geohazard.db --repo-type dataset --commit-message "Add geohazard.db (checkpoint 2026-05-14)"
+          python3 scripts/hf_sync.py \
+            --src "${{ steps.db.outputs.path }}" \
+            --repo yasumorishima/japan-geohazard \
+            --path geohazard.db \
+            --squash
