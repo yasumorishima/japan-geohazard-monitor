@@ -572,6 +572,23 @@ The daily Hugging Face upload (`scripts/hf_sync.py`, UTC-00:00 cron only) silent
 
 Fix (commits `3072403` + `5dba70e`): `hf_sync.py`'s byte guard is replaced by a **row-count no-regression guard** — per-table counts are compared against a small sidecar manifest `geohazard.db.rowcounts.json` stored next to the DB on HF; upload is refused only if a table drops below `--min-fraction` (0.95) of its previous count (a dropped/truncated table), while a compaction that preserves rows passes cleanly. Retained: `PRAGMA integrity_check` (fail-closed) plus a new absolute floor `--min-abs-gb` (5 GB) that catches a catastrophically tiny merge even with no prior manifest. The post-upload manifest refresh + `super_squash_history` are best-effort, so a successful DB upload is never re-reported as a job failure (which had been firing a daily error email). The manual `hf-upload-checkpoint.yml` reseeder was routed through the guarded `hf_sync.py` (previously a raw `hf upload` that bypassed every safeguard). Verified end-to-end on run `28733347900`: the canonical refreshed to 2026-07-05T07:38 (super-squash applied) and the manifest was seeded with all 42 tables — pipeline un-stuck, and the daily upload now compacts-and-uploads without false failures. A daily CI-health cron agent additionally checks the canonical's freshness (not just the run's colour) so any future stall is caught proactively rather than by an error email.
 
+### Merge gated on the light base job: no failure email from GitHub runner-capacity incidents (2026-07-10, `10eb1f6`)
+
+On 2026-07-09 a GitHub-side hosted-runner capacity incident ("The job was not acquired by
+Runner of type hosted even after multiple attempts" — the annotation on every cancelled
+fetch job of run 29016325610) cancelled all fetch jobs mid-run. The merge job runs under
+`if: always()` and its artifact downloads are `continue-on-error`, but the merge step then
+executed `merge_checkpoints.py --require-base` with no base artifact, exited 1, and turned a
+self-healing infrastructure hiccup into a run-conclusion `failure` and a notification email.
+No data was affected — the checkpoint chain simply resumed on the next 3-hour cron (run
+29055052853 completed fetch→light→merge fully green). Fix: the merge step is now gated with
+`if: needs.light.result == 'success'`. When the base job was cancelled by infra the merge
+SKIPS (run stays `cancelled`, which does not email — verified against the 7 email-less
+cancelled runs that same day), while a genuine light-job failure still fails the run (and
+emails) via the light job itself. Downstream steps already key off merge/snapshot success
+and skip cleanly; the Discord notifier still posts its skip embed. Reviewed (no findings)
+with each claim re-verified against the workflow source.
+
 ## Analysis Results (2011-2026, 28K M3+ earthquakes, 6.4M TEC, 45K Kp, 5.3M GNSS-TEC, 24M ULF, 98 features with dynamic selection)
 
 ### Summary
