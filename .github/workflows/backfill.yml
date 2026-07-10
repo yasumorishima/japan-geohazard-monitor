@@ -2987,6 +2987,17 @@ jobs:
 
       - name: Merge light + 4 overlays
         id: merge
+        # Gate on the light (base) job actually succeeding. When GitHub-side
+        # hosted-runner capacity incidents cancel the fetch jobs (2026-07-09:
+        # "The job was not acquired by Runner of type hosted even after
+        # multiple attempts"), the base artifact simply doesn't exist and
+        # --require-base would exit 1 -- turning a self-healing infra hiccup
+        # into a run-conclusion=failure and a notification email. Skipping
+        # instead leaves the run 'cancelled' (no email); the next 3h cron
+        # resumes from the previous checkpoint. A GENUINE light-job failure
+        # still fails the run (and emails) via the light job itself, and the
+        # Notify Discord step still posts the skip/failure embed either way.
+        if: needs.light.result == 'success'
         run: |
           mkdir -p data
           # --require-base ensures we never let an overlay-only DB through as a
