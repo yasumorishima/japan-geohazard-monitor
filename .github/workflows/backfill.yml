@@ -3129,7 +3129,7 @@ jobs:
         with:
           name: backfill-checkpoint-${{ github.run_id }}
           path: data/geohazard.db
-          retention-days: 30
+          retention-days: 3
 
       - name: Notify Discord
         if: always()
