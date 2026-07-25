@@ -78,6 +78,39 @@ def main() -> int:
         return 4
 
     print("verified: sizes match")
+
+    # Record a "published" marker so disk_watchdog.sh can reclaim the local copy
+    # later WITHOUT needing network access or a token. The watchdog only deletes
+    # a file whose current size still matches what we verified on HF.
+    try:
+        import hashlib
+        import json
+        import time
+
+        h = hashlib.sha256()
+        with open(args.src, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                h.update(chunk)
+        marker_dir = "/home/yasu/geo-ml/.hf_published"
+        os.makedirs(marker_dir, exist_ok=True)
+        marker = os.path.join(marker_dir, os.path.basename(args.src) + ".json")
+        with open(marker, "w") as fh:
+            json.dump(
+                {
+                    "src": os.path.abspath(args.src),
+                    "repo": args.repo,
+                    "path_in_repo": args.path,
+                    "size": size,
+                    "sha256": h.hexdigest(),
+                    "uploaded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                },
+                fh,
+                indent=1,
+            )
+        print(f"marker written: {marker}")
+    except Exception as e:  # marker is a convenience, not the upload's success
+        print(f"warning: could not write marker ({e.__class__.__name__}: {e})")
+
     return 0
 
 
