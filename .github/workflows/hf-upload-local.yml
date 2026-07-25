@@ -1,0 +1,59 @@
+name: Upload local file to Hugging Face
+
+# RPi5 is compute-only: durable artifacts belong on HF so the local copy can be
+# purged by disk_watchdog.sh without losing anything. This job runs ON the RPi5
+# (self-hosted) so it can read a local path directly, while HF_TOKEN stays in
+# GitHub Secrets and is never written to that box's disk.
+#
+# Only derived artifacts (aggregate features, results) may be uploaded.
+# NIED Hi-net / S-net raw waveforms must never be redistributed -- the script
+# refuses raw/archive extensions.
+
+on:
+  workflow_dispatch:
+    inputs:
+      src:
+        description: Absolute path on the runner host
+        required: true
+        default: /home/yasu/geo-ml/feature_matrix.json
+      repo:
+        description: HF dataset repo id (owner/name)
+        required: true
+        default: yasumorishima/japan-geohazard
+      path_in_repo:
+        description: Destination path inside the dataset repo
+        required: true
+        default: derived/feature_matrix.json
+      memo:
+        description: Why this upload is being run
+        required: true
+      dry_run:
+        description: Set to true to check without uploading
+        required: false
+        default: "false"
+
+jobs:
+  upload:
+    runs-on: [self-hosted, rpi5]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show intent
+        run: |
+          echo "memo: ${{ inputs.memo }}"
+          echo "src : ${{ inputs.src }}"
+          echo "dest: ${{ inputs.repo }}:${{ inputs.path_in_repo }}"
+          echo "dry : ${{ inputs.dry_run }}"
+
+      - name: Upload and verify
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          DRY=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then DRY="--dry-run"; fi
+          /home/yasu/geo-ml/venv/bin/python scripts/hf_upload_local.py \
+            --src "${{ inputs.src }}" \
+            --repo "${{ inputs.repo }}" \
+            --path "${{ inputs.path_in_repo }}" \
+            --message "${{ inputs.memo }}" \
+            $DRY
