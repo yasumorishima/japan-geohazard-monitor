@@ -177,6 +177,9 @@ for ev in plan:
                 rows.append((sid, d, az, sla, slo, sr))
             if len(rows) < 8:
                 raise RuntimeError("only %d usable stations" % len(rows))
+            _earr = np.array(env, dtype=np.float32)
+            _escale = np.maximum(_earr.reshape(len(_earr), -1).max(axis=1), 1e-12).astype(np.float32)
+            _env16 = (_earr / _escale[:, None, None]).astype(np.float16)
             np.savez_compressed(
                 outp,
                 sta=np.array([r[0] for r in rows]),
@@ -184,7 +187,7 @@ for ev in plan:
                 az=np.array([r[2] for r in rows], dtype=np.float32),
                 sla=np.array([r[3] for r in rows], dtype=np.float32),
                 slo=np.array([r[4] for r in rows], dtype=np.float32),
-                env=np.array(env, dtype=np.float16),
+                env=_env16, envscale=_escale,
                 specS=np.array(spS, dtype=np.float32),
                 specN=np.array(spN, dtype=np.float32),
                 meta=np.array([ev["lat"], ev["lon"], ev["mag"], PRE_S, POST_S, ENV_SR],
