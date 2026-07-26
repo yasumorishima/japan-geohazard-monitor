@@ -19,6 +19,10 @@ on:
         description: "Station radius around the epicentre"
         required: false
         default: "200"
+      events:
+        description: "Event plan JSON (repo-relative)"
+        required: false
+        default: "scripts/hinet_dir_events.json"
       memo:
         description: "Run intent (required)"
         required: true
@@ -52,6 +56,7 @@ jobs:
         env:
           HINET_USER: ${{ secrets.HINET_USER }}
           HINET_PASS: ${{ secrets.HINET_PASS }}
+          DIR_EVENTS: ${{ inputs.events }}
           DIR_I0: ${{ inputs.i0 }}
           DIR_I1: ${{ inputs.i1 }}
           DIR_MAX_STA: ${{ inputs.max_sta }}
