@@ -35,6 +35,14 @@ on:
         description: "Envelope sample rate in Hz (10 for the 210 s window, 1 for the 45 min one)"
         required: false
         default: "10"
+      min_sta:
+        description: "Usable stations required to keep an event (must be <= max_sta)"
+        required: false
+        default: "8"
+      span_pad:
+        description: "Seconds of request margin over the window, for short traces"
+        required: false
+        default: "60"
       tag:
         description: "Artifact tag; keep distinct per round, the event index space is shared"
         required: false
@@ -80,6 +88,8 @@ jobs:
           DIR_PRE_S: ${{ inputs.pre_s }}
           DIR_POST_S: ${{ inputs.post_s }}
           DIR_ENV_SR: ${{ inputs.env_sr }}
+          DIR_MIN_STA: ${{ inputs.min_sta }}
+          DIR_SPAN_PAD: ${{ inputs.span_pad }}
           DIR_OUTTAR: hinet_${{ inputs.tag }}_${{ inputs.i0 }}_${{ inputs.i1 }}.tar.gz
         run: python scripts/fetch_hinet_dirfeat.py
       - name: Upload artifact

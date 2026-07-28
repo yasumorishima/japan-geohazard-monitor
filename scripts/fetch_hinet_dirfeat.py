@@ -28,7 +28,9 @@ PW = os.environ["HINET_PASS"]
 EVENTS = os.environ.get("DIR_EVENTS", "scripts/hinet_dir_events.json")
 I0 = int(os.environ.get("DIR_I0", "0"))
 I1 = int(os.environ.get("DIR_I1", "0")) or None
-MAX_STA = int(os.environ.get("DIR_MAX_STA", "40"))
+MAX_STA = int(os.environ.get("DIR_MAX_STA", "40"))     # stations REQUESTED (nearest first)
+MIN_STA = int(os.environ.get("DIR_MIN_STA", "8"))      # usable stations REQUIRED to keep an event
+SPAN_PAD = float(os.environ.get("DIR_SPAN_PAD", "60")) # request margin (s) over the window
 RADIUS = float(os.environ.get("DIR_RADIUS_KM", "200"))
 PRE_S = float(os.environ.get("DIR_PRE_S", "30"))
 POST_S = float(os.environ.get("DIR_POST_S", "180"))
@@ -109,13 +111,13 @@ for ev in plan:
             sel.append((d, az, sid, la, lo))
     sel.sort()
     sel = sel[:MAX_STA]
-    if len(sel) < 8:
+    if len(sel) < MIN_STA:
         logf.write(json.dumps({"idx": idx, "ok": 0, "reason": "few_sta",
                                "n": len(sel)}) + "\n"); logf.flush()
         continue
     codes = [s[2] for s in sel]
     seg = (ot - timedelta(seconds=PRE_S)).replace(second=0, microsecond=0)
-    span = int(math.ceil((PRE_S + POST_S + 60.0) / 60.0))
+    span = int(math.ceil((PRE_S + POST_S + SPAN_PAD) / 60.0))
     got = False
     for attempt in range(RETRIES):
         work = tempfile.mkdtemp(prefix="dir_")
@@ -178,8 +180,9 @@ for ev in plan:
                 spN.append(np.vstack([logspec(zz[0:nb], sr), logspec(hh[0:nb], sr)]))
                 env.append(e)
                 rows.append((sid, d, az, sla, slo, sr))
-            if len(rows) < 8:
-                raise RuntimeError("only %d usable stations" % len(rows))
+            if len(rows) < MIN_STA:
+                raise RuntimeError("only %d usable stations (need %d of %d requested)"
+                                   % (len(rows), MIN_STA, len(sel)))
             _earr = np.array(env, dtype=np.float32)
             _escale = np.maximum(_earr.reshape(len(_earr), -1).max(axis=1), 1e-12).astype(np.float32)
             _env16 = (_earr / _escale[:, None, None]).astype(np.float16)
