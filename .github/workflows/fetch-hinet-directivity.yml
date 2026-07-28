@@ -23,6 +23,22 @@ on:
         description: "Event plan JSON (repo-relative)"
         required: false
         default: "scripts/hinet_dir_events.json"
+      pre_s:
+        description: "Seconds of signal before the origin time"
+        required: false
+        default: "30"
+      post_s:
+        description: "Seconds of signal after the origin time"
+        required: false
+        default: "180"
+      env_sr:
+        description: "Envelope sample rate in Hz (10 for the 210 s window, 1 for the 45 min one)"
+        required: false
+        default: "10"
+      tag:
+        description: "Artifact tag; keep distinct per round, the event index space is shared"
+        required: false
+        default: "dirfeat"
       memo:
         description: "Run intent (required)"
         required: true
@@ -61,11 +77,14 @@ jobs:
           DIR_I1: ${{ inputs.i1 }}
           DIR_MAX_STA: ${{ inputs.max_sta }}
           DIR_RADIUS_KM: ${{ inputs.radius_km }}
-          DIR_OUTTAR: hinet_dirfeat_${{ inputs.i0 }}_${{ inputs.i1 }}.tar.gz
+          DIR_PRE_S: ${{ inputs.pre_s }}
+          DIR_POST_S: ${{ inputs.post_s }}
+          DIR_ENV_SR: ${{ inputs.env_sr }}
+          DIR_OUTTAR: hinet_${{ inputs.tag }}_${{ inputs.i0 }}_${{ inputs.i1 }}.tar.gz
         run: python scripts/fetch_hinet_dirfeat.py
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: hinet-dirfeat-${{ inputs.i0 }}-${{ inputs.i1 }}
-          path: hinet_dirfeat_${{ inputs.i0 }}_${{ inputs.i1 }}.tar.gz
+          name: hinet-${{ inputs.tag }}-${{ inputs.i0 }}-${{ inputs.i1 }}
+          path: hinet_${{ inputs.tag }}_${{ inputs.i0 }}_${{ inputs.i1 }}.tar.gz
           retention-days: 7

@@ -36,7 +36,10 @@ RETRIES = int(os.environ.get("DIR_RETRIES", "3"))
 RETRY_SLEEP = int(os.environ.get("DIR_RETRY_SLEEP", "45"))
 OUTTAR = os.environ.get("DIR_OUTTAR", "hinet_dirfeat.tar.gz")
 
-ENV_SR = 10.0                       # envelope sample rate (Hz)
+ENV_SR = float(os.environ.get("DIR_ENV_SR", "10"))   # envelope sample rate (Hz)
+# A 45-min post-origin window (round 38) is fetched at 1 Hz: the shape features bin to
+# 10 s, so 1 Hz is already 10x finer than they read, and 10 Hz would be 27,300 samples
+# per band per station.
 BANDS = [(1.0, 3.0), (3.0, 8.0), (8.0, 20.0)]
 NFREQ = 64
 FMIN, FMAX = 0.5, 40.0
