@@ -599,6 +599,56 @@ emails) via the light job itself. Downstream steps already key off merge/snapsho
 and skip cleanly; the Discord notifier still posts its skip embed. Reviewed (no findings)
 with each claim re-verified against the workflow source.
 
+### Checkpoint chain expiry: the base DB was silently rebuilt from empty (2026-07-24, recovered 2026-07-29, PR #197)
+
+The `backfill-checkpoint-*` artifact chain expired and the `light` job rebuilt the canonical
+history from an empty file without any signal. The restore log of run 30078904889 -- the first
+success after a nine-day drought -- is unambiguous: all five `backfill-checkpoint-` candidates
+and all three legacy `database-checkpoint-` names failed to download, then
+`No usable checkpoint found -- will init fresh DB` followed by
+`Database initialized: ./data/geohazard.db`. Two conditions had to coincide. `e759fe5`
+(2026-07-15) cut checkpoint retention from 30 days to 3; and every scheduled run between
+2026-07-15 08:08 and 2026-07-24 08:26 was cancelled while queued -- a run takes longer than the
+3-hour cron interval, so under `cancel-in-progress: false` the queued duplicate is dropped -- so
+no new checkpoint was produced for nine days and the three-day chain aged out.
+
+**No data was lost.** `hf_sync.py`'s row-count no-regression guard (added 2026-07-05, see the
+section above) did exactly what it exists for and refused every subsequent publish
+(`refusing to upload -- row-count regression in 9 table(s)`), leaving the canonical copy on
+Hugging Face intact. The rebuilt chain against that canonical copy, from the coverage report of
+run 30363600697: `tec` 0 rows (canonical 6,440,742), `iss_lis_lightning` and `nightlight` missing
+as tables (952 / 929), `ioc_sea_level` 120,280,581 (176,345,275), `dart_pressure` 394,999
+(973,419). `gnss_tec` and `hinet_waveform` had meanwhile grown past the canonical counts, so the
+per-job overlay artifacts still carried rows worth keeping.
+
+The degradation ran for five days unreported because `Create issue on failure` was wired only to
+the fetch-step outputs and `steps.merge.outcome`. The Hugging Face upload is a later step in the
+same job, so a guard trip failed the run while matching no clause -- the 2026-07-25 and
+2026-07-27 failures filed nothing, and the last auto-filed issue was from 2026-06-03. The same
+failure also skipped `Upload checkpoint artifact` (a plain `if: steps.snapshot.outcome ==
+'success'` does not run after a failed step), so each guard trip additionally cost that run its
+checkpoint -- thinning the very chain whose thinning caused the incident.
+
+Fix (PR #197, `bad49202`): the `light` job gains a `Guard against rebuilding the base DB from
+empty` step that fails a scheduled run when the restore step reports `restored=none` instead of
+initialising an empty DB; the Hugging Face step gains `id: hf_upload`; `Create issue on failure`
+now also fires on `steps.hf_upload.outcome == 'failure'` and on
+`needs.light.outputs.restore_restored == 'none'`, both bypassing the attempt-1 suppression
+(an auto-rerun cannot un-expire artifacts); and `Coverage report` / `Upload checkpoint artifact`
+move to `(success() || failure())` so a guard trip no longer starves the chain.
+`restore_restored` was already exported by the `light` job and had no consumer until now.
+
+Recovery: `reseed-checkpoint-from-hf.yml` (run 30431629728) pulled the canonical DB -- **42 GB**,
+not the ~16.5 GB its header comment still assumed -- passed `check_db_integrity.py --mode=quick`,
+and republished it as `backfill-checkpoint-30431629728` at the head of the chain with 30-day
+retention. The schedule was disabled for the duration so no degraded checkpoint could supersede
+it, since runs are serialised and the next one would otherwise restore the old chain before the
+reseed landed. `merge_checkpoints.py` keeps base rows whenever an overlay is smaller, so the
+newer `gnss_tec` / `hinet_waveform` rows in the surviving per-job overlays merge back on top of
+the restored canonical base rather than being discarded. Verification of the first full run on
+the reseeded chain (run 30439350491) was still in progress when this entry was written.
+
+
 ## Analysis Results (2011-2026, 28K M3+ earthquakes, 6.4M TEC, 45K Kp, 5.3M GNSS-TEC, 24M ULF, 98 features with dynamic selection)
 
 ### Summary
@@ -1675,8 +1725,8 @@ Feature matrix exported to Google Drive for Colab GPU experiments. (Historical: 
 
 | 階層 | 場所 | 役割 | 容量 | 保持 |
 |---|---|---|---|---|
-| Canonical (durable) | **Hugging Face dataset** [`yasumorishima/japan-geohazard`](https://huggingface.co/datasets/yasumorishima/japan-geohazard) `geohazard.db` (+ sidecar `geohazard.db.rowcounts.json`) | merge job が `scripts/hf_sync.py` で upload (integrity_check fail-closed + **row-count no-regression guard**: sidecar manifest と per-table 比較で degraded 上書き防止 — compaction は通過・テーブル脱落は拒否、 旧 byte-size guard を 2026-07-05 に置換 + 絶対下限 5 GB + `super_squash_history` で LFS 履歴を畳む) | LFS ~18 GB (compacted) | 永続 (public dataset) |
-| Working (per-run) | **GH Actions artifact** `backfill-checkpoint-<run_id>` | merge job が常時 upload、 各 fetch job の restore step が次 run で読む incremental chain | 30 GB cap | 30 day rolling |
+| Canonical (durable) | **Hugging Face dataset** [`yasumorishima/japan-geohazard`](https://huggingface.co/datasets/yasumorishima/japan-geohazard) `geohazard.db` (+ sidecar `geohazard.db.rowcounts.json`) | merge job が `scripts/hf_sync.py` で upload (integrity_check fail-closed + **row-count no-regression guard**: sidecar manifest と per-table 比較で degraded 上書き防止 — compaction は通過・テーブル脱落は拒否、 旧 byte-size guard を 2026-07-05 に置換 + 絶対下限 5 GB + `super_squash_history` で LFS 履歴を畳む) | LFS ~42 GB (2026-07-29 実測、 2026-07-05 の compaction 後に `ioc_sea_level` 等の backfill で再成長) | 永続 (public dataset) |
+| Working (per-run) | **GH Actions artifact** `backfill-checkpoint-<run_id>` | merge job が常時 upload、 各 fetch job の restore step が次 run で読む incremental chain | 30 GB cap | **3 day rolling** (`e759fe5`、 2026-07-15 に 30→3 へ短縮。 この保持期間を超える run ドラウトが起きると chain が失効する — 2026-07-24 の事象を参照) |
 | Scratch (during merge) | **`ubuntu-latest` ephemeral** `/mnt/merge/{light,modis,so2,cloud,snet,hinet}/geohazard.db` | `actions/download-artifact@v4` が merge job 中に展開 (root fs に dst、 `/mnt` に inputs を分散して ~33 GB ピーク (`shutil.copyfile(base, dst)`) を 2 FS に振り分け) | ~33 GB peak | 一時 (job 終了で破棄) |
 
 > Hugging Face upload は **UTC 00:00 cron の1本のみ**で発火 (LFS 履歴肥大防止)。 targeted `workflow_dispatch` (`target != 'all'`) では Canonical / Working tier への upload を skip (該当 run が部分テーブルしか更新しないため、 他テーブルの状態を巻き戻すのを防ぐ)。 緊急時は `.github/workflows/reseed-checkpoint-from-hf.yml` で Canonical → Working chain を再シード可能。
