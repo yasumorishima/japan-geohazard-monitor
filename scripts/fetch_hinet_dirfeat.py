@@ -37,6 +37,11 @@ POST_S = float(os.environ.get("DIR_POST_S", "180"))
 RETRIES = int(os.environ.get("DIR_RETRIES", "3"))
 RETRY_SLEEP = int(os.environ.get("DIR_RETRY_SLEEP", "45"))
 OUTTAR = os.environ.get("DIR_OUTTAR", "hinet_dirfeat.tar.gz")
+# Wall-clock budget. Round 38 slice 0-200 was killed by the job timeout at
+# 5h50m with the tar never written, so every fetched event in it was lost.
+# Stopping the loop ourselves keeps the tar+progress write reachable.
+MAX_SECONDS = float(os.environ.get("DIR_MAX_SECONDS", "0"))
+T_START = time.time()
 
 ENV_SR = float(os.environ.get("DIR_ENV_SR", "10"))   # envelope sample rate (Hz)
 # A 45-min post-origin window (round 38) is fetched at 1 Hz: the shape features bin to
@@ -97,7 +102,15 @@ def logspec(x, sr):
 os.makedirs("dirfeat", exist_ok=True)
 logf = open("dirfeat/extract.jsonl", "a")
 nok = 0
-for ev in plan:
+stopped_early = False
+next_pos = len(plan)
+for pos, ev in enumerate(plan):
+    if MAX_SECONDS and (time.time() - T_START) > MAX_SECONDS:
+        stopped_early = True
+        next_pos = pos
+        print("budget %.0fs reached at plan position %d; stopping cleanly"
+              % (MAX_SECONDS, pos), flush=True)
+        break
     idx = int(ev["idx"])
     outp = "dirfeat/ev%05d.npz" % idx
     if os.path.exists(outp):
@@ -223,6 +236,13 @@ for ev in plan:
     time.sleep(1)
 
 logf.close()
+progress = {"i0": I0, "i1": I1, "n_planned": len(plan),
+            "n_attempted": next_pos, "nok": nok,
+            "complete": not stopped_early,
+            "next_i0": I0 + next_pos,
+            "elapsed_s": round(time.time() - T_START, 1)}
+json.dump(progress, open("dirfeat/progress.json", "w"))
+print("PROGRESS", json.dumps(progress), flush=True)
 with tarfile.open(OUTTAR, "w:gz") as t:
     t.add("dirfeat")
 print("events ok", nok, "of", len(plan), "->", OUTTAR,

@@ -47,6 +47,10 @@ on:
         description: "Artifact tag; keep distinct per round, the event index space is shared"
         required: false
         default: "dirfeat"
+      max_seconds:
+        description: "Wall-clock budget for the fetch loop; stop cleanly before timeout-minutes so the tar is still written (0 = no budget)"
+        required: false
+        default: "0"
       memo:
         description: "Run intent (required)"
         required: true
@@ -90,9 +94,18 @@ jobs:
           DIR_ENV_SR: ${{ inputs.env_sr }}
           DIR_MIN_STA: ${{ inputs.min_sta }}
           DIR_SPAN_PAD: ${{ inputs.span_pad }}
+          DIR_MAX_SECONDS: ${{ inputs.max_seconds }}
           DIR_OUTTAR: hinet_${{ inputs.tag }}_${{ inputs.i0 }}_${{ inputs.i1 }}.tar.gz
         run: python scripts/fetch_hinet_dirfeat.py
+      - name: Salvage bundles if the fetch step did not finish
+        if: always()
+        run: |
+          if [ ! -f "hinet_${{ inputs.tag }}_${{ inputs.i0 }}_${{ inputs.i1 }}.tar.gz" ] && [ -d dirfeat ]; then
+            echo "fetch step left no tar; packing $(ls dirfeat/*.npz 2>/dev/null | wc -l) bundles"
+            tar -czf "hinet_${{ inputs.tag }}_${{ inputs.i0 }}_${{ inputs.i1 }}.tar.gz" dirfeat
+          fi
       - name: Upload artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: hinet-${{ inputs.tag }}-${{ inputs.i0 }}-${{ inputs.i1 }}
