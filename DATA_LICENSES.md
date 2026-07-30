@@ -10,7 +10,7 @@ Last reviewed: 2026-03-19
 |---|---|
 | 🔴 **Strict (report required)** | NIED Hi-net/S-net |
 | 🟡 **Non-commercial only** | INTERMAGNET, NMDB, IOC Sea Level |
-| 🟢 **Open (citation required)** | GFZ Kp, Global CMT, COMET LiCSAR, JMA, GSI, P2P, Kakioka |
+| 🟢 **Open (citation required)** | GFZ Kp, Global CMT, COMET LiCSAR, JMA, GSI, P2P, Kakioka, ASF HyP3 |
 | ⚪ **Public domain** | NOAA (DART/SWPC/NDBC/ERDDAP), NASA Earthdata |
 | ❓ **Unconfirmed** | Nagoya Univ. ISEE GNSS-TEC, CODE (Univ. Bern) TEC |
 
@@ -154,6 +154,23 @@ LiCSAR uses JASMIN, the UK's collaborative data analysis environment (http://jas
 
 ---
 
+## 🟢 ASF HyP3 (Sentinel-1 InSAR / RTC processing)
+
+- **License**: Copernicus Sentinel data terms (input) + open service (processing)
+- **Requirements**:
+  1. Credit Copernicus for the input data
+  2. Credit ASF HyP3 for the processing
+- **Note**: HyP3 product download URLs are unauthenticated but expire ~2 weeks after processing.
+
+### Acknowledgment template
+```
+Contains modified Copernicus Sentinel data [year], processed by ESA.
+Processed with ASF HyP3, a service of the Alaska Satellite Facility, part of
+NASA's Earth Observing System Data and Information System (EOSDIS).
+```
+
+---
+
 ## 🟢 JMA (気象庁) — Earthquake, AMeDAS, Volcano
 
 - **License**: PDL1.0 (≈ CC BY 4.0)
@@ -282,6 +299,7 @@ Before publishing any results using this project's data:
 - [ ] GFZ Kp: DOI cited
 - [ ] Global CMT: Citation included
 - [ ] COMET LiCSAR: Acknowledgment + paper citation included
+- [ ] ASF HyP3: Copernicus + ASF acknowledgment included
 - [ ] JMA: Source attribution included
 - [ ] GSI: Source attribution included
 - [ ] Nagoya Univ. GNSS-TEC: Shinbori et al. (2022) cited, IUGONET + NICT acknowledged
