@@ -70,9 +70,23 @@ what exposes the signal, and the far field then serves as the measured noise flo
 
 Noise floor (>30 km): 2.6–4.7 % of pixels exceed 0.3. Within 10 km: 40.3 %, about ten times that.
 
+Both figures are drawn in geographic coordinates with the coastline taken from the HyP3 water mask.
+Municipality markers use office coordinates from the GSI address-search API
+(`msearch.gsi.go.jp/address-search/AddressSearch`).
+
 ![LOS displacement](fig1_los.png)
 
+The sign reverses across the epicentre: away from the satellite to the NE (Misato, Mashiki), toward
+it to the SW (Hikawa, Yatsushiro).
+
 ![Coherence-change damage proxy](fig2_damage.png)
+
+Aggregated to 1 km cells, each showing the percentage of usable pixels whose coherence dropped by
+more than 0.3; cells with fewer than 80 usable pixels are left blank. Per-pixel values are too
+sparse to read as a map, and the cell percentage is directly comparable to the 3–5 % noise floor
+measured in the far field. Of 5,561 cells with enough data, 289 exceed 30 % and 146 exceed 50 %.
+The affected cells trace Mashiki -> Uto -> Uki -> Hikawa -> Yatsushiro, with the densest values over
+built-up Yatsushiro.
 
 ## What this is not
 
