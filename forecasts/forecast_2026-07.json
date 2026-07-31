@@ -1,0 +1,861 @@
+{
+ "forecast_window": {
+  "start": "2026-07-29",
+  "end": "2026-09-01",
+  "days": 34
+ },
+ "target": "M5+ (USGS Mw, per 2deg cell)",
+ "oos_skill_auc": 0.865,
+ "climatology_baseline_auc": 0.854,
+ "generated": "2026-07-29",
+ "method": "USGS catalog ETAS ensemble (ENET+GBT), isotonic-calibrated",
+ "cells": [
+  {
+   "lat": 26.0,
+   "lon": 128.0,
+   "prob": 0.108,
+   "baseline": 0.1596,
+   "elevation_ratio": 0.68
+  },
+  {
+   "lat": 26.0,
+   "lon": 130.0,
+   "prob": 0.0448,
+   "baseline": 0.0663,
+   "elevation_ratio": 0.68
+  },
+  {
+   "lat": 26.0,
+   "lon": 132.0,
+   "prob": 0.0039,
+   "baseline": 0.0,
+   "elevation_ratio": 38.69
+  },
+  {
+   "lat": 26.0,
+   "lon": 134.0,
+   "prob": 0.0006,
+   "baseline": 0.0,
+   "elevation_ratio": 6.31
+  },
+  {
+   "lat": 26.0,
+   "lon": 136.0,
+   "prob": 0.0006,
+   "baseline": 0.0,
+   "elevation_ratio": 6.31
+  },
+  {
+   "lat": 26.0,
+   "lon": 138.0,
+   "prob": 0.0047,
+   "baseline": 0.0058,
+   "elevation_ratio": 0.81
+  },
+  {
+   "lat": 26.0,
+   "lon": 140.0,
+   "prob": 0.0448,
+   "baseline": 0.0329,
+   "elevation_ratio": 1.36
+  },
+  {
+   "lat": 26.0,
+   "lon": 142.0,
+   "prob": 0.0897,
+   "baseline": 0.1007,
+   "elevation_ratio": 0.89
+  },
+  {
+   "lat": 26.0,
+   "lon": 144.0,
+   "prob": 0.0448,
+   "baseline": 0.0652,
+   "elevation_ratio": 0.69
+  },
+  {
+   "lat": 26.0,
+   "lon": 146.0,
+   "prob": 0.0006,
+   "baseline": 0.0,
+   "elevation_ratio": 6.31
+  },
+  {
+   "lat": 26.0,
+   "lon": 148.0,
+   "prob": 0.0,
+   "baseline": 0.0,
+   "elevation_ratio": 0.0
+  },
+  {
+   "lat": 28.0,
+   "lon": 128.0,
+   "prob": 0.108,
+   "baseline": 0.1294,
+   "elevation_ratio": 0.83
+  },
+  {
+   "lat": 28.0,
+   "lon": 130.0,
+   "prob": 0.1226,
+   "baseline": 0.1554,
+   "elevation_ratio": 0.79
+  },
+  {
+   "lat": 28.0,
+   "lon": 132.0,
+   "prob": 0.0154,
+   "baseline": 0.0233,
+   "elevation_ratio": 0.66
+  },
+  {
+   "lat": 28.0,
+   "lon": 134.0,
+   "prob": 0.0006,
+   "baseline": 0.0,
+   "elevation_ratio": 6.31
+  },
+  {
+   "lat": 28.0,
+   "lon": 136.0,
+   "prob": 0.0006,
+   "baseline": 0.0,
+   "elevation_ratio": 6.31
+  },
+  {
+   "lat": 28.0,
+   "lon": 138.0,
+   "prob": 0.0154,
+   "baseline": 0.0297,
+   "elevation_ratio": 0.52
+  },
+  {
+   "lat": 28.0,
+   "lon": 140.0,
+   "prob": 0.1125,
+   "baseline": 0.1098,
+   "elevation_ratio": 1.03
+  },
+  {
+   "lat": 28.0,
+   "lon": 142.0,
+   "prob": 0.0897,
+   "baseline": 0.1543,
+   "elevation_ratio": 0.58
+  },
+  {
+   "lat": 28.0,
+   "lon": 144.0,
+   "prob": 0.0379,
+   "baseline": 0.0748,
+   "elevation_ratio": 0.51
+  },
+  {
+   "lat": 28.0,
+   "lon": 146.0,
+   "prob": 0.0,
+   "baseline": 0.0,
+   "elevation_ratio": 0.0
+  },
+  {
+   "lat": 28.0,
+   "lon": 148.0,
+   "prob": 0.0,
+   "baseline": 0.0,
+   "elevation_ratio": 0.0
+  },
+  {
+   "lat": 30.0,
+   "lon": 128.0,
+   "prob": 0.0138,
+   "baseline": 0.018,
+   "elevation_ratio": 0.77
+  },
+  {
+   "lat": 30.0,
+   "lon": 130.0,
+   "prob": 0.1552,
+   "baseline": 0.1628,
+   "elevation_ratio": 0.95
+  },
+  {
+   "lat": 30.0,
+   "lon": 132.0,
+   "prob": 0.0897,
+   "baseline": 0.1304,
+   "elevation_ratio": 0.69
+  },
+  {
+   "lat": 30.0,
+   "lon": 134.0,
+   "prob": 0.0015,
+   "baseline": 0.0,
+   "elevation_ratio": 14.7
+  },
+  {
+   "lat": 30.0,
+   "lon": 136.0,
+   "prob": 0.0039,
+   "baseline": 0.0058,
+   "elevation_ratio": 0.66
+  },
+  {
+   "lat": 30.0,
+   "lon": 138.0,
+   "prob": 0.0782,
+   "baseline": 0.0652,
+   "elevation_ratio": 1.2
+  },
+  {
+   "lat": 30.0,
+   "lon": 140.0,
+   "prob": 0.1125,
+   "baseline": 0.096,
+   "elevation_ratio": 1.17
+  },
+  {
+   "lat": 30.0,
+   "lon": 142.0,
+   "prob": 0.1797,
+   "baseline": 0.2312,
+   "elevation_ratio": 0.78
+  },
+  {
+   "lat": 30.0,
+   "lon": 144.0,
+   "prob": 0.0047,
+   "baseline": 0.0,
+   "elevation_ratio": 46.97
+  },
+  {
+   "lat": 30.0,
+   "lon": 146.0,
+   "prob": 0.0006,
+   "baseline": 0.0,
+   "elevation_ratio": 6.31
+  },
+  {
+   "lat": 30.0,
+   "lon": 148.0,
+   "prob": 0.0,
+   "baseline": 0.0,
+   "elevation_ratio": 0.0
+  },
+  {
+   "lat": 32.0,
+   "lon": 128.0,
+   "prob": 0.0154,
+   "baseline": 0.0127,
+   "elevation_ratio": 1.21
+  },
+  {
+   "lat": 32.0,
+   "lon": 130.0,
+   "prob": 0.3693,
+   "baseline": 0.0408,
+   "elevation_ratio": 9.04
+  },
+  {
+   "lat": 32.0,
+   "lon": 132.0,
+   "prob": 0.2181,
+   "baseline": 0.1522,
+   "elevation_ratio": 1.43
+  },
+  {
+   "lat": 32.0,
+   "lon": 134.0,
+   "prob": 0.0047,
+   "baseline": 0.0,
+   "elevation_ratio": 46.97
+  },
+  {
+   "lat": 32.0,
+   "lon": 136.0,
+   "prob": 0.0047,
+   "baseline": 0.0,
+   "elevation_ratio": 46.97
+  },
+  {
+   "lat": 32.0,
+   "lon": 138.0,
+   "prob": 0.0448,
+   "baseline": 0.0859,
+   "elevation_ratio": 0.52
+  },
+  {
+   "lat": 32.0,
+   "lon": 140.0,
+   "prob": 0.0897,
+   "baseline": 0.1166,
+   "elevation_ratio": 0.77
+  },
+  {
+   "lat": 32.0,
+   "lon": 142.0,
+   "prob": 0.1125,
+   "baseline": 0.1596,
+   "elevation_ratio": 0.7
+  },
+  {
+   "lat": 32.0,
+   "lon": 144.0,
+   "prob": 0.0047,
+   "baseline": 0.0058,
+   "elevation_ratio": 0.81
+  },
+  {
+   "lat": 32.0,
+   "lon": 146.0,
+   "prob": 0.0,
+   "baseline": 0.0,
+   "elevation_ratio": 0.0
+  },
+  {
+   "lat": 32.0,
+   "lon": 148.0,
+   "prob": 0.0,
+   "baseline": 0.0,
+   "elevation_ratio": 0.0
+  },
+  {
+   "lat": 34.0,
+   "lon": 128.0,
+   "prob": 0.0039,
+   "baseline": 0.0,
+   "elevation_ratio": 38.69
+  },
+  {
+   "lat": 34.0,
+   "lon": 130.0,
+   "prob": 0.055,
+   "baseline": 0.0,
+   "elevation_ratio": 550.13
+  },
+  {
+   "lat": 34.0,
+   "lon": 132.0,
+   "prob": 0.1039,
+   "baseline": 0.0435,
+   "elevation_ratio": 2.39
+  },
+  {
+   "lat": 34.0,
+   "lon": 134.0,
+   "prob": 0.0154,
+   "baseline": 0.0154,
+   "elevation_ratio": 1.0
+  },
+  {
+   "lat": 34.0,
+   "lon": 136.0,
+   "prob": 0.0448,
+   "baseline": 0.0663,
+   "elevation_ratio": 0.68
+  },
+  {
+   "lat": 34.0,
+   "lon": 138.0,
+   "prob": 0.0564,
+   "baseline": 0.062,
+   "elevation_ratio": 0.91
+  },
+  {
+   "lat": 34.0,
+   "lon": 140.0,
+   "prob": 0.1039,
+   "baseline": 0.1193,
+   "elevation_ratio": 0.87
+  },
+  {
+   "lat": 34.0,
+   "lon": 142.0,
+   "prob": 0.108,
+   "baseline": 0.1405,
+   "elevation_ratio": 0.77
+  },
+  {
+   "lat": 34.0,
+   "lon": 144.0,
+   "prob": 0.0047,
+   "baseline": 0.0,
+   "elevation_ratio": 46.97
+  },
+  {
+   "lat": 34.0,
+   "lon": 146.0,
+   "prob": 0.0,
+   "baseline": 0.0,
+   "elevation_ratio": 0.0
+  },
+  {
+   "lat": 34.0,
+   "lon": 148.0,
+   "prob": 0.0,
+   "baseline": 0.0,
+   "elevation_ratio": 0.0
+  },
+  {
+   "lat": 36.0,
+   "lon": 128.0,
+   "prob": 0.0015,
+   "baseline": 0.0,
+   "elevation_ratio": 14.7
+  },
+  {
+   "lat": 36.0,
+   "lon": 130.0,
+   "prob": 0.0039,
+   "baseline": 0.0117,
+   "elevation_ratio": 0.33
+  },
+  {
+   "lat": 36.0,
+   "lon": 132.0,
+   "prob": 0.0047,
+   "baseline": 0.0122,
+   "elevation_ratio": 0.39
+  },
+  {
+   "lat": 36.0,
+   "lon": 134.0,
+   "prob": 0.0138,
+   "baseline": 0.0122,
+   "elevation_ratio": 1.14
+  },
+  {
+   "lat": 36.0,
+   "lon": 136.0,
+   "prob": 0.0154,
+   "baseline": 0.0186,
+   "elevation_ratio": 0.83
+  },
+  {
+   "lat": 36.0,
+   "lon": 138.0,
+   "prob": 0.1039,
+   "baseline": 0.0917,
+   "elevation_ratio": 1.13
+  },
+  {
+   "lat": 36.0,
+   "lon": 140.0,
+   "prob": 0.2181,
+   "baseline": 0.4067,
+   "elevation_ratio": 0.54
+  },
+  {
+   "lat": 36.0,
+   "lon": 142.0,
+   "prob": 0.1372,
+   "baseline": 0.3144,
+   "elevation_ratio": 0.44
+  },
+  {
+   "lat": 36.0,
+   "lon": 144.0,
+   "prob": 0.0379,
+   "baseline": 0.0583,
+   "elevation_ratio": 0.65
+  },
+  {
+   "lat": 36.0,
+   "lon": 146.0,
+   "prob": 0.0039,
+   "baseline": 0.0,
+   "elevation_ratio": 38.69
+  },
+  {
+   "lat": 36.0,
+   "lon": 148.0,
+   "prob": 0.0,
+   "baseline": 0.0,
+   "elevation_ratio": 0.0
+  },
+  {
+   "lat": 38.0,
+   "lon": 128.0,
+   "prob": 0.0,
+   "baseline": 0.0,
+   "elevation_ratio": 0.0
+  },
+  {
+   "lat": 38.0,
+   "lon": 130.0,
+   "prob": 0.0006,
+   "baseline": 0.0,
+   "elevation_ratio": 6.31
+  },
+  {
+   "lat": 38.0,
+   "lon": 132.0,
+   "prob": 0.0039,
+   "baseline": 0.0,
+   "elevation_ratio": 38.69
+  },
+  {
+   "lat": 38.0,
+   "lon": 134.0,
+   "prob": 0.0184,
+   "baseline": 0.0,
+   "elevation_ratio": 184.05
+  },
+  {
+   "lat": 38.0,
+   "lon": 136.0,
+   "prob": 0.0448,
+   "baseline": 0.0191,
+   "elevation_ratio": 2.35
+  },
+  {
+   "lat": 38.0,
+   "lon": 138.0,
+   "prob": 0.0888,
+   "baseline": 0.0429,
+   "elevation_ratio": 2.07
+  },
+  {
+   "lat": 38.0,
+   "lon": 140.0,
+   "prob": 0.0888,
+   "baseline": 0.0806,
+   "elevation_ratio": 1.1
+  },
+  {
+   "lat": 38.0,
+   "lon": 142.0,
+   "prob": 0.2181,
+   "baseline": 0.5217,
+   "elevation_ratio": 0.42
+  },
+  {
+   "lat": 38.0,
+   "lon": 144.0,
+   "prob": 0.1039,
+   "baseline": 0.1946,
+   "elevation_ratio": 0.53
+  },
+  {
+   "lat": 38.0,
+   "lon": 146.0,
+   "prob": 0.0047,
+   "baseline": 0.0058,
+   "elevation_ratio": 0.81
+  },
+  {
+   "lat": 38.0,
+   "lon": 148.0,
+   "prob": 0.0006,
+   "baseline": 0.0,
+   "elevation_ratio": 6.31
+  },
+  {
+   "lat": 40.0,
+   "lon": 128.0,
+   "prob": 0.0006,
+   "baseline": 0.0,
+   "elevation_ratio": 6.31
+  },
+  {
+   "lat": 40.0,
+   "lon": 130.0,
+   "prob": 0.0015,
+   "baseline": 0.0,
+   "elevation_ratio": 14.7
+  },
+  {
+   "lat": 40.0,
+   "lon": 132.0,
+   "prob": 0.0039,
+   "baseline": 0.0058,
+   "elevation_ratio": 0.66
+  },
+  {
+   "lat": 40.0,
+   "lon": 134.0,
+   "prob": 0.0039,
+   "baseline": 0.0,
+   "elevation_ratio": 38.69
+  },
+  {
+   "lat": 40.0,
+   "lon": 136.0,
+   "prob": 0.0039,
+   "baseline": 0.0,
+   "elevation_ratio": 38.69
+  },
+  {
+   "lat": 40.0,
+   "lon": 138.0,
+   "prob": 0.0047,
+   "baseline": 0.0,
+   "elevation_ratio": 46.97
+  },
+  {
+   "lat": 40.0,
+   "lon": 140.0,
+   "prob": 0.0782,
+   "baseline": 0.0191,
+   "elevation_ratio": 4.1
+  },
+  {
+   "lat": 40.0,
+   "lon": 142.0,
+   "prob": 0.4323,
+   "baseline": 0.3409,
+   "elevation_ratio": 1.27
+  },
+  {
+   "lat": 40.0,
+   "lon": 144.0,
+   "prob": 0.3758,
+   "baseline": 0.2619,
+   "elevation_ratio": 1.43
+  },
+  {
+   "lat": 40.0,
+   "lon": 146.0,
+   "prob": 0.0047,
+   "baseline": 0.0,
+   "elevation_ratio": 46.97
+  },
+  {
+   "lat": 40.0,
+   "lon": 148.0,
+   "prob": 0.0015,
+   "baseline": 0.0,
+   "elevation_ratio": 14.7
+  },
+  {
+   "lat": 42.0,
+   "lon": 128.0,
+   "prob": 0.0006,
+   "baseline": 0.0,
+   "elevation_ratio": 6.31
+  },
+  {
+   "lat": 42.0,
+   "lon": 130.0,
+   "prob": 0.0039,
+   "baseline": 0.0292,
+   "elevation_ratio": 0.13
+  },
+  {
+   "lat": 42.0,
+   "lon": 132.0,
+   "prob": 0.0047,
+   "baseline": 0.0122,
+   "elevation_ratio": 0.39
+  },
+  {
+   "lat": 42.0,
+   "lon": 134.0,
+   "prob": 0.0047,
+   "baseline": 0.0127,
+   "elevation_ratio": 0.37
+  },
+  {
+   "lat": 42.0,
+   "lon": 136.0,
+   "prob": 0.0047,
+   "baseline": 0.0064,
+   "elevation_ratio": 0.74
+  },
+  {
+   "lat": 42.0,
+   "lon": 138.0,
+   "prob": 0.0138,
+   "baseline": 0.0191,
+   "elevation_ratio": 0.73
+  },
+  {
+   "lat": 42.0,
+   "lon": 140.0,
+   "prob": 0.0782,
+   "baseline": 0.0488,
+   "elevation_ratio": 1.6
+  },
+  {
+   "lat": 42.0,
+   "lon": 142.0,
+   "prob": 0.2387,
+   "baseline": 0.3319,
+   "elevation_ratio": 0.72
+  },
+  {
+   "lat": 42.0,
+   "lon": 144.0,
+   "prob": 0.1552,
+   "baseline": 0.1474,
+   "elevation_ratio": 1.05
+  },
+  {
+   "lat": 42.0,
+   "lon": 146.0,
+   "prob": 0.1039,
+   "baseline": 0.1002,
+   "elevation_ratio": 1.04
+  },
+  {
+   "lat": 42.0,
+   "lon": 148.0,
+   "prob": 0.0047,
+   "baseline": 0.0,
+   "elevation_ratio": 46.97
+  },
+  {
+   "lat": 44.0,
+   "lon": 128.0,
+   "prob": 0.0015,
+   "baseline": 0.0,
+   "elevation_ratio": 14.7
+  },
+  {
+   "lat": 44.0,
+   "lon": 130.0,
+   "prob": 0.0039,
+   "baseline": 0.0249,
+   "elevation_ratio": 0.16
+  },
+  {
+   "lat": 44.0,
+   "lon": 132.0,
+   "prob": 0.0039,
+   "baseline": 0.0,
+   "elevation_ratio": 38.69
+  },
+  {
+   "lat": 44.0,
+   "lon": 134.0,
+   "prob": 0.0047,
+   "baseline": 0.0,
+   "elevation_ratio": 46.97
+  },
+  {
+   "lat": 44.0,
+   "lon": 136.0,
+   "prob": 0.0047,
+   "baseline": 0.0117,
+   "elevation_ratio": 0.4
+  },
+  {
+   "lat": 44.0,
+   "lon": 138.0,
+   "prob": 0.0138,
+   "baseline": 0.0,
+   "elevation_ratio": 138.45
+  },
+  {
+   "lat": 44.0,
+   "lon": 140.0,
+   "prob": 0.0138,
+   "baseline": 0.018,
+   "elevation_ratio": 0.77
+  },
+  {
+   "lat": 44.0,
+   "lon": 142.0,
+   "prob": 0.0448,
+   "baseline": 0.0366,
+   "elevation_ratio": 1.22
+  },
+  {
+   "lat": 44.0,
+   "lon": 144.0,
+   "prob": 0.0448,
+   "baseline": 0.0117,
+   "elevation_ratio": 3.84
+  },
+  {
+   "lat": 44.0,
+   "lon": 146.0,
+   "prob": 0.1039,
+   "baseline": 0.1506,
+   "elevation_ratio": 0.69
+  },
+  {
+   "lat": 44.0,
+   "lon": 148.0,
+   "prob": 0.1797,
+   "baseline": 0.2609,
+   "elevation_ratio": 0.69
+  },
+  {
+   "lat": 46.0,
+   "lon": 128.0,
+   "prob": 0.0006,
+   "baseline": 0.0,
+   "elevation_ratio": 6.31
+  },
+  {
+   "lat": 46.0,
+   "lon": 130.0,
+   "prob": 0.0039,
+   "baseline": 0.0,
+   "elevation_ratio": 38.69
+  },
+  {
+   "lat": 46.0,
+   "lon": 132.0,
+   "prob": 0.0006,
+   "baseline": 0.0,
+   "elevation_ratio": 6.31
+  },
+  {
+   "lat": 46.0,
+   "lon": 134.0,
+   "prob": 0.0006,
+   "baseline": 0.0,
+   "elevation_ratio": 6.31
+  },
+  {
+   "lat": 46.0,
+   "lon": 136.0,
+   "prob": 0.0039,
+   "baseline": 0.0058,
+   "elevation_ratio": 0.66
+  },
+  {
+   "lat": 46.0,
+   "lon": 138.0,
+   "prob": 0.0015,
+   "baseline": 0.0,
+   "elevation_ratio": 14.7
+  },
+  {
+   "lat": 46.0,
+   "lon": 140.0,
+   "prob": 0.0047,
+   "baseline": 0.0,
+   "elevation_ratio": 46.97
+  },
+  {
+   "lat": 46.0,
+   "lon": 142.0,
+   "prob": 0.0154,
+   "baseline": 0.0551,
+   "elevation_ratio": 0.28
+  },
+  {
+   "lat": 46.0,
+   "lon": 144.0,
+   "prob": 0.0154,
+   "baseline": 0.018,
+   "elevation_ratio": 0.86
+  },
+  {
+   "lat": 46.0,
+   "lon": 146.0,
+   "prob": 0.0138,
+   "baseline": 0.018,
+   "elevation_ratio": 0.77
+  },
+  {
+   "lat": 46.0,
+   "lon": 148.0,
+   "prob": 0.0406,
+   "baseline": 0.0541,
+   "elevation_ratio": 0.75
+  }
+ ]
+}
