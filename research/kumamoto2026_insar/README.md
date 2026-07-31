@@ -1,5 +1,13 @@
 # 2026 Kumamoto earthquake: co-seismic deformation and a coherence-change damage proxy
 
+> **This is an unreviewed personal analysis.** It has not been peer-reviewed and has not been
+> confirmed against any official product. Processing or interpretation errors could make the numbers
+> and maps here differ from reality.
+>
+> **For damage assessment or evacuation decisions, use the official releases** from GSI, JMA and the
+> municipalities. Do not use this as a basis for those decisions. Where this disagrees with an
+> official product, assume the official one is right. Corrections are welcome.
+
 Sentinel-1 InSAR for the M7.1 Kumamoto earthquake of 2026-07-28 16:27 JST (JMA intensity 7 at Uki
 City and Hikawa Town). Everything here comes from fully open Copernicus data processed on ASF HyP3;
 no restricted product is used, so the outputs can be redistributed.
@@ -99,6 +107,17 @@ built-up Yatsushiro.
 - **One look direction.** Descending only, so vertical and east–west motion cannot be separated.
   Adding an ascending post-event pair (path 156 or 54) would allow that decomposition.
 - The epicentre used for stratification is a rounded 32.60N, 130.65E, not a relocated hypocentre.
+
+### How the numbers could be wrong
+
+- **Phase unwrapping errors shift displacement by whole wavelengths.** The 21.7 cm figure rests on
+  the unwrapped phase; a single unwrapping mistake changes it. No independent check was run.
+- **No atmospheric correction.** Differing water-vapour distributions between the two acquisitions
+  produce centimetres of apparent displacement. The 2.7 cm scene-wide spread includes this.
+- **No ground-truth comparison.** GNSS or levelling data would validate the amplitudes; none was used.
+- **Processing parameters are close to the defaults.** Changing the phase filter or the looks changes
+  the absolute coherence values, so the stratification table is specific to this configuration
+  rather than a universal constant.
 
 ## Reproduce
 
