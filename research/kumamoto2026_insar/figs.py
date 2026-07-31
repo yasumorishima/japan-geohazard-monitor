@@ -92,10 +92,14 @@ fig, ax = plt.subplots(figsize=(11.5, 10))
 fig.subplots_adjust(left=.10, right=.86, top=.90, bottom=.09)
 m = ax.pcolormesh(LON, LAT, np.ma.masked_invalid(losm), cmap='RdBu_r',
                   vmin=-20, vmax=20, shading='flat', rasterized=True)
-decorate(ax, '令和8年熊本地震にともなう地面の動き')
+decorate(ax, '地震で地面がどれだけ動いたか')
 cb = fig.colorbar(m, ax=ax, shrink=.80, pad=.02)
-cb.set_label('衛星の視線方向の変位 (cm)　＋が衛星に近づいた側', fontsize=13)
+cb.set_label('地面の動き (cm)', fontsize=13)
 cb.ax.tick_params(labelsize=12)
+cb.ax.text(0.5, 1.03, '衛星に近づいた', transform=cb.ax.transAxes,
+           ha='center', va='bottom', fontsize=11.5)
+cb.ax.text(0.5, -0.03, '衛星から遠ざかった', transform=cb.ax.transAxes,
+           ha='center', va='top', fontsize=11.5)
 fig.savefig(INSAR_DIR + '/fig1_los.png', dpi=140)
 plt.close(fig)
 
@@ -112,9 +116,9 @@ fig, ax = plt.subplots(figsize=(11.5, 10))
 fig.subplots_adjust(left=.10, right=.86, top=.90, bottom=.09)
 m = ax.pcolormesh(LONc, LATc, np.ma.masked_invalid(frac), cmap='YlOrRd',
                   vmin=5, vmax=70, shading='flat', rasterized=True)
-decorate(ax, '地震をまたいで地表が変わった度合い（1km ごと）')
+decorate(ax, '地面のようすが変わった場所')
 cb = fig.colorbar(m, ax=ax, shrink=.80, pad=.02)
-cb.set_label('変化した画素の割合 (%)　地震と無関係な場所では 3〜5%', fontsize=13)
+cb.set_label('1km四方のうち変わった面積の割合 (%)' + chr(10) + '地震と無関係な場所でも 3〜5% は出る', fontsize=12.5)
 cb.ax.tick_params(labelsize=12)
 fig.savefig(INSAR_DIR + '/fig2_damage.png', dpi=140)
 plt.close(fig)
