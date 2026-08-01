@@ -599,7 +599,7 @@ emails) via the light job itself. Downstream steps already key off merge/snapsho
 and skip cleanly; the Discord notifier still posts its skip embed. Reviewed (no findings)
 with each claim re-verified against the workflow source.
 
-### Checkpoint chain expiry: the base DB was silently rebuilt from empty (2026-07-24, recovered 2026-07-29, PR #197)
+### Checkpoint chain expiry: the base DB was silently rebuilt from empty (2026-07-24, recovered 2026-07-29, PR #197; guard extended 2026-08-01, PR #198)
 
 The `backfill-checkpoint-*` artifact chain expired and the `light` job rebuilt the canonical
 history from an empty file without any signal. The restore log of run 30078904889 -- the first
@@ -647,6 +647,8 @@ reseed landed. `merge_checkpoints.py` keeps base rows whenever an overlay is sma
 newer `gnss_tec` / `hinet_waveform` rows in the surviving per-job overlays merge back on top of
 the restored canonical base rather than being discarded. Verification of the first full run on
 the reseeded chain (run 30439350491) was still in progress when this entry was written.
+
+Follow-up (2026-08-01, PR #198, `1bfc9112`): the recovery is verified closed -- the Hugging Face canonical resumed updating on 2026-07-31 with the row-count guard passing, its manifest shows the degraded tables restored (`tec` 6,440,742 rows, `ioc_sea_level` 176,594,085, `iss_lis_lightning` and `nightlight` present again), and five fresh checkpoint artifacts were produced on 2026-07-31 alone, so the chain is rebuilding its own depth. One gap remained: the #197 guard fires only on `restored=none`, while the restore loop has a second way to hand back a thin base -- the `<artifact>-salvaged` per-table copy out of a corrupt checkpoint, table-incomplete by construction. `scripts/check_base_rowcounts.py` now compares whatever base a scheduled run restored against the `geohazard.db.rowcounts.json` manifest that `hf_sync.py` publishes next to the canonical DB (public dataset, no token; per-table 95 percent floor, matching hf_sync.py's own guard; a missing table reads as zero rows; an unreachable manifest warns and passes, because a Hugging Face outage must not stop the pipeline), so a degraded base of either kind stops a scheduled run before it spends three hours fetching onto it, and `Create issue on failure` gains a `degraded_base` clause wired the same way as the #197 clauses.
 
 
 ## Analysis Results (2011-2026, 28K M3+ earthquakes, 6.4M TEC, 45K Kp, 5.3M GNSS-TEC, 24M ULF, 98 features with dynamic selection)
