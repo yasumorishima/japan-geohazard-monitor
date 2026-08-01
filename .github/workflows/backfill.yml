@@ -1937,6 +1937,7 @@ jobs:
       snapshot_outcome: ${{ steps.snapshot.outcome }}
       restore_outcome: ${{ steps.restore.outcome }}
       restore_restored: ${{ steps.restore.outputs.restored }}
+      base_check: ${{ steps.base_check.outcome }}
 
     steps:
       # Free ~30GB of pre-installed software we never use, to keep the runner's
@@ -2187,6 +2188,20 @@ jobs:
               exit 1
             fi
           fi
+
+      # The guard above only catches restored=none. The restore loop can also
+      # return "<artifact>-salvaged" -- a per-table copy out of a corrupt
+      # checkpoint, table-incomplete by construction (the reseed workflow
+      # header describes an earlier degraded ~587MB salvage at the head of the
+      # chain). Compare the restored base against the row-count manifest
+      # hf_sync.py publishes next to the canonical DB, so a thin base stops the
+      # run before it spends ~3h fetching onto it. The dataset is public, so no
+      # token is needed; an unreachable manifest warns and passes.
+      - name: Verify the restored base against the canonical row-count manifest
+        id: base_check
+        if: github.event_name == 'schedule'
+        run: |
+          python3 scripts/check_base_rowcounts.py --src data/geohazard.db
 
       - name: Validate Earthdata credentials
         id: earthdata_check
@@ -3422,7 +3437,7 @@ jobs:
       - name: Create issue on failure
         if: >-
           always()
-          && (steps.hf_upload.outcome == 'failure' || needs.light.outputs.restore_restored == 'none' || !(github.event_name == 'schedule' && github.run_attempt == 1))
+          && (steps.hf_upload.outcome == 'failure' || needs.light.outputs.restore_restored == 'none' || needs.light.outputs.base_check == 'failure' || !(github.event_name == 'schedule' && github.run_attempt == 1))
           && (
             needs.light.outputs.fetch_earthquakes == 'failure' ||
             needs.light.outputs.fetch_tec_event == 'failure' ||
@@ -3458,7 +3473,8 @@ jobs:
             needs.light.outputs.fetch_ioc_dart == 'failure' ||
             steps.merge.outcome == 'failure' ||
             steps.hf_upload.outcome == 'failure' ||
-            needs.light.outputs.restore_restored == 'none'
+            needs.light.outputs.restore_restored == 'none' ||
+            needs.light.outputs.base_check == 'failure'
           )
         env:
           GH_TOKEN: ${{ github.token }}
@@ -3499,6 +3515,7 @@ jobs:
           [ "${{ steps.merge.outcome }}" = "failure" ] && FAILED="$FAILED merge"
           [ "${{ steps.hf_upload.outcome }}" = "failure" ] && FAILED="$FAILED hf_upload"
           [ "${{ needs.light.outputs.restore_restored }}" = "none" ] && FAILED="$FAILED checkpoint_chain_lost"
+          [ "${{ needs.light.outputs.base_check }}" = "failure" ] && FAILED="$FAILED degraded_base"
           FAILED=$(echo "$FAILED" | xargs)
 
           if [ -f data/geohazard.db ]; then
