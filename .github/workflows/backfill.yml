@@ -2580,7 +2580,7 @@ jobs:
         with:
           name: backfill-light-${{ github.run_id }}
           path: data/geohazard.db
-          retention-days: 7
+          retention-days: 3
 
   # =====================================================================
   # FETCH-GNSS -- GNSS-TEC (Nagoya U. ISEE), split out of the light job so
