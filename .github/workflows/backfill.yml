@@ -3649,6 +3649,10 @@ jobs:
           RESTORED_CLOUD: ${{ needs.fetch-cloud.outputs.restore_restored }}
           RESTORED_SNET: ${{ needs.fetch-snet.outputs.restore_restored }}
           RESTORED_LIGHT: ${{ needs.light.outputs.restore_restored }}
+          RESTORE_HINET: ${{ needs.fetch-hinet.outputs.restore_outcome }}
+          RESTORE_GNSS: ${{ needs.fetch-gnss.outputs.restore_outcome }}
+          RESTORED_HINET: ${{ needs.fetch-hinet.outputs.restore_restored }}
+          RESTORED_GNSS: ${{ needs.fetch-gnss.outputs.restore_restored }}
         run: |
           if [ -z "$DISCORD_WEBHOOK_URL" ]; then exit 0; fi
           # When the merge step failed (e.g. base missing under --require-base),
@@ -3663,12 +3667,16 @@ jobs:
               'fetch-so2:   ' + os.environ.get('FETCH_SO2_RESULT', 'unknown') + '\n'
               'fetch-cloud: ' + os.environ.get('FETCH_CLOUD_RESULT', 'unknown') + '\n'
               'fetch-snet:  ' + os.environ.get('FETCH_SNET_RESULT', 'unknown') + '\n'
+              'fetch-hinet: ' + os.environ.get('FETCH_HINET_RESULT', 'unknown') + '\n'
+              'fetch-gnss:  ' + os.environ.get('FETCH_GNSS_RESULT', 'unknown') + '\n'
               'light:       ' + os.environ.get('LIGHT_RESULT', 'unknown') + '\n'
               'merge:       ' + os.environ.get('MERGE_OUTCOME', 'unknown') + '\n\n'
               'restore modis: ' + os.environ.get('RESTORE_MODIS', '?') + ' (' + os.environ.get('RESTORED_MODIS', '?') + ')\n'
               'restore so2:   ' + os.environ.get('RESTORE_SO2', '?') + ' (' + os.environ.get('RESTORED_SO2', '?') + ')\n'
               'restore cloud: ' + os.environ.get('RESTORE_CLOUD', '?') + ' (' + os.environ.get('RESTORED_CLOUD', '?') + ')\n'
               'restore snet:  ' + os.environ.get('RESTORE_SNET', '?') + ' (' + os.environ.get('RESTORED_SNET', '?') + ')\n'
+              'restore hinet: ' + os.environ.get('RESTORE_HINET', '?') + ' (' + os.environ.get('RESTORED_HINET', '?') + ')\n'
+              'restore gnss:  ' + os.environ.get('RESTORE_GNSS', '?') + ' (' + os.environ.get('RESTORED_GNSS', '?') + ')\n'
               'restore light: ' + os.environ.get('RESTORE_LIGHT', '?') + ' (' + os.environ.get('RESTORED_LIGHT', '?') + ')\n'
               '\nNo merged DB to report coverage from.'
           )
