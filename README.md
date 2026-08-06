@@ -732,6 +732,23 @@ queued for over two hours. fetch-modis died during `Upload modis.db artifact`, a
 had already succeeded -- so the budget question is answered, but `modis_lst` has still not advanced,
 and the prune step has not yet been observed running on a real merge.
 
+That outage also exposed a second-order effect worth recording. `retention-days: 30` only applies
+to artifacts a *post-fix run* uploads, and no run has managed to upload one -- so the nine live
+checkpoints are all still on the old 3-day retention, and the newest expires 2026-08-09T14:10:05Z.
+If the incident outlasts that, the chain expires exactly as it did on 2026-07-24, with the
+difference that the guard added above now fails the run loudly instead of rebuilding from empty,
+and the Hugging Face canonical is current (last modified that morning, 44,614,766,592 bytes /
+41.55 GiB). Recovery would be `reseed-checkpoint-from-hf.yml`, which uploads with
+`retention-days: 30` and so closes the exposure in one run. Checking that it could actually do
+that turned up the same mis-sized-budget shape a third time: its only successful run
+(30431629728, 2026-07-29) used 41m05s of a 60-minute job budget -- disk 30s, HF download 2m16s,
+integrity check 25m14s, artifact upload 12m58s -- and both dominant steps scale with a database
+that grows daily. A 19-minute margin on the one workflow that runs only when everything else has
+already failed is not a margin, so the budget is now 120 minutes, and the `~16.5GB` figure its
+header comment and disk-cleanup step still carried is corrected to the measured size. (The
+25m14s integrity check also independently corroborates the `quick_check` timeout above: the same
+check is what exceeds the 1200-second window inside the backfill restore step.)
+
 
 ## Analysis Results (2011-2026, 28K M3+ earthquakes, 6.4M TEC, 45K Kp, 5.3M GNSS-TEC, 24M ULF, 98 features with dynamic selection)
 
