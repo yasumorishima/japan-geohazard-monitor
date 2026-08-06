@@ -2580,7 +2580,7 @@ jobs:
         with:
           name: backfill-light-${{ github.run_id }}
           path: data/geohazard.db
-          retention-days: 3
+          retention-days: 30
 
   # =====================================================================
   # FETCH-GNSS -- GNSS-TEC (Nagoya U. ISEE), split out of the light job so
@@ -3162,7 +3162,83 @@ jobs:
         with:
           name: backfill-checkpoint-${{ github.run_id }}
           path: data/geohazard.db
-          retention-days: 3
+          retention-days: 30
+
+      - name: Prune old artifacts (bound the storage inventory)
+        # Storage discipline (2026-08-06). retention-days is back to 30 so a
+        # stalled schedule can no longer expire the checkpoint chain -- that
+        # is exactly the 2026-07-24 incident (retention cut 30->3 while every
+        # scheduled run sat cancelled in the queue for 9 days, so the chain
+        # died and the base DB was rebuilt from empty, losing tec /
+        # nightlight / iss_lis_lightning). The inventory is bounded here by
+        # count instead of by time: keep the newest N copies of each prefix
+        # and delete the rest, so the newest chain link never disappears no
+        # matter how long the schedule stalls.
+        #
+        # KEEP is one full day of runs (merge runs on 8 crons/day), not a
+        # bare minimum. Two consumers need history, not just the newest:
+        #   - the restore step falls back to progressively older
+        #     backfill-checkpoint- artifacts when the newest one fails its
+        #     integrity check, so a systematic corruption needs more than
+        #     one or two links to survive;
+        #   - diagnose-merge.yml takes an arbitrary diag_run_id and pulls
+        #     backfill-light-<that run> / backfill-<kind>-<that run> to
+        #     isolate which overlay introduced a corruption (built for the
+        #     2026-05-08 Tree 98196 incident). Keeping only the newest
+        #     couple would leave ~6h to dispatch it after a bad merge.
+        # A day of headroom costs ~100GB against the ~614GB this replaces.
+        #
+        # Prefix policy:
+        #   backfill-checkpoint-  restore chain + fallback depth -> keep 8
+        #   backfill-light-       diagnose-merge evidence        -> keep 8
+        #   backfill-modis-       diagnose-merge evidence        -> keep 8
+        # The per-table overlays (so2 / cloud / snet / gnss / hinet) ARE
+        # reused across runs by the own-overlay fast path in the restore
+        # step, and total only ~25GB, so they are deliberately left alone
+        # on their 7-day retention.
+        # Deliberately NOT gated on the upload succeeding: while the
+        # account is over the storage quota every upload hard-fails, and
+        # gating here would mean the step that frees the space can never
+        # run. Keeping the newest N copies is what protects the chain, and
+        # that holds regardless of whether this run added a new one.
+        # always(), not (success() || failure()): merge has been cancelled
+        # by its own 150m timeout before (runs 25276071313 / 25279499629),
+        # and prune is now the only thing bounding the inventory, so it has
+        # to run in the cancellation grace period too. Deleting only the
+        # copies older than the newest KEEP is safe at any job outcome.
+        if: >-
+          always()
+          && github.ref == 'refs/heads/master'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          LIST="${RUNNER_TEMP}/artifacts.json"
+          gh api "repos/${REPO}/actions/artifacts?per_page=100" --paginate --slurp > "$LIST"
+          LIVE='[.[].artifacts[] | select(.expired == false and (.name | startswith($p)))]'
+          prune() {
+            PREFIX="$1"
+            KEEP="$2"
+            TOTAL=$(jq --arg p "$PREFIX" "${LIVE} | length" "$LIST")
+            echo "${PREFIX} : ${TOTAL} live (keep ${KEEP})"
+            if [ "$TOTAL" -le "$KEEP" ]; then
+              echo "  nothing to prune"
+              return 0
+            fi
+            IDS=$(jq -r --arg p "$PREFIX" --argjson k "$KEEP" "${LIVE} | sort_by(.created_at) | reverse | to_entries | map(select(.key >= \$k) | .value.id) | .[]" "$LIST")
+            for ID in $IDS; do
+              if gh api --method DELETE --silent "repos/${REPO}/actions/artifacts/${ID}"; then
+                echo "  deleted ${ID}"
+              else
+                echo "  ::warning::failed to delete artifact ${ID}"
+              fi
+            done
+          }
+          prune backfill-checkpoint- 8
+          prune backfill-light- 8
+          prune backfill-modis- 8
 
       - name: Notify Discord
         if: always()
