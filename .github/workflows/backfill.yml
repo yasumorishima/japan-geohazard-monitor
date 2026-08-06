@@ -349,6 +349,29 @@ jobs:
           log "restore step done (RESTORED=${RESTORED:-none})"
           exit 0
 
+      - name: Guard against rebuilding the base DB from empty
+        # light has had this guard since the 2026-07-24 incident; the fetch
+        # jobs never got it, and that is exactly how run 31084273068 went
+        # green while doing nothing: fetch-modis spent 50min losing five
+        # 600s checkpoint downloads in a row (rc=124 each), fell through to
+        # "No usable checkpoint found -- will init fresh DB", fetched 0
+        # records from an empty base and uploaded a 159744-byte overlay.
+        # merge_checkpoints.py caught it at merge time (overlay_count <
+        # before -> "overlay empty ... KEEPING base"), so no data was lost,
+        # but the job reported success and the real failure was invisible
+        # until someone read the restore log.
+        #
+        # Failing here is safe for the pipeline: merge runs with
+        # `if: always()` and each overlay download is continue-on-error, so
+        # a red fetch job costs its own table for one cron, not the chain.
+        if: >-
+          (steps.restore.outputs.restored == 'none'
+           || steps.restore.outputs.restored == '')
+          && github.event_name == 'schedule'
+        run: |
+          echo "::error::No usable checkpoint artifact -- refusing to fetch onto an empty base. This overlay would be rejected as a shrink at merge time, so the fetch would be wasted. Check the restore log for rc=124 download timeouts; if the chain is genuinely gone, run reseed-checkpoint-from-hf.yml."
+          exit 1
+
       - name: Init DB if missing or corrupt
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
@@ -704,6 +727,29 @@ jobs:
           fi
           log "restore step done (RESTORED=${RESTORED:-none})"
           exit 0
+
+      - name: Guard against rebuilding the base DB from empty
+        # light has had this guard since the 2026-07-24 incident; the fetch
+        # jobs never got it, and that is exactly how run 31084273068 went
+        # green while doing nothing: fetch-modis spent 50min losing five
+        # 600s checkpoint downloads in a row (rc=124 each), fell through to
+        # "No usable checkpoint found -- will init fresh DB", fetched 0
+        # records from an empty base and uploaded a 159744-byte overlay.
+        # merge_checkpoints.py caught it at merge time (overlay_count <
+        # before -> "overlay empty ... KEEPING base"), so no data was lost,
+        # but the job reported success and the real failure was invisible
+        # until someone read the restore log.
+        #
+        # Failing here is safe for the pipeline: merge runs with
+        # `if: always()` and each overlay download is continue-on-error, so
+        # a red fetch job costs its own table for one cron, not the chain.
+        if: >-
+          (steps.restore.outputs.restored == 'none'
+           || steps.restore.outputs.restored == '')
+          && github.event_name == 'schedule'
+        run: |
+          echo "::error::No usable checkpoint artifact -- refusing to fetch onto an empty base. This overlay would be rejected as a shrink at merge time, so the fetch would be wasted. Check the restore log for rc=124 download timeouts; if the chain is genuinely gone, run reseed-checkpoint-from-hf.yml."
+          exit 1
 
       - name: Init DB if missing or corrupt
         env:
@@ -1079,6 +1125,29 @@ jobs:
           fi
           log "restore step done (RESTORED=${RESTORED:-none})"
           exit 0
+
+      - name: Guard against rebuilding the base DB from empty
+        # light has had this guard since the 2026-07-24 incident; the fetch
+        # jobs never got it, and that is exactly how run 31084273068 went
+        # green while doing nothing: fetch-modis spent 50min losing five
+        # 600s checkpoint downloads in a row (rc=124 each), fell through to
+        # "No usable checkpoint found -- will init fresh DB", fetched 0
+        # records from an empty base and uploaded a 159744-byte overlay.
+        # merge_checkpoints.py caught it at merge time (overlay_count <
+        # before -> "overlay empty ... KEEPING base"), so no data was lost,
+        # but the job reported success and the real failure was invisible
+        # until someone read the restore log.
+        #
+        # Failing here is safe for the pipeline: merge runs with
+        # `if: always()` and each overlay download is continue-on-error, so
+        # a red fetch job costs its own table for one cron, not the chain.
+        if: >-
+          (steps.restore.outputs.restored == 'none'
+           || steps.restore.outputs.restored == '')
+          && github.event_name == 'schedule'
+        run: |
+          echo "::error::No usable checkpoint artifact -- refusing to fetch onto an empty base. This overlay would be rejected as a shrink at merge time, so the fetch would be wasted. Check the restore log for rc=124 download timeouts; if the chain is genuinely gone, run reseed-checkpoint-from-hf.yml."
+          exit 1
 
       - name: Init DB if missing or corrupt
         env:
@@ -1469,6 +1538,29 @@ jobs:
           fi
           log "restore step done (RESTORED=${RESTORED:-none})"
           exit 0
+
+      - name: Guard against rebuilding the base DB from empty
+        # light has had this guard since the 2026-07-24 incident; the fetch
+        # jobs never got it, and that is exactly how run 31084273068 went
+        # green while doing nothing: fetch-modis spent 50min losing five
+        # 600s checkpoint downloads in a row (rc=124 each), fell through to
+        # "No usable checkpoint found -- will init fresh DB", fetched 0
+        # records from an empty base and uploaded a 159744-byte overlay.
+        # merge_checkpoints.py caught it at merge time (overlay_count <
+        # before -> "overlay empty ... KEEPING base"), so no data was lost,
+        # but the job reported success and the real failure was invisible
+        # until someone read the restore log.
+        #
+        # Failing here is safe for the pipeline: merge runs with
+        # `if: always()` and each overlay download is continue-on-error, so
+        # a red fetch job costs its own table for one cron, not the chain.
+        if: >-
+          (steps.restore.outputs.restored == 'none'
+           || steps.restore.outputs.restored == '')
+          && github.event_name == 'schedule'
+        run: |
+          echo "::error::No usable checkpoint artifact -- refusing to fetch onto an empty base. This overlay would be rejected as a shrink at merge time, so the fetch would be wasted. Check the restore log for rc=124 download timeouts; if the chain is genuinely gone, run reseed-checkpoint-from-hf.yml."
+          exit 1
 
       - name: Init DB if missing or corrupt
         env:
@@ -1878,6 +1970,30 @@ jobs:
           fi
           log "restore step done (RESTORED=${RESTORED:-none})"
           exit 0
+
+      - name: Guard against rebuilding the base DB from empty
+        # light has had this guard since the 2026-07-24 incident; the fetch
+        # jobs never got it, and that is exactly how run 31084273068 went
+        # green while doing nothing: fetch-modis spent 50min losing five
+        # 600s checkpoint downloads in a row (rc=124 each), fell through to
+        # "No usable checkpoint found -- will init fresh DB", fetched 0
+        # records from an empty base and uploaded a 159744-byte overlay.
+        # merge_checkpoints.py caught it at merge time (overlay_count <
+        # before -> "overlay empty ... KEEPING base"), so no data was lost,
+        # but the job reported success and the real failure was invisible
+        # until someone read the restore log.
+        #
+        # Failing here is safe for the pipeline: merge runs with
+        # `if: always()` and each overlay download is continue-on-error, so
+        # a red fetch job costs its own table for one cron, not the chain.
+        if: >-
+          (steps.restore.outputs.restored == 'none'
+           || steps.restore.outputs.restored == '')
+          && github.event_name == 'schedule'
+        run: |
+          echo "::error::No usable checkpoint artifact -- refusing to fetch onto an empty base. This overlay would be rejected as a shrink at merge time, so the fetch would be wasted. Check the restore log for rc=124 download timeouts; if the chain is genuinely gone, run reseed-checkpoint-from-hf.yml."
+          exit 1
+
       - name: Init DB if missing or corrupt
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
@@ -2298,7 +2414,8 @@ jobs:
       # instead: reseed the chain from Hugging Face, then let the cron resume.
       - name: Guard against rebuilding the base DB from empty
         if: >-
-          steps.restore.outputs.restored == 'none'
+          (steps.restore.outputs.restored == 'none'
+           || steps.restore.outputs.restored == '')
           && github.event_name == 'schedule'
         run: |
           echo "::error::No usable checkpoint artifact -- refusing to rebuild the base DB from empty on a scheduled run. Run reseed-checkpoint-from-hf.yml to restore the chain from the Hugging Face canonical copy, then let the schedule resume."
@@ -2980,6 +3097,29 @@ jobs:
           log "restore step done (RESTORED=${RESTORED:-none})"
           exit 0
 
+      - name: Guard against rebuilding the base DB from empty
+        # light has had this guard since the 2026-07-24 incident; the fetch
+        # jobs never got it, and that is exactly how run 31084273068 went
+        # green while doing nothing: fetch-modis spent 50min losing five
+        # 600s checkpoint downloads in a row (rc=124 each), fell through to
+        # "No usable checkpoint found -- will init fresh DB", fetched 0
+        # records from an empty base and uploaded a 159744-byte overlay.
+        # merge_checkpoints.py caught it at merge time (overlay_count <
+        # before -> "overlay empty ... KEEPING base"), so no data was lost,
+        # but the job reported success and the real failure was invisible
+        # until someone read the restore log.
+        #
+        # Failing here is safe for the pipeline: merge runs with
+        # `if: always()` and each overlay download is continue-on-error, so
+        # a red fetch job costs its own table for one cron, not the chain.
+        if: >-
+          (steps.restore.outputs.restored == 'none'
+           || steps.restore.outputs.restored == '')
+          && github.event_name == 'schedule'
+        run: |
+          echo "::error::No usable checkpoint artifact -- refusing to fetch onto an empty base. This overlay would be rejected as a shrink at merge time, so the fetch would be wasted. Check the restore log for rc=124 download timeouts; if the chain is genuinely gone, run reseed-checkpoint-from-hf.yml."
+          exit 1
+
       - name: Init DB if missing or corrupt
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
@@ -3497,6 +3637,8 @@ jobs:
           FETCH_CLOUD_RESULT: ${{ needs.fetch-cloud.result }}
           FETCH_SNET_RESULT: ${{ needs.fetch-snet.result }}
           LIGHT_RESULT: ${{ needs.light.result }}
+          FETCH_HINET_RESULT: ${{ needs.fetch-hinet.result }}
+          FETCH_GNSS_RESULT: ${{ needs.fetch-gnss.result }}
           RESTORE_MODIS: ${{ needs.fetch-modis.outputs.restore_outcome }}
           RESTORE_SO2: ${{ needs.fetch-so2.outputs.restore_outcome }}
           RESTORE_CLOUD: ${{ needs.fetch-cloud.outputs.restore_outcome }}
@@ -3507,6 +3649,10 @@ jobs:
           RESTORED_CLOUD: ${{ needs.fetch-cloud.outputs.restore_restored }}
           RESTORED_SNET: ${{ needs.fetch-snet.outputs.restore_restored }}
           RESTORED_LIGHT: ${{ needs.light.outputs.restore_restored }}
+          RESTORE_HINET: ${{ needs.fetch-hinet.outputs.restore_outcome }}
+          RESTORE_GNSS: ${{ needs.fetch-gnss.outputs.restore_outcome }}
+          RESTORED_HINET: ${{ needs.fetch-hinet.outputs.restore_restored }}
+          RESTORED_GNSS: ${{ needs.fetch-gnss.outputs.restore_restored }}
         run: |
           if [ -z "$DISCORD_WEBHOOK_URL" ]; then exit 0; fi
           # When the merge step failed (e.g. base missing under --require-base),
@@ -3521,12 +3667,16 @@ jobs:
               'fetch-so2:   ' + os.environ.get('FETCH_SO2_RESULT', 'unknown') + '\n'
               'fetch-cloud: ' + os.environ.get('FETCH_CLOUD_RESULT', 'unknown') + '\n'
               'fetch-snet:  ' + os.environ.get('FETCH_SNET_RESULT', 'unknown') + '\n'
+              'fetch-hinet: ' + os.environ.get('FETCH_HINET_RESULT', 'unknown') + '\n'
+              'fetch-gnss:  ' + os.environ.get('FETCH_GNSS_RESULT', 'unknown') + '\n'
               'light:       ' + os.environ.get('LIGHT_RESULT', 'unknown') + '\n'
               'merge:       ' + os.environ.get('MERGE_OUTCOME', 'unknown') + '\n\n'
               'restore modis: ' + os.environ.get('RESTORE_MODIS', '?') + ' (' + os.environ.get('RESTORED_MODIS', '?') + ')\n'
               'restore so2:   ' + os.environ.get('RESTORE_SO2', '?') + ' (' + os.environ.get('RESTORED_SO2', '?') + ')\n'
               'restore cloud: ' + os.environ.get('RESTORE_CLOUD', '?') + ' (' + os.environ.get('RESTORED_CLOUD', '?') + ')\n'
               'restore snet:  ' + os.environ.get('RESTORE_SNET', '?') + ' (' + os.environ.get('RESTORED_SNET', '?') + ')\n'
+              'restore hinet: ' + os.environ.get('RESTORE_HINET', '?') + ' (' + os.environ.get('RESTORED_HINET', '?') + ')\n'
+              'restore gnss:  ' + os.environ.get('RESTORE_GNSS', '?') + ' (' + os.environ.get('RESTORED_GNSS', '?') + ')\n'
               'restore light: ' + os.environ.get('RESTORE_LIGHT', '?') + ' (' + os.environ.get('RESTORED_LIGHT', '?') + ')\n'
               '\nNo merged DB to report coverage from.'
           )
@@ -3641,6 +3791,17 @@ jobs:
               'Restore cloud': os.environ.get('RESTORE_CLOUD', 'skipped'),
               'Restore snet': os.environ.get('RESTORE_SNET', 'skipped'),
               'Restore light': os.environ.get('RESTORE_LIGHT', 'skipped'),
+              # Job-level results: the guard step that refuses to fetch
+              # onto an empty base fails the JOB while the restore STEP
+              # itself reports success, so without these a guarded run
+              # reports green here.
+              'Job modis': os.environ.get('FETCH_MODIS_RESULT', 'skipped'),
+              'Job so2': os.environ.get('FETCH_SO2_RESULT', 'skipped'),
+              'Job cloud': os.environ.get('FETCH_CLOUD_RESULT', 'skipped'),
+              'Job snet': os.environ.get('FETCH_SNET_RESULT', 'skipped'),
+              'Job hinet': os.environ.get('FETCH_HINET_RESULT', 'skipped'),
+              'Job gnss': os.environ.get('FETCH_GNSS_RESULT', 'skipped'),
+              'Job light': os.environ.get('LIGHT_RESULT', 'skipped'),
           }
           failed_steps = [k for k, v in step_results.items() if v == 'failure']
           if failed_steps:
@@ -3763,7 +3924,14 @@ jobs:
             steps.merge.outcome == 'failure' ||
             steps.hf_upload.outcome == 'failure' ||
             needs.light.outputs.restore_restored == 'none' ||
-            needs.light.outputs.base_check == 'failure'
+            needs.light.outputs.base_check == 'failure' ||
+            needs.fetch-modis.result == 'failure' ||
+            needs.fetch-so2.result == 'failure' ||
+            needs.fetch-cloud.result == 'failure' ||
+            needs.fetch-snet.result == 'failure' ||
+            needs.fetch-hinet.result == 'failure' ||
+            needs.fetch-gnss.result == 'failure' ||
+            needs.light.result == 'failure'
           )
         env:
           GH_TOKEN: ${{ github.token }}
@@ -3805,6 +3973,9 @@ jobs:
           [ "${{ steps.hf_upload.outcome }}" = "failure" ] && FAILED="$FAILED hf_upload"
           [ "${{ needs.light.outputs.restore_restored }}" = "none" ] && FAILED="$FAILED checkpoint_chain_lost"
           [ "${{ needs.light.outputs.base_check }}" = "failure" ] && FAILED="$FAILED degraded_base"
+          for jr in "fetch-modis:${{ needs.fetch-modis.result }}" "fetch-so2:${{ needs.fetch-so2.result }}" "fetch-cloud:${{ needs.fetch-cloud.result }}" "fetch-snet:${{ needs.fetch-snet.result }}" "fetch-hinet:${{ needs.fetch-hinet.result }}" "fetch-gnss:${{ needs.fetch-gnss.result }}" "light:${{ needs.light.result }}"; do
+            [ "${jr#*:}" = "failure" ] && FAILED="$FAILED job:${jr%%:*}"
+          done
           FAILED=$(echo "$FAILED" | xargs)
 
           if [ -f data/geohazard.db ]; then
