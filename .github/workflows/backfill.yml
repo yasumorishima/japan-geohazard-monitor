@@ -364,13 +364,19 @@ jobs:
             # DB passes ~20GB (it is 42GB as of 2026-08-06), so on the two
             # full-restore jobs this always burned the whole 20min and then
             # fell into the 124 branch below and kept the DB anyway. Skip
-            # straight to that outcome instead of paying for it: the restore
-            # step already ran quick_check on this file, and the merge job
-            # ran a full integrity_check before uploading it as a checkpoint.
-            # Jobs whose base is a small own-overlay still get the real check.
+            # straight to that outcome instead of paying for it.
+            #
+            # Nothing is lost by skipping, because this was never where
+            # corruption of a big DB got caught -- it is gated at write time:
+            # merge_checkpoints.py runs PRAGMA integrity_check over the merged
+            # DB and exits non-zero otherwise, and the Snapshot DB step below
+            # runs an untimed PRAGMA integrity_check that must pass before any
+            # artifact is uploaded. Jobs restoring a small own-overlay are
+            # under the threshold and still get the real check here.
             DB_BYTES=$(stat -c %s data/geohazard.db 2>/dev/null || echo 0)
+            SKIPPED_BY_SIZE=0
             if [ "$DB_BYTES" -gt 21474836480 ]; then
-              echo "DB is ${DB_BYTES} bytes -- skipping the full integrity check (cannot finish in 1200s)"
+              SKIPPED_BY_SIZE=1
               integrity_rc=124
             else
               timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
@@ -378,7 +384,16 @@ jobs:
             fi
             case "$integrity_rc" in
               124|137|143)
-                echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
+                if [ "$SKIPPED_BY_SIZE" = "1" ]; then
+                  # Do NOT claim the restore step vouched for this file: at
+                  # this size its quick_check does not complete either (run
+                  # 31075628300 logged "quick_check timed out rc=124; verified
+                  # at creation, accepting"). The real guarantee is the
+                  # write-time gate described above.
+                  echo "::warning::full integrity check skipped -- DB is ${DB_BYTES} bytes and cannot finish in 1200s. Keeping it: integrity is gated when checkpoints are written (merge_checkpoints.py verify + the untimed check in Snapshot DB), not here."
+                else
+                  echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
+                fi
                 ;;
               0)
                 ;;
@@ -705,13 +720,19 @@ jobs:
             # DB passes ~20GB (it is 42GB as of 2026-08-06), so on the two
             # full-restore jobs this always burned the whole 20min and then
             # fell into the 124 branch below and kept the DB anyway. Skip
-            # straight to that outcome instead of paying for it: the restore
-            # step already ran quick_check on this file, and the merge job
-            # ran a full integrity_check before uploading it as a checkpoint.
-            # Jobs whose base is a small own-overlay still get the real check.
+            # straight to that outcome instead of paying for it.
+            #
+            # Nothing is lost by skipping, because this was never where
+            # corruption of a big DB got caught -- it is gated at write time:
+            # merge_checkpoints.py runs PRAGMA integrity_check over the merged
+            # DB and exits non-zero otherwise, and the Snapshot DB step below
+            # runs an untimed PRAGMA integrity_check that must pass before any
+            # artifact is uploaded. Jobs restoring a small own-overlay are
+            # under the threshold and still get the real check here.
             DB_BYTES=$(stat -c %s data/geohazard.db 2>/dev/null || echo 0)
+            SKIPPED_BY_SIZE=0
             if [ "$DB_BYTES" -gt 21474836480 ]; then
-              echo "DB is ${DB_BYTES} bytes -- skipping the full integrity check (cannot finish in 1200s)"
+              SKIPPED_BY_SIZE=1
               integrity_rc=124
             else
               timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
@@ -719,7 +740,16 @@ jobs:
             fi
             case "$integrity_rc" in
               124|137|143)
-                echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
+                if [ "$SKIPPED_BY_SIZE" = "1" ]; then
+                  # Do NOT claim the restore step vouched for this file: at
+                  # this size its quick_check does not complete either (run
+                  # 31075628300 logged "quick_check timed out rc=124; verified
+                  # at creation, accepting"). The real guarantee is the
+                  # write-time gate described above.
+                  echo "::warning::full integrity check skipped -- DB is ${DB_BYTES} bytes and cannot finish in 1200s. Keeping it: integrity is gated when checkpoints are written (merge_checkpoints.py verify + the untimed check in Snapshot DB), not here."
+                else
+                  echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
+                fi
                 ;;
               0)
                 ;;
@@ -1065,13 +1095,19 @@ jobs:
             # DB passes ~20GB (it is 42GB as of 2026-08-06), so on the two
             # full-restore jobs this always burned the whole 20min and then
             # fell into the 124 branch below and kept the DB anyway. Skip
-            # straight to that outcome instead of paying for it: the restore
-            # step already ran quick_check on this file, and the merge job
-            # ran a full integrity_check before uploading it as a checkpoint.
-            # Jobs whose base is a small own-overlay still get the real check.
+            # straight to that outcome instead of paying for it.
+            #
+            # Nothing is lost by skipping, because this was never where
+            # corruption of a big DB got caught -- it is gated at write time:
+            # merge_checkpoints.py runs PRAGMA integrity_check over the merged
+            # DB and exits non-zero otherwise, and the Snapshot DB step below
+            # runs an untimed PRAGMA integrity_check that must pass before any
+            # artifact is uploaded. Jobs restoring a small own-overlay are
+            # under the threshold and still get the real check here.
             DB_BYTES=$(stat -c %s data/geohazard.db 2>/dev/null || echo 0)
+            SKIPPED_BY_SIZE=0
             if [ "$DB_BYTES" -gt 21474836480 ]; then
-              echo "DB is ${DB_BYTES} bytes -- skipping the full integrity check (cannot finish in 1200s)"
+              SKIPPED_BY_SIZE=1
               integrity_rc=124
             else
               timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
@@ -1079,7 +1115,16 @@ jobs:
             fi
             case "$integrity_rc" in
               124|137|143)
-                echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
+                if [ "$SKIPPED_BY_SIZE" = "1" ]; then
+                  # Do NOT claim the restore step vouched for this file: at
+                  # this size its quick_check does not complete either (run
+                  # 31075628300 logged "quick_check timed out rc=124; verified
+                  # at creation, accepting"). The real guarantee is the
+                  # write-time gate described above.
+                  echo "::warning::full integrity check skipped -- DB is ${DB_BYTES} bytes and cannot finish in 1200s. Keeping it: integrity is gated when checkpoints are written (merge_checkpoints.py verify + the untimed check in Snapshot DB), not here."
+                else
+                  echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
+                fi
                 ;;
               0)
                 ;;
@@ -1440,13 +1485,19 @@ jobs:
             # DB passes ~20GB (it is 42GB as of 2026-08-06), so on the two
             # full-restore jobs this always burned the whole 20min and then
             # fell into the 124 branch below and kept the DB anyway. Skip
-            # straight to that outcome instead of paying for it: the restore
-            # step already ran quick_check on this file, and the merge job
-            # ran a full integrity_check before uploading it as a checkpoint.
-            # Jobs whose base is a small own-overlay still get the real check.
+            # straight to that outcome instead of paying for it.
+            #
+            # Nothing is lost by skipping, because this was never where
+            # corruption of a big DB got caught -- it is gated at write time:
+            # merge_checkpoints.py runs PRAGMA integrity_check over the merged
+            # DB and exits non-zero otherwise, and the Snapshot DB step below
+            # runs an untimed PRAGMA integrity_check that must pass before any
+            # artifact is uploaded. Jobs restoring a small own-overlay are
+            # under the threshold and still get the real check here.
             DB_BYTES=$(stat -c %s data/geohazard.db 2>/dev/null || echo 0)
+            SKIPPED_BY_SIZE=0
             if [ "$DB_BYTES" -gt 21474836480 ]; then
-              echo "DB is ${DB_BYTES} bytes -- skipping the full integrity check (cannot finish in 1200s)"
+              SKIPPED_BY_SIZE=1
               integrity_rc=124
             else
               timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
@@ -1454,7 +1505,16 @@ jobs:
             fi
             case "$integrity_rc" in
               124|137|143)
-                echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
+                if [ "$SKIPPED_BY_SIZE" = "1" ]; then
+                  # Do NOT claim the restore step vouched for this file: at
+                  # this size its quick_check does not complete either (run
+                  # 31075628300 logged "quick_check timed out rc=124; verified
+                  # at creation, accepting"). The real guarantee is the
+                  # write-time gate described above.
+                  echo "::warning::full integrity check skipped -- DB is ${DB_BYTES} bytes and cannot finish in 1200s. Keeping it: integrity is gated when checkpoints are written (merge_checkpoints.py verify + the untimed check in Snapshot DB), not here."
+                else
+                  echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
+                fi
                 ;;
               0)
                 ;;
@@ -1833,13 +1893,19 @@ jobs:
             # DB passes ~20GB (it is 42GB as of 2026-08-06), so on the two
             # full-restore jobs this always burned the whole 20min and then
             # fell into the 124 branch below and kept the DB anyway. Skip
-            # straight to that outcome instead of paying for it: the restore
-            # step already ran quick_check on this file, and the merge job
-            # ran a full integrity_check before uploading it as a checkpoint.
-            # Jobs whose base is a small own-overlay still get the real check.
+            # straight to that outcome instead of paying for it.
+            #
+            # Nothing is lost by skipping, because this was never where
+            # corruption of a big DB got caught -- it is gated at write time:
+            # merge_checkpoints.py runs PRAGMA integrity_check over the merged
+            # DB and exits non-zero otherwise, and the Snapshot DB step below
+            # runs an untimed PRAGMA integrity_check that must pass before any
+            # artifact is uploaded. Jobs restoring a small own-overlay are
+            # under the threshold and still get the real check here.
             DB_BYTES=$(stat -c %s data/geohazard.db 2>/dev/null || echo 0)
+            SKIPPED_BY_SIZE=0
             if [ "$DB_BYTES" -gt 21474836480 ]; then
-              echo "DB is ${DB_BYTES} bytes -- skipping the full integrity check (cannot finish in 1200s)"
+              SKIPPED_BY_SIZE=1
               integrity_rc=124
             else
               timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
@@ -1847,7 +1913,16 @@ jobs:
             fi
             case "$integrity_rc" in
               124|137|143)
-                echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
+                if [ "$SKIPPED_BY_SIZE" = "1" ]; then
+                  # Do NOT claim the restore step vouched for this file: at
+                  # this size its quick_check does not complete either (run
+                  # 31075628300 logged "quick_check timed out rc=124; verified
+                  # at creation, accepting"). The real guarantee is the
+                  # write-time gate described above.
+                  echo "::warning::full integrity check skipped -- DB is ${DB_BYTES} bytes and cannot finish in 1200s. Keeping it: integrity is gated when checkpoints are written (merge_checkpoints.py verify + the untimed check in Snapshot DB), not here."
+                else
+                  echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
+                fi
                 ;;
               0)
                 ;;
@@ -2244,13 +2319,19 @@ jobs:
             # DB passes ~20GB (it is 42GB as of 2026-08-06), so on the two
             # full-restore jobs this always burned the whole 20min and then
             # fell into the 124 branch below and kept the DB anyway. Skip
-            # straight to that outcome instead of paying for it: the restore
-            # step already ran quick_check on this file, and the merge job
-            # ran a full integrity_check before uploading it as a checkpoint.
-            # Jobs whose base is a small own-overlay still get the real check.
+            # straight to that outcome instead of paying for it.
+            #
+            # Nothing is lost by skipping, because this was never where
+            # corruption of a big DB got caught -- it is gated at write time:
+            # merge_checkpoints.py runs PRAGMA integrity_check over the merged
+            # DB and exits non-zero otherwise, and the Snapshot DB step below
+            # runs an untimed PRAGMA integrity_check that must pass before any
+            # artifact is uploaded. Jobs restoring a small own-overlay are
+            # under the threshold and still get the real check here.
             DB_BYTES=$(stat -c %s data/geohazard.db 2>/dev/null || echo 0)
+            SKIPPED_BY_SIZE=0
             if [ "$DB_BYTES" -gt 21474836480 ]; then
-              echo "DB is ${DB_BYTES} bytes -- skipping the full integrity check (cannot finish in 1200s)"
+              SKIPPED_BY_SIZE=1
               integrity_rc=124
             else
               timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
@@ -2258,7 +2339,16 @@ jobs:
             fi
             case "$integrity_rc" in
               124|137|143)
-                echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
+                if [ "$SKIPPED_BY_SIZE" = "1" ]; then
+                  # Do NOT claim the restore step vouched for this file: at
+                  # this size its quick_check does not complete either (run
+                  # 31075628300 logged "quick_check timed out rc=124; verified
+                  # at creation, accepting"). The real guarantee is the
+                  # write-time gate described above.
+                  echo "::warning::full integrity check skipped -- DB is ${DB_BYTES} bytes and cannot finish in 1200s. Keeping it: integrity is gated when checkpoints are written (merge_checkpoints.py verify + the untimed check in Snapshot DB), not here."
+                else
+                  echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
+                fi
                 ;;
               0)
                 ;;
@@ -2905,13 +2995,19 @@ jobs:
             # DB passes ~20GB (it is 42GB as of 2026-08-06), so on the two
             # full-restore jobs this always burned the whole 20min and then
             # fell into the 124 branch below and kept the DB anyway. Skip
-            # straight to that outcome instead of paying for it: the restore
-            # step already ran quick_check on this file, and the merge job
-            # ran a full integrity_check before uploading it as a checkpoint.
-            # Jobs whose base is a small own-overlay still get the real check.
+            # straight to that outcome instead of paying for it.
+            #
+            # Nothing is lost by skipping, because this was never where
+            # corruption of a big DB got caught -- it is gated at write time:
+            # merge_checkpoints.py runs PRAGMA integrity_check over the merged
+            # DB and exits non-zero otherwise, and the Snapshot DB step below
+            # runs an untimed PRAGMA integrity_check that must pass before any
+            # artifact is uploaded. Jobs restoring a small own-overlay are
+            # under the threshold and still get the real check here.
             DB_BYTES=$(stat -c %s data/geohazard.db 2>/dev/null || echo 0)
+            SKIPPED_BY_SIZE=0
             if [ "$DB_BYTES" -gt 21474836480 ]; then
-              echo "DB is ${DB_BYTES} bytes -- skipping the full integrity check (cannot finish in 1200s)"
+              SKIPPED_BY_SIZE=1
               integrity_rc=124
             else
               timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
@@ -2919,7 +3015,16 @@ jobs:
             fi
             case "$integrity_rc" in
               124|137|143)
-                echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
+                if [ "$SKIPPED_BY_SIZE" = "1" ]; then
+                  # Do NOT claim the restore step vouched for this file: at
+                  # this size its quick_check does not complete either (run
+                  # 31075628300 logged "quick_check timed out rc=124; verified
+                  # at creation, accepting"). The real guarantee is the
+                  # write-time gate described above.
+                  echo "::warning::full integrity check skipped -- DB is ${DB_BYTES} bytes and cannot finish in 1200s. Keeping it: integrity is gated when checkpoints are written (merge_checkpoints.py verify + the untimed check in Snapshot DB), not here."
+                else
+                  echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
+                fi
                 ;;
               0)
                 ;;
