@@ -717,11 +717,20 @@ scheduled run always runs on the default branch (the checkpoint upload step alre
 and a feature-branch dispatch cannot upload a checkpoint, so it stays exempt. The daily Hugging Face
 upload and the auto-rerun of failed fetch jobs remain schedule-only by intent.
 
-Verification state at the time of writing: the prune script has been run against the live inventory
-(614.05 to 137.94 GB) and every changed `run:` block passes `bash -n`, but the first scheduled run
-carrying these changes had not yet completed. `Snapshot DB` has no timeout of its own and only a
-25-minute lower bound has ever been measured, so the 240-minute budget rests on arithmetic
-(145-160 minutes expected, 235 minutes worst case) rather than on observation.
+Verification, first scheduled run carrying the changes (31111077876, fetch-modis job 92648738758):
+restore 27m34s against 41m43s before, the Init DB full check 0s against 20m (skipped by size), the
+MODIS fetch 62m40s, and `Snapshot DB` **completed for the first time, in 34m56s** -- the step that
+had only ever been measured as a 25-minute lower bound before being killed. Job total 135m08s
+against the new 240-minute budget, so the budget now rests on measurement rather than arithmetic.
+The empty-base guard correctly did not fire, the restore having succeeded.
+
+The run failed anyway, for a reason outside this pipeline: GitHub opened a critical Actions
+incident at 15:22 UTC that day and the Actions component went to major outage. Both full-restore
+jobs were annotated `The hosted runner lost communication with the server` and the merge job
+`was not acquired by Runner of type hosted even after multiple attempts`; the next scheduled run sat
+queued for over two hours. fetch-modis died during `Upload modis.db artifact`, after `Snapshot DB`
+had already succeeded -- so the budget question is answered, but `modis_lst` has still not advanced,
+and the prune step has not yet been observed running on a real merge.
 
 
 ## Analysis Results (2011-2026, 28K M3+ earthquakes, 6.4M TEC, 45K Kp, 5.3M GNSS-TEC, 24M ULF, 98 features with dynamic selection)
