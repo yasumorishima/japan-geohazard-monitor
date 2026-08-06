@@ -2496,7 +2496,7 @@ jobs:
            || steps.restore.outputs.restored == '')
           && github.ref == 'refs/heads/master'
         run: |
-          echo "::error::No usable checkpoint artifact -- refusing to rebuild the base DB from empty on a scheduled run. Run reseed-checkpoint-from-hf.yml to restore the chain from the Hugging Face canonical copy, then let the schedule resume."
+          echo "::error::No usable checkpoint artifact -- refusing to rebuild the base DB from empty on master. Run reseed-checkpoint-from-hf.yml to restore the chain from the Hugging Face canonical copy, then let the schedule resume."
           exit 1
 
       - name: Init DB if missing or corrupt
