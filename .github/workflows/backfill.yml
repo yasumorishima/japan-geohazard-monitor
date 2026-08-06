@@ -349,6 +349,28 @@ jobs:
           log "restore step done (RESTORED=${RESTORED:-none})"
           exit 0
 
+      - name: Guard against rebuilding the base DB from empty
+        # light has had this guard since the 2026-07-24 incident; the fetch
+        # jobs never got it, and that is exactly how run 31084273068 went
+        # green while doing nothing: fetch-modis spent 50min losing five
+        # 600s checkpoint downloads in a row (rc=124 each), fell through to
+        # "No usable checkpoint found -- will init fresh DB", fetched 0
+        # records from an empty base and uploaded a 159744-byte overlay.
+        # merge_checkpoints.py caught it at merge time (overlay_count <
+        # before -> "overlay empty ... KEEPING base"), so no data was lost,
+        # but the job reported success and the real failure was invisible
+        # until someone read the restore log.
+        #
+        # Failing here is safe for the pipeline: merge runs with
+        # `if: always()` and each overlay download is continue-on-error, so
+        # a red fetch job costs its own table for one cron, not the chain.
+        if: >-
+          steps.restore.outputs.restored == 'none'
+          && github.event_name == 'schedule'
+        run: |
+          echo "::error::No usable checkpoint artifact -- refusing to fetch onto an empty base. This overlay would be rejected as a shrink at merge time, so the fetch would be wasted. Check the restore log for rc=124 download timeouts; if the chain is genuinely gone, run reseed-checkpoint-from-hf.yml."
+          exit 1
+
       - name: Init DB if missing or corrupt
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
@@ -704,6 +726,28 @@ jobs:
           fi
           log "restore step done (RESTORED=${RESTORED:-none})"
           exit 0
+
+      - name: Guard against rebuilding the base DB from empty
+        # light has had this guard since the 2026-07-24 incident; the fetch
+        # jobs never got it, and that is exactly how run 31084273068 went
+        # green while doing nothing: fetch-modis spent 50min losing five
+        # 600s checkpoint downloads in a row (rc=124 each), fell through to
+        # "No usable checkpoint found -- will init fresh DB", fetched 0
+        # records from an empty base and uploaded a 159744-byte overlay.
+        # merge_checkpoints.py caught it at merge time (overlay_count <
+        # before -> "overlay empty ... KEEPING base"), so no data was lost,
+        # but the job reported success and the real failure was invisible
+        # until someone read the restore log.
+        #
+        # Failing here is safe for the pipeline: merge runs with
+        # `if: always()` and each overlay download is continue-on-error, so
+        # a red fetch job costs its own table for one cron, not the chain.
+        if: >-
+          steps.restore.outputs.restored == 'none'
+          && github.event_name == 'schedule'
+        run: |
+          echo "::error::No usable checkpoint artifact -- refusing to fetch onto an empty base. This overlay would be rejected as a shrink at merge time, so the fetch would be wasted. Check the restore log for rc=124 download timeouts; if the chain is genuinely gone, run reseed-checkpoint-from-hf.yml."
+          exit 1
 
       - name: Init DB if missing or corrupt
         env:
@@ -1079,6 +1123,28 @@ jobs:
           fi
           log "restore step done (RESTORED=${RESTORED:-none})"
           exit 0
+
+      - name: Guard against rebuilding the base DB from empty
+        # light has had this guard since the 2026-07-24 incident; the fetch
+        # jobs never got it, and that is exactly how run 31084273068 went
+        # green while doing nothing: fetch-modis spent 50min losing five
+        # 600s checkpoint downloads in a row (rc=124 each), fell through to
+        # "No usable checkpoint found -- will init fresh DB", fetched 0
+        # records from an empty base and uploaded a 159744-byte overlay.
+        # merge_checkpoints.py caught it at merge time (overlay_count <
+        # before -> "overlay empty ... KEEPING base"), so no data was lost,
+        # but the job reported success and the real failure was invisible
+        # until someone read the restore log.
+        #
+        # Failing here is safe for the pipeline: merge runs with
+        # `if: always()` and each overlay download is continue-on-error, so
+        # a red fetch job costs its own table for one cron, not the chain.
+        if: >-
+          steps.restore.outputs.restored == 'none'
+          && github.event_name == 'schedule'
+        run: |
+          echo "::error::No usable checkpoint artifact -- refusing to fetch onto an empty base. This overlay would be rejected as a shrink at merge time, so the fetch would be wasted. Check the restore log for rc=124 download timeouts; if the chain is genuinely gone, run reseed-checkpoint-from-hf.yml."
+          exit 1
 
       - name: Init DB if missing or corrupt
         env:
@@ -1469,6 +1535,28 @@ jobs:
           fi
           log "restore step done (RESTORED=${RESTORED:-none})"
           exit 0
+
+      - name: Guard against rebuilding the base DB from empty
+        # light has had this guard since the 2026-07-24 incident; the fetch
+        # jobs never got it, and that is exactly how run 31084273068 went
+        # green while doing nothing: fetch-modis spent 50min losing five
+        # 600s checkpoint downloads in a row (rc=124 each), fell through to
+        # "No usable checkpoint found -- will init fresh DB", fetched 0
+        # records from an empty base and uploaded a 159744-byte overlay.
+        # merge_checkpoints.py caught it at merge time (overlay_count <
+        # before -> "overlay empty ... KEEPING base"), so no data was lost,
+        # but the job reported success and the real failure was invisible
+        # until someone read the restore log.
+        #
+        # Failing here is safe for the pipeline: merge runs with
+        # `if: always()` and each overlay download is continue-on-error, so
+        # a red fetch job costs its own table for one cron, not the chain.
+        if: >-
+          steps.restore.outputs.restored == 'none'
+          && github.event_name == 'schedule'
+        run: |
+          echo "::error::No usable checkpoint artifact -- refusing to fetch onto an empty base. This overlay would be rejected as a shrink at merge time, so the fetch would be wasted. Check the restore log for rc=124 download timeouts; if the chain is genuinely gone, run reseed-checkpoint-from-hf.yml."
+          exit 1
 
       - name: Init DB if missing or corrupt
         env:
@@ -1878,6 +1966,29 @@ jobs:
           fi
           log "restore step done (RESTORED=${RESTORED:-none})"
           exit 0
+
+      - name: Guard against rebuilding the base DB from empty
+        # light has had this guard since the 2026-07-24 incident; the fetch
+        # jobs never got it, and that is exactly how run 31084273068 went
+        # green while doing nothing: fetch-modis spent 50min losing five
+        # 600s checkpoint downloads in a row (rc=124 each), fell through to
+        # "No usable checkpoint found -- will init fresh DB", fetched 0
+        # records from an empty base and uploaded a 159744-byte overlay.
+        # merge_checkpoints.py caught it at merge time (overlay_count <
+        # before -> "overlay empty ... KEEPING base"), so no data was lost,
+        # but the job reported success and the real failure was invisible
+        # until someone read the restore log.
+        #
+        # Failing here is safe for the pipeline: merge runs with
+        # `if: always()` and each overlay download is continue-on-error, so
+        # a red fetch job costs its own table for one cron, not the chain.
+        if: >-
+          steps.restore.outputs.restored == 'none'
+          && github.event_name == 'schedule'
+        run: |
+          echo "::error::No usable checkpoint artifact -- refusing to fetch onto an empty base. This overlay would be rejected as a shrink at merge time, so the fetch would be wasted. Check the restore log for rc=124 download timeouts; if the chain is genuinely gone, run reseed-checkpoint-from-hf.yml."
+          exit 1
+
       - name: Init DB if missing or corrupt
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
@@ -2979,6 +3090,28 @@ jobs:
           fi
           log "restore step done (RESTORED=${RESTORED:-none})"
           exit 0
+
+      - name: Guard against rebuilding the base DB from empty
+        # light has had this guard since the 2026-07-24 incident; the fetch
+        # jobs never got it, and that is exactly how run 31084273068 went
+        # green while doing nothing: fetch-modis spent 50min losing five
+        # 600s checkpoint downloads in a row (rc=124 each), fell through to
+        # "No usable checkpoint found -- will init fresh DB", fetched 0
+        # records from an empty base and uploaded a 159744-byte overlay.
+        # merge_checkpoints.py caught it at merge time (overlay_count <
+        # before -> "overlay empty ... KEEPING base"), so no data was lost,
+        # but the job reported success and the real failure was invisible
+        # until someone read the restore log.
+        #
+        # Failing here is safe for the pipeline: merge runs with
+        # `if: always()` and each overlay download is continue-on-error, so
+        # a red fetch job costs its own table for one cron, not the chain.
+        if: >-
+          steps.restore.outputs.restored == 'none'
+          && github.event_name == 'schedule'
+        run: |
+          echo "::error::No usable checkpoint artifact -- refusing to fetch onto an empty base. This overlay would be rejected as a shrink at merge time, so the fetch would be wasted. Check the restore log for rc=124 download timeouts; if the chain is genuinely gone, run reseed-checkpoint-from-hf.yml."
+          exit 1
 
       - name: Init DB if missing or corrupt
         env:
