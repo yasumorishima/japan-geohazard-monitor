@@ -364,10 +364,23 @@ jobs:
         # Failing here is safe for the pipeline: merge runs with
         # `if: always()` and each overlay download is continue-on-error, so
         # a red fetch job costs its own table for one cron, not the chain.
+        # Keyed on the ref, not the event. A scheduled run always runs on the
+        # default branch (the checkpoint upload step relies on the same fact),
+        # so this still covers every cron -- but it now also covers a manual
+        # dispatch on master, which was the remaining way to put an empty DB at
+        # the head of the chain: a master dispatch with target all/'' is
+        # explicitly allowed to upload a checkpoint, so running it while the
+        # chain is gone would make the empty base the next base, and every
+        # later scheduled run would then see restored != 'none' and sail past
+        # this guard. A dispatch on a feature branch cannot upload a
+        # checkpoint and is left free to smoke-test from nothing.
+        #
+        # If the chain really is gone, reseed-checkpoint-from-hf.yml is the
+        # way back -- not a dispatch of this workflow.
         if: >-
           (steps.restore.outputs.restored == 'none'
            || steps.restore.outputs.restored == '')
-          && github.event_name == 'schedule'
+          && github.ref == 'refs/heads/master'
         run: |
           echo "::error::No usable checkpoint artifact -- refusing to fetch onto an empty base. This overlay would be rejected as a shrink at merge time, so the fetch would be wasted. Check the restore log for rc=124 download timeouts; if the chain is genuinely gone, run reseed-checkpoint-from-hf.yml."
           exit 1
@@ -743,10 +756,23 @@ jobs:
         # Failing here is safe for the pipeline: merge runs with
         # `if: always()` and each overlay download is continue-on-error, so
         # a red fetch job costs its own table for one cron, not the chain.
+        # Keyed on the ref, not the event. A scheduled run always runs on the
+        # default branch (the checkpoint upload step relies on the same fact),
+        # so this still covers every cron -- but it now also covers a manual
+        # dispatch on master, which was the remaining way to put an empty DB at
+        # the head of the chain: a master dispatch with target all/'' is
+        # explicitly allowed to upload a checkpoint, so running it while the
+        # chain is gone would make the empty base the next base, and every
+        # later scheduled run would then see restored != 'none' and sail past
+        # this guard. A dispatch on a feature branch cannot upload a
+        # checkpoint and is left free to smoke-test from nothing.
+        #
+        # If the chain really is gone, reseed-checkpoint-from-hf.yml is the
+        # way back -- not a dispatch of this workflow.
         if: >-
           (steps.restore.outputs.restored == 'none'
            || steps.restore.outputs.restored == '')
-          && github.event_name == 'schedule'
+          && github.ref == 'refs/heads/master'
         run: |
           echo "::error::No usable checkpoint artifact -- refusing to fetch onto an empty base. This overlay would be rejected as a shrink at merge time, so the fetch would be wasted. Check the restore log for rc=124 download timeouts; if the chain is genuinely gone, run reseed-checkpoint-from-hf.yml."
           exit 1
@@ -1141,10 +1167,23 @@ jobs:
         # Failing here is safe for the pipeline: merge runs with
         # `if: always()` and each overlay download is continue-on-error, so
         # a red fetch job costs its own table for one cron, not the chain.
+        # Keyed on the ref, not the event. A scheduled run always runs on the
+        # default branch (the checkpoint upload step relies on the same fact),
+        # so this still covers every cron -- but it now also covers a manual
+        # dispatch on master, which was the remaining way to put an empty DB at
+        # the head of the chain: a master dispatch with target all/'' is
+        # explicitly allowed to upload a checkpoint, so running it while the
+        # chain is gone would make the empty base the next base, and every
+        # later scheduled run would then see restored != 'none' and sail past
+        # this guard. A dispatch on a feature branch cannot upload a
+        # checkpoint and is left free to smoke-test from nothing.
+        #
+        # If the chain really is gone, reseed-checkpoint-from-hf.yml is the
+        # way back -- not a dispatch of this workflow.
         if: >-
           (steps.restore.outputs.restored == 'none'
            || steps.restore.outputs.restored == '')
-          && github.event_name == 'schedule'
+          && github.ref == 'refs/heads/master'
         run: |
           echo "::error::No usable checkpoint artifact -- refusing to fetch onto an empty base. This overlay would be rejected as a shrink at merge time, so the fetch would be wasted. Check the restore log for rc=124 download timeouts; if the chain is genuinely gone, run reseed-checkpoint-from-hf.yml."
           exit 1
@@ -1554,10 +1593,23 @@ jobs:
         # Failing here is safe for the pipeline: merge runs with
         # `if: always()` and each overlay download is continue-on-error, so
         # a red fetch job costs its own table for one cron, not the chain.
+        # Keyed on the ref, not the event. A scheduled run always runs on the
+        # default branch (the checkpoint upload step relies on the same fact),
+        # so this still covers every cron -- but it now also covers a manual
+        # dispatch on master, which was the remaining way to put an empty DB at
+        # the head of the chain: a master dispatch with target all/'' is
+        # explicitly allowed to upload a checkpoint, so running it while the
+        # chain is gone would make the empty base the next base, and every
+        # later scheduled run would then see restored != 'none' and sail past
+        # this guard. A dispatch on a feature branch cannot upload a
+        # checkpoint and is left free to smoke-test from nothing.
+        #
+        # If the chain really is gone, reseed-checkpoint-from-hf.yml is the
+        # way back -- not a dispatch of this workflow.
         if: >-
           (steps.restore.outputs.restored == 'none'
            || steps.restore.outputs.restored == '')
-          && github.event_name == 'schedule'
+          && github.ref == 'refs/heads/master'
         run: |
           echo "::error::No usable checkpoint artifact -- refusing to fetch onto an empty base. This overlay would be rejected as a shrink at merge time, so the fetch would be wasted. Check the restore log for rc=124 download timeouts; if the chain is genuinely gone, run reseed-checkpoint-from-hf.yml."
           exit 1
@@ -1986,10 +2038,23 @@ jobs:
         # Failing here is safe for the pipeline: merge runs with
         # `if: always()` and each overlay download is continue-on-error, so
         # a red fetch job costs its own table for one cron, not the chain.
+        # Keyed on the ref, not the event. A scheduled run always runs on the
+        # default branch (the checkpoint upload step relies on the same fact),
+        # so this still covers every cron -- but it now also covers a manual
+        # dispatch on master, which was the remaining way to put an empty DB at
+        # the head of the chain: a master dispatch with target all/'' is
+        # explicitly allowed to upload a checkpoint, so running it while the
+        # chain is gone would make the empty base the next base, and every
+        # later scheduled run would then see restored != 'none' and sail past
+        # this guard. A dispatch on a feature branch cannot upload a
+        # checkpoint and is left free to smoke-test from nothing.
+        #
+        # If the chain really is gone, reseed-checkpoint-from-hf.yml is the
+        # way back -- not a dispatch of this workflow.
         if: >-
           (steps.restore.outputs.restored == 'none'
            || steps.restore.outputs.restored == '')
-          && github.event_name == 'schedule'
+          && github.ref == 'refs/heads/master'
         run: |
           echo "::error::No usable checkpoint artifact -- refusing to fetch onto an empty base. This overlay would be rejected as a shrink at merge time, so the fetch would be wasted. Check the restore log for rc=124 download timeouts; if the chain is genuinely gone, run reseed-checkpoint-from-hf.yml."
           exit 1
@@ -2413,12 +2478,25 @@ jobs:
       # HF row-count guard has been refusing to publish ever since. Fail loudly
       # instead: reseed the chain from Hugging Face, then let the cron resume.
       - name: Guard against rebuilding the base DB from empty
+        # Keyed on the ref, not the event. A scheduled run always runs on the
+        # default branch (the checkpoint upload step relies on the same fact),
+        # so this still covers every cron -- but it now also covers a manual
+        # dispatch on master, which was the remaining way to put an empty DB at
+        # the head of the chain: a master dispatch with target all/'' is
+        # explicitly allowed to upload a checkpoint, so running it while the
+        # chain is gone would make the empty base the next base, and every
+        # later scheduled run would then see restored != 'none' and sail past
+        # this guard. A dispatch on a feature branch cannot upload a
+        # checkpoint and is left free to smoke-test from nothing.
+        #
+        # If the chain really is gone, reseed-checkpoint-from-hf.yml is the
+        # way back -- not a dispatch of this workflow.
         if: >-
           (steps.restore.outputs.restored == 'none'
            || steps.restore.outputs.restored == '')
-          && github.event_name == 'schedule'
+          && github.ref == 'refs/heads/master'
         run: |
-          echo "::error::No usable checkpoint artifact -- refusing to rebuild the base DB from empty on a scheduled run. Run reseed-checkpoint-from-hf.yml to restore the chain from the Hugging Face canonical copy, then let the schedule resume."
+          echo "::error::No usable checkpoint artifact -- refusing to rebuild the base DB from empty on master. Run reseed-checkpoint-from-hf.yml to restore the chain from the Hugging Face canonical copy, then let the schedule resume."
           exit 1
 
       - name: Init DB if missing or corrupt
@@ -2500,7 +2578,13 @@ jobs:
       # token is needed; an unreachable manifest warns and passes.
       - name: Verify the restored base against the canonical row-count manifest
         id: base_check
-        if: github.event_name == 'schedule'
+        # Ref-keyed for the same reason as the empty-base guard above: a
+        # scheduled run is always on the default branch, and a master
+        # dispatch with target all/'' is allowed to upload a checkpoint, so a
+        # thin base there would become the next base just as surely as on a
+        # cron. A feature-branch dispatch legitimately carries a partial DB
+        # and cannot upload a checkpoint, so it stays exempt.
+        if: github.ref == 'refs/heads/master'
         run: |
           python3 scripts/check_base_rowcounts.py --src data/geohazard.db
 
@@ -3112,10 +3196,23 @@ jobs:
         # Failing here is safe for the pipeline: merge runs with
         # `if: always()` and each overlay download is continue-on-error, so
         # a red fetch job costs its own table for one cron, not the chain.
+        # Keyed on the ref, not the event. A scheduled run always runs on the
+        # default branch (the checkpoint upload step relies on the same fact),
+        # so this still covers every cron -- but it now also covers a manual
+        # dispatch on master, which was the remaining way to put an empty DB at
+        # the head of the chain: a master dispatch with target all/'' is
+        # explicitly allowed to upload a checkpoint, so running it while the
+        # chain is gone would make the empty base the next base, and every
+        # later scheduled run would then see restored != 'none' and sail past
+        # this guard. A dispatch on a feature branch cannot upload a
+        # checkpoint and is left free to smoke-test from nothing.
+        #
+        # If the chain really is gone, reseed-checkpoint-from-hf.yml is the
+        # way back -- not a dispatch of this workflow.
         if: >-
           (steps.restore.outputs.restored == 'none'
            || steps.restore.outputs.restored == '')
-          && github.event_name == 'schedule'
+          && github.ref == 'refs/heads/master'
         run: |
           echo "::error::No usable checkpoint artifact -- refusing to fetch onto an empty base. This overlay would be rejected as a shrink at merge time, so the fetch would be wasted. Check the restore log for rc=124 download timeouts; if the chain is genuinely gone, run reseed-checkpoint-from-hf.yml."
           exit 1
