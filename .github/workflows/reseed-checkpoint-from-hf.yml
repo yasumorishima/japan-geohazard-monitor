@@ -41,7 +41,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Free up runner disk for the ~42GB DB
+      - name: Free up runner disk for the ~42 GiB DB
         run: |
           df -h /
           sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet \
