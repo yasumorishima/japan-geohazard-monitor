@@ -3175,20 +3175,39 @@ jobs:
         # and delete the rest, so the newest chain link never disappears no
         # matter how long the schedule stalls.
         #
+        # KEEP is one full day of runs (merge runs on 8 crons/day), not a
+        # bare minimum. Two consumers need history, not just the newest:
+        #   - the restore step falls back to progressively older
+        #     backfill-checkpoint- artifacts when the newest one fails its
+        #     integrity check, so a systematic corruption needs more than
+        #     one or two links to survive;
+        #   - diagnose-merge.yml takes an arbitrary diag_run_id and pulls
+        #     backfill-light-<that run> / backfill-<kind>-<that run> to
+        #     isolate which overlay introduced a corruption (built for the
+        #     2026-05-08 Tree 98196 incident). Keeping only the newest
+        #     couple would leave ~6h to dispatch it after a bad merge.
+        # A day of headroom costs ~100GB against the ~614GB this replaces.
+        #
         # Prefix policy:
-        #   backfill-checkpoint-  the cross-run chain           -> keep 3
-        #   backfill-light-       consumed by this run's merge  -> keep 2
-        #   backfill-modis-       consumed by this run's merge  -> keep 2
+        #   backfill-checkpoint-  restore chain + fallback depth -> keep 8
+        #   backfill-light-       diagnose-merge evidence        -> keep 8
+        #   backfill-modis-       diagnose-merge evidence        -> keep 8
         # The per-table overlays (so2 / cloud / snet / gnss / hinet) ARE
         # reused across runs by the own-overlay fast path in the restore
-        # step, and total only ~25GB, so they are deliberately left alone.
+        # step, and total only ~25GB, so they are deliberately left alone
+        # on their 7-day retention.
         # Deliberately NOT gated on the upload succeeding: while the
         # account is over the storage quota every upload hard-fails, and
         # gating here would mean the step that frees the space can never
         # run. Keeping the newest N copies is what protects the chain, and
         # that holds regardless of whether this run added a new one.
+        # always(), not (success() || failure()): merge has been cancelled
+        # by its own 150m timeout before (runs 25276071313 / 25279499629),
+        # and prune is now the only thing bounding the inventory, so it has
+        # to run in the cancellation grace period too. Deleting only the
+        # copies older than the newest KEEP is safe at any job outcome.
         if: >-
-          (success() || failure())
+          always()
           && github.ref == 'refs/heads/master'
         continue-on-error: true
         env:
@@ -3217,9 +3236,9 @@ jobs:
               fi
             done
           }
-          prune backfill-checkpoint- 3
-          prune backfill-light- 2
-          prune backfill-modis- 2
+          prune backfill-checkpoint- 8
+          prune backfill-light- 8
+          prune backfill-modis- 8
 
       - name: Notify Discord
         if: always()
