@@ -4,8 +4,9 @@ name: Reseed checkpoint from Hugging Face
 # dataset and re-publish it as a fresh backfill-checkpoint-<run_id> artifact.
 #
 # Why: after the RPi5 SSD died (2026-05-27) the GitHub artifact chain's latest
-# surviving checkpoint was a degraded ~587MB salvage, while the full ~16.5GB
-# history lives only on HF. Running this once puts a complete checkpoint back
+# surviving checkpoint was a degraded ~587MB salvage, while the full history
+# lives only on HF -- ~16.5GB then, 44,614,766,592 bytes (41.55 GiB) as of
+# 2026-08-06. Running this once puts a complete checkpoint back
 # at the head of the chain (newest created_at), so the normal backfill restore
 # step (sort_by(created_at)|reverse) picks it up and the pipeline resumes from
 # full history instead of the degraded remnant.
@@ -22,7 +23,17 @@ on:
 jobs:
   reseed:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # 60 -> 120 (2026-08-06). This is the only recovery path when the
+    # checkpoint chain is gone, so it runs exactly when a budget overrun
+    # would hurt most -- and its two dominant steps both scale with a DB
+    # that grows every day. The one successful reseed (run 30431629728,
+    # 2026-07-29) took 41m05s of the 60: disk 30s, HF download 2m16s,
+    # integrity check 25m14s, artifact upload 12m58s. A 19-minute margin
+    # against a growing input is the same mis-sized budget that had
+    # fetch-modis dying every run until 2026-08-06; size it once, here,
+    # rather than discover it during an outage. Public repo, so the
+    # unused ceiling costs nothing.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 
@@ -30,7 +41,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Free up runner disk for the 16.5GB DB
+      - name: Free up runner disk for the ~42 GiB DB
         run: |
           df -h /
           sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet \
