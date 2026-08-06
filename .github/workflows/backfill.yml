@@ -139,7 +139,17 @@ jobs:
       || inputs.target == ''
       || inputs.target == 'modis_lst'
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    # 150 -> 240 (2026-08-06). fetch-modis and light are the only two jobs
+    # that restore the FULL checkpoint (OWN_PREFIX is empty for both), and
+    # that DB is now 42GB on disk. Measured on run 31075628300: 22min to
+    # download and copy it, 20min quick_check, 20min full integrity check,
+    # 66min for the actual MODIS fetch, and the job was killed 25min into
+    # Snapshot DB at exactly 155min. Every scheduled run since at least
+    # 2026-08-05 died the same way, so modis_lst has been frozen at 316
+    # rows / 2026-06-18 while the fetch itself completes fine (413 records
+    # on that run that never got persisted). light already sits at 200 and
+    # took 178min on the same run; fetch-snet and fetch-hinet are at 240.
+    timeout-minutes: 240
     outputs:
       fetch_modis_lst: ${{ steps.fetch_modis_lst.outcome }}
       snapshot_outcome: ${{ steps.snapshot.outcome }}
@@ -258,7 +268,7 @@ jobs:
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
               log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              timeout 600 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+              timeout 1800 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
                 --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
               dl_rc=$?
               if [ $dl_rc -ne 0 ]; then
@@ -350,8 +360,22 @@ jobs:
             NEEDS_INIT=1
             echo "No DB file -- will init"
           else
-            timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
-            integrity_rc=$?
+            # The full integrity_check cannot finish inside 1200s once the
+            # DB passes ~20GB (it is 42GB as of 2026-08-06), so on the two
+            # full-restore jobs this always burned the whole 20min and then
+            # fell into the 124 branch below and kept the DB anyway. Skip
+            # straight to that outcome instead of paying for it: the restore
+            # step already ran quick_check on this file, and the merge job
+            # ran a full integrity_check before uploading it as a checkpoint.
+            # Jobs whose base is a small own-overlay still get the real check.
+            DB_BYTES=$(stat -c %s data/geohazard.db 2>/dev/null || echo 0)
+            if [ "$DB_BYTES" -gt 21474836480 ]; then
+              echo "DB is ${DB_BYTES} bytes -- skipping the full integrity check (cannot finish in 1200s)"
+              integrity_rc=124
+            else
+              timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
+              integrity_rc=$?
+            fi
             case "$integrity_rc" in
               124|137|143)
                 echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
@@ -585,7 +609,7 @@ jobs:
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
               log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              timeout 600 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+              timeout 1800 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
                 --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
               dl_rc=$?
               if [ $dl_rc -ne 0 ]; then
@@ -677,8 +701,22 @@ jobs:
             NEEDS_INIT=1
             echo "No DB file -- will init"
           else
-            timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
-            integrity_rc=$?
+            # The full integrity_check cannot finish inside 1200s once the
+            # DB passes ~20GB (it is 42GB as of 2026-08-06), so on the two
+            # full-restore jobs this always burned the whole 20min and then
+            # fell into the 124 branch below and kept the DB anyway. Skip
+            # straight to that outcome instead of paying for it: the restore
+            # step already ran quick_check on this file, and the merge job
+            # ran a full integrity_check before uploading it as a checkpoint.
+            # Jobs whose base is a small own-overlay still get the real check.
+            DB_BYTES=$(stat -c %s data/geohazard.db 2>/dev/null || echo 0)
+            if [ "$DB_BYTES" -gt 21474836480 ]; then
+              echo "DB is ${DB_BYTES} bytes -- skipping the full integrity check (cannot finish in 1200s)"
+              integrity_rc=124
+            else
+              timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
+              integrity_rc=$?
+            fi
             case "$integrity_rc" in
               124|137|143)
                 echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
@@ -931,7 +969,7 @@ jobs:
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
               log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              timeout 600 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+              timeout 1800 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
                 --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
               dl_rc=$?
               if [ $dl_rc -ne 0 ]; then
@@ -1023,8 +1061,22 @@ jobs:
             NEEDS_INIT=1
             echo "No DB file -- will init"
           else
-            timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
-            integrity_rc=$?
+            # The full integrity_check cannot finish inside 1200s once the
+            # DB passes ~20GB (it is 42GB as of 2026-08-06), so on the two
+            # full-restore jobs this always burned the whole 20min and then
+            # fell into the 124 branch below and kept the DB anyway. Skip
+            # straight to that outcome instead of paying for it: the restore
+            # step already ran quick_check on this file, and the merge job
+            # ran a full integrity_check before uploading it as a checkpoint.
+            # Jobs whose base is a small own-overlay still get the real check.
+            DB_BYTES=$(stat -c %s data/geohazard.db 2>/dev/null || echo 0)
+            if [ "$DB_BYTES" -gt 21474836480 ]; then
+              echo "DB is ${DB_BYTES} bytes -- skipping the full integrity check (cannot finish in 1200s)"
+              integrity_rc=124
+            else
+              timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
+              integrity_rc=$?
+            fi
             case "$integrity_rc" in
               124|137|143)
                 echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
@@ -1292,7 +1344,7 @@ jobs:
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
               log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              timeout 600 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+              timeout 1800 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
                 --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
               dl_rc=$?
               if [ $dl_rc -ne 0 ]; then
@@ -1384,8 +1436,22 @@ jobs:
             NEEDS_INIT=1
             echo "No DB file -- will init"
           else
-            timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
-            integrity_rc=$?
+            # The full integrity_check cannot finish inside 1200s once the
+            # DB passes ~20GB (it is 42GB as of 2026-08-06), so on the two
+            # full-restore jobs this always burned the whole 20min and then
+            # fell into the 124 branch below and kept the DB anyway. Skip
+            # straight to that outcome instead of paying for it: the restore
+            # step already ran quick_check on this file, and the merge job
+            # ran a full integrity_check before uploading it as a checkpoint.
+            # Jobs whose base is a small own-overlay still get the real check.
+            DB_BYTES=$(stat -c %s data/geohazard.db 2>/dev/null || echo 0)
+            if [ "$DB_BYTES" -gt 21474836480 ]; then
+              echo "DB is ${DB_BYTES} bytes -- skipping the full integrity check (cannot finish in 1200s)"
+              integrity_rc=124
+            else
+              timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
+              integrity_rc=$?
+            fi
             case "$integrity_rc" in
               124|137|143)
                 echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
@@ -1672,7 +1738,7 @@ jobs:
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
               log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              timeout 600 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+              timeout 1800 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
                 --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
               dl_rc=$?
               if [ $dl_rc -ne 0 ]; then
@@ -1763,8 +1829,22 @@ jobs:
             NEEDS_INIT=1
             echo "No DB file -- will init"
           else
-            timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
-            integrity_rc=$?
+            # The full integrity_check cannot finish inside 1200s once the
+            # DB passes ~20GB (it is 42GB as of 2026-08-06), so on the two
+            # full-restore jobs this always burned the whole 20min and then
+            # fell into the 124 branch below and kept the DB anyway. Skip
+            # straight to that outcome instead of paying for it: the restore
+            # step already ran quick_check on this file, and the merge job
+            # ran a full integrity_check before uploading it as a checkpoint.
+            # Jobs whose base is a small own-overlay still get the real check.
+            DB_BYTES=$(stat -c %s data/geohazard.db 2>/dev/null || echo 0)
+            if [ "$DB_BYTES" -gt 21474836480 ]; then
+              echo "DB is ${DB_BYTES} bytes -- skipping the full integrity check (cannot finish in 1200s)"
+              integrity_rc=124
+            else
+              timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
+              integrity_rc=$?
+            fi
             case "$integrity_rc" in
               124|137|143)
                 echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
@@ -2054,7 +2134,7 @@ jobs:
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
               log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              timeout 600 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+              timeout 1800 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
                 --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
               dl_rc=$?
               if [ $dl_rc -ne 0 ]; then
@@ -2160,8 +2240,22 @@ jobs:
             NEEDS_INIT=1
             echo "No DB file -- will init"
           else
-            timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
-            integrity_rc=$?
+            # The full integrity_check cannot finish inside 1200s once the
+            # DB passes ~20GB (it is 42GB as of 2026-08-06), so on the two
+            # full-restore jobs this always burned the whole 20min and then
+            # fell into the 124 branch below and kept the DB anyway. Skip
+            # straight to that outcome instead of paying for it: the restore
+            # step already ran quick_check on this file, and the merge job
+            # ran a full integrity_check before uploading it as a checkpoint.
+            # Jobs whose base is a small own-overlay still get the real check.
+            DB_BYTES=$(stat -c %s data/geohazard.db 2>/dev/null || echo 0)
+            if [ "$DB_BYTES" -gt 21474836480 ]; then
+              echo "DB is ${DB_BYTES} bytes -- skipping the full integrity check (cannot finish in 1200s)"
+              integrity_rc=124
+            else
+              timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
+              integrity_rc=$?
+            fi
             case "$integrity_rc" in
               124|137|143)
                 echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
@@ -2715,7 +2809,7 @@ jobs:
               ARTIFACT_NAME="${PREFIX}${PREV_RUN}"
               log "trying artifact: ${ARTIFACT_NAME}"
               rm -rf /tmp/db-restore
-              timeout 600 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
+              timeout 1800 gh run download "$PREV_RUN" --repo ${{ github.repository }} \
                 --name "$ARTIFACT_NAME" --dir /tmp/db-restore 2>&1
               dl_rc=$?
               if [ $dl_rc -ne 0 ]; then
@@ -2807,8 +2901,22 @@ jobs:
             NEEDS_INIT=1
             echo "No DB file -- will init"
           else
-            timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
-            integrity_rc=$?
+            # The full integrity_check cannot finish inside 1200s once the
+            # DB passes ~20GB (it is 42GB as of 2026-08-06), so on the two
+            # full-restore jobs this always burned the whole 20min and then
+            # fell into the 124 branch below and kept the DB anyway. Skip
+            # straight to that outcome instead of paying for it: the restore
+            # step already ran quick_check on this file, and the merge job
+            # ran a full integrity_check before uploading it as a checkpoint.
+            # Jobs whose base is a small own-overlay still get the real check.
+            DB_BYTES=$(stat -c %s data/geohazard.db 2>/dev/null || echo 0)
+            if [ "$DB_BYTES" -gt 21474836480 ]; then
+              echo "DB is ${DB_BYTES} bytes -- skipping the full integrity check (cannot finish in 1200s)"
+              integrity_rc=124
+            else
+              timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db > /dev/null 2>&1
+              integrity_rc=$?
+            fi
             case "$integrity_rc" in
               124|137|143)
                 echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
