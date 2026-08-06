@@ -651,6 +651,79 @@ the reseeded chain (run 30439350491) was still in progress when this entry was w
 Follow-up (2026-08-01, PR #198, `1bfc9112`): the recovery is verified closed -- the Hugging Face canonical resumed updating on 2026-07-31 with the row-count guard passing, its manifest shows the degraded tables restored (`tec` 6,440,742 rows, `ioc_sea_level` 176,594,085, `iss_lis_lightning` and `nightlight` present again), and five fresh checkpoint artifacts were produced on 2026-07-31 alone, so the chain is rebuilding its own depth. One gap remained: the #197 guard fires only on `restored=none`, while the restore loop has a second way to hand back a thin base -- the `<artifact>-salvaged` per-table copy out of a corrupt checkpoint, table-incomplete by construction. `scripts/check_base_rowcounts.py` now compares whatever base a scheduled run restored against the `geohazard.db.rowcounts.json` manifest that `hf_sync.py` publishes next to the canonical DB (public dataset, no token; per-table 95 percent floor, matching hf_sync.py's own guard; a missing table reads as zero rows; an unreachable manifest warns and passes, because a Hugging Face outage must not stop the pipeline), so a degraded base of either kind stops a scheduled run before it spends three hours fetching onto it, and `Create issue on failure` gains a `degraded_base` clause wired the same way as the #197 clauses.
 
 
+### Artifact inventory bounded by count, and three quiet failure modes in the fetch jobs (2026-08-06, PRs #199-#202)
+
+A "100% of Actions storage" alert traced back to the same knob that caused the 2026-07-24 chain
+expiry, turned the other way. The live inventory measured 614.05 GB against a 0.5 GB included
+quota: `backfill-checkpoint-` 62 artifacts / 381.72 GB, `backfill-light-` 31 / 195.21 GB, the rest
+37 GB. Billing is not the issue, since public-repository usage is discounted to net zero (August,
+this repo: $84.22 gross, $0.00 net), but exceeding the quota hard-fails `actions/upload-artifact`
+across every repository on the account, so the inventory has to come down regardless.
+
+Cutting `retention-days` is the wrong lever, and cutting it is exactly what broke the chain on
+2026-07-24. The checkpoint chain is the pipeline's working state, so retention is really the number
+of days the schedule may stall before the chain dies; storage meanwhile is copies times size
+(~6.2 GB each, 8 runs/day). Shortening retention therefore trades the safety margin away for a
+third of the space. PR #199 inverts it: `retention-days` goes back to 30 for `backfill-checkpoint-`
+and `backfill-light-`, and a `Prune old artifacts` step in `merge` keeps the newest 8 of each prefix
+and deletes the rest. 8 is one day of runs rather than a bare minimum, because two consumers need
+history -- the restore step falls back to progressively older checkpoints when the newest fails its
+integrity check, and `diagnose-merge.yml` pulls `backfill-light-<arbitrary run>` to isolate which
+overlay introduced a corruption -- and artifact deletion, unlike expiry, destroys that evidence.
+Running the shipped script against the live inventory took it to 137.94 GB (8 checkpoints /
+50.41 GB, 8 light / 50.41 GB, the per-table overlays left untouched on their 7-day retention at
+~25 GB). The prune step is deliberately not gated on the checkpoint upload succeeding: while the
+account is over quota every upload hard-fails, so such a gate would deadlock the one step that
+frees the space.
+
+Investigating why `fetch-modis` was cancelled at 155 minutes on every scheduled run -- `modis_lst`
+frozen at 316 rows / 2026-06-18 -- found the MODIS fetch itself healthy (66 minutes, 413 records)
+and the budget spent elsewhere. Run 31075628300, job 92535296284: `gh run download` attempt 1 died
+at exactly rc=124 / 600 s and the step fell back to an older checkpoint; attempt 2 plus the copy of
+the 42 GB DB took 12 minutes; the restore `quick_check` timed out at 1200 s and was accepted anyway;
+the Init DB full `integrity_check` timed out at 1200 s and kept the DB anyway; and `Snapshot DB` was
+killed 25 minutes in. Fifty minutes of a 150-minute budget went to checks whose result is discarded
+by construction. PR #200 raises the job to 240 minutes -- `fetch-modis` and `light` are the only
+jobs that restore the full 42 GB checkpoint (`OWN_PREFIX` is empty for both), and `light` was
+already at 200 while `fetch-snet` and `fetch-hinet` were at 240 -- widens the download window to
+1800 s in all seven restore blocks, and skips the Init DB full check above 20 GiB. Nothing is lost
+by skipping it: corruption is gated at write time by `merge_checkpoints.py`'s `_verify` and by the
+untimed `PRAGMA integrity_check` in `Snapshot DB`, both of which must pass before an artifact is
+uploaded.
+
+The next run exposed a second, quieter mode. Run 31084273068's `fetch-modis` reported success in 52
+minutes: five consecutive 600 s download timeouts, the legacy `database-checkpoint-` fallback
+404ing, then `No usable checkpoint found -- will init fresh DB`, `TOTAL: 0 earthquake + 0 control =
+0 LST records`, and a 159744-byte overlay uploaded green. `merge_checkpoints.py` refused it
+(`overlay empty ... KEEPING base`, the guard added after the 2026-04-18 `cloud_fraction` 523K to 0
+regression), so no data was lost -- but the 50 minutes of failed downloads were invisible unless you
+opened the restore log. The `Guard against rebuilding the base DB from empty` added to `light` after
+the 2026-07-24 incident had never been extended to the six fetch jobs. PR #201 adds it to all six
+and closes two holes in it. The condition matched only `restored == 'none'`, but the restore step is
+`continue-on-error` with `timeout-minutes: 90` and writes that output on its last line, so a step
+killed at 90 minutes leaves it empty -- now the likely path rather than a corner case, since three
+hung 1800 s downloads reach the 90-minute cap where five 600 s ones used to fit inside it. And a
+guard failure reached neither alert path, because `RESTORE_*` carries the restore *step* outcome
+(success, since the step itself finished) while every `fetch_*` output is `skipped` rather than
+`failure`; the job results are now wired into both the Discord `step_results` and the
+`Create issue on failure` condition.
+
+PR #202 closes the last route in. Both the guard and `light`'s `base_check` were keyed on
+`github.event_name == 'schedule'`, so dispatching this workflow on master while the chain was gone
+bypassed them -- and a master dispatch with target `all` or `''` is explicitly allowed to upload a
+checkpoint, which would make the empty base the next base and let every later scheduled run sail
+past the guard on `restored != 'none'`. Both are now keyed on `github.ref == 'refs/heads/master'`: a
+scheduled run always runs on the default branch (the checkpoint upload step already relies on this),
+and a feature-branch dispatch cannot upload a checkpoint, so it stays exempt. The daily Hugging Face
+upload and the auto-rerun of failed fetch jobs remain schedule-only by intent.
+
+Verification state at the time of writing: the prune script has been run against the live inventory
+(614.05 to 137.94 GB) and every changed `run:` block passes `bash -n`, but the first scheduled run
+carrying these changes had not yet completed. `Snapshot DB` has no timeout of its own and only a
+25-minute lower bound has ever been measured, so the 240-minute budget rests on arithmetic
+(145-160 minutes expected, 235 minutes worst case) rather than on observation.
+
+
 ## Analysis Results (2011-2026, 28K M3+ earthquakes, 6.4M TEC, 45K Kp, 5.3M GNSS-TEC, 24M ULF, 98 features with dynamic selection)
 
 ### Summary
