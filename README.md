@@ -750,6 +750,59 @@ header comment and disk-cleanup step still carried is corrected to the measured 
 check is what exceeds the 1200-second window inside the backfill restore step.)
 
 
+### The three open items from the section above, closed by measurement (2026-08-07, run 31132546412)
+
+The GitHub Actions incident was still open -- the status page reported the Actions component in
+major outage -- when a scheduled run acquired runners and completed. It is the first complete
+backfill since the incident began, and it settles all three things the section above left hanging.
+
+The budget fix holds in production. All seven fetch jobs finished `success`, `fetch-modis` among
+them; the job that had been killed by its own 150-minute limit, then killed again by the outage
+mid-upload, now runs end to end. The empty-base guard added in PR #201 correctly did not fire,
+the restore having found a live checkpoint, which is also the first evidence that the broadened
+condition does not misfire on the normal path.
+
+`retention-days: 30` is now actually in effect. The checkpoint this run uploaded,
+`backfill-checkpoint-31132546412`, was created 2026-08-07T04:10:22Z and expires 2026-09-06 --
+thirty days, against the three-day artifacts every previous run had left behind. The chain
+deadline of 2026-08-09T14:10:05Z is therefore no longer live, and `reseed-checkpoint-from-hf.yml`
+was not needed.
+
+The prune step ran, and its log is the proof rather than the artifact count:
+
+```
+backfill-checkpoint- : 10 live (keep 8)
+  deleted 8919925468
+  deleted 8914736261
+backfill-light- : 10 live (keep 8)
+  deleted 8917607128
+  deleted 8913384780
+backfill-modis- : 3 live (keep 8)
+  nothing to prune
+```
+
+Both full-size prefixes now sit at exactly eight live artifacts, and the small `modis` prefix
+correctly took no action. The inventory is bounded by count as intended.
+
+One item did not resolve, and the honest reading of it is not the obvious one. `modis_lst` is
+still 316 rows ending 2026-06-18: the merge reports `316 -> 316 rows (+0)` with the overlay
+applied, not rejected. The fetch itself is not failing -- it walked all 625 land events and
+returned `413 records from 613 fetches`, plus 77 control records -- so what it produced this run
+were rows whose `(latitude, longitude, observed_date)` keys already existed. The first hypothesis,
+that the event list was stale, is wrong: the same merge reports `earthquakes: 28,955 rows` running
+to 2026-08-06T17:50, and there are fifteen M5+ events in the box after 2026-06-18, seven of which
+clear the script's `magnitude >= 5.5` and land-polygon filters, including the M6.8 of 2026-07-28.
+
+What the coverage report does show is that every satellite-derived table lags by a comparable
+margin: `so2_column` ends 2026-06-08, `cloud_fraction` 2026-06-29, `gravity_mascon` 2026-04-16.
+A `modis_lst` frontier of 2026-06-18, read on 2026-08-07, sits inside that band rather than
+outside it, and the M6.8 is ten days before this run -- too recent for an eight-day composite to
+have been published and subset. So the evidence available supports product publication latency
+over a defect in the fetch, and the earlier characterisation of this as a silent-green failure is
+withdrawn for want of support. Two checks would settle it: whether the frontier advances over the
+next runs as the July composites publish, and a direct query to the ORNL DAAC subset API for the
+late-July window at that epicentre.
+
 ## Analysis Results (2011-2026, 28K M3+ earthquakes, 6.4M TEC, 45K Kp, 5.3M GNSS-TEC, 24M ULF, 98 features with dynamic selection)
 
 ### Summary
