@@ -803,6 +803,19 @@ withdrawn for want of support. Two checks would settle it: whether the frontier 
 next runs as the July composites publish, and a direct query to the ORNL DAAC subset API for the
 late-July window at that epicentre.
 
+Both were run on 2026-08-08 and the item is closed as publication latency, not a defect. The
+frontier did not move: the next successful run (31220084577) again reports
+`modis_lst: 316 -> 316 (+0)`. The direct query settles it properly, because it asks the source
+rather than inferring from a band -- the ORNL DAAC `dates` endpoint for the Kumamoto epicentre
+(32.79N, 130.75E) returns 1,209 available dates for MOD11A2 ending at **2026-06-18**, with the
+2026-05 onwards tail being 05-01, 05-09, 05-17, 05-25, 06-02, 06-10, 06-18 at the product's
+eight-day spacing. The table's frontier and the source's last published date are the same day, so
+the fetcher is fully caught up and there is nothing missing to recover. One incidental
+observation, recorded without a conclusion attached: the `dates` endpoint for the daily product
+`MOD11A1` returns 404 at this point, while `main()` decides daily-versus-8-day availability from
+the global `/products` listing -- a listing entry and a per-point 404 can therefore disagree. That
+is unrelated to the frontier question settled here.
+
 ## Analysis Results (2011-2026, 28K M3+ earthquakes, 6.4M TEC, 45K Kp, 5.3M GNSS-TEC, 24M ULF, 98 features with dynamic selection)
 
 ### Summary
