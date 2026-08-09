@@ -1,5 +1,11 @@
 # Independent b-value / Foreshock-Traffic-Light + acceleration test — 2009 L'Aquila Mw6.3 (the canonical natural foreshock case)
 
+> ⚠️ **Research record, not a forecast.** This document is part of a personal research log. It is not an earthquake prediction, forecast, warning, advisory, or operational product of any kind, and it issues no alerts. The figures in it are exploratory retrospective metrics computed on public data and have not been validated for operational use. Do not rely on it for safety, evacuation, business, or any other disaster-response decision. For official information in Japan, use the Japan Meteorological Agency (https://www.jma.go.jp/en/) and your local government. Provided as-is, without warranty of any kind; the author accepts no liability for any loss or damage arising from its use.
+>
+> ⚠️ **免責事項: 本文書は研究記録であり、予報ではありません**
+>
+> 地震の予知・予測・予報・警報その他の運用情報ではなく、いかなる警報も発信しません。記載の数値は公開データを用いた探索段階の事後的な研究指標であり、実運用に向けた検証は行っていません。安全確保・避難・事業判断その他の防災上の判断には使用しないでください。日本の公式情報は気象庁（https://www.jma.go.jp/）および各自治体の発表をご確認ください。現状のまま無保証で提供され、利用により生じたいかなる損害についても作者は責任を負いません。
+
 ## Motivation
 The 2009 L'Aquila Mw6.3 (central Italy) is the most-cited NATURAL foreshock sequence in seismology and the basis of the 2012 manslaughter trial of the Italian hazard commission; its weeks-long escalating foreshock swarm is the textbook example invoked for foreshock-based precursors. It is NOT a Gulia and Wiemer (2019, Nature) FTLS showcase, so this is a genuinely out-of-sample test of whether the FTLS b-drop and the famous L'Aquila rate acceleration survive an incompleteness-robust, prospective re-analysis on open data. Three prior tests in this arc (Kumamoto 2016, Ridgecrest 2019, Amatrice-Norcia 2016) found the FTLS b-channel null under the b-positive estimator. This is the fourth b-channel case and the first applied to a non-showcase, naturally-occurring foreshock sequence.
 

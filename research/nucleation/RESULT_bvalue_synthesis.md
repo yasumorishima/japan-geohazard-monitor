@@ -1,5 +1,11 @@
 # Synthesis of the FTLS b-value channel: five cases, the incompleteness mechanism, and the limits of b-positive
 
+> ⚠️ **Research record, not a forecast.** This document is part of a personal research log. It is not an earthquake prediction, forecast, warning, advisory, or operational product of any kind, and it issues no alerts. The figures in it are exploratory retrospective metrics computed on public data and have not been validated for operational use. Do not rely on it for safety, evacuation, business, or any other disaster-response decision. For official information in Japan, use the Japan Meteorological Agency (https://www.jma.go.jp/en/) and your local government. Provided as-is, without warranty of any kind; the author accepts no liability for any loss or damage arising from its use.
+>
+> ⚠️ **免責事項: 本文書は研究記録であり、予報ではありません**
+>
+> 地震の予知・予測・予報・警報その他の運用情報ではなく、いかなる警報も発信しません。記載の数値は公開データを用いた探索段階の事後的な研究指標であり、実運用に向けた検証は行っていません。安全確保・避難・事業判断その他の防災上の判断には使用しないでください。日本の公式情報は気象庁（https://www.jma.go.jp/）および各自治体の発表をご確認ください。現状のまま無保証で提供され、利用により生じたいかなる損害についても作者は責任を負いません。
+
 ## What this consolidates
 The arc applied the Gulia and Wiemer (2019, Nature) Foreshock-Traffic-Light System (FTLS: a foreshock-phase b-value DROP relative to background = a RED light predicting a larger impending event) to five mainshocks with independent / incompleteness-robust estimators: Kumamoto 2016 (M6.5->M7.3), Ridgecrest 2019 (M6.4->M7.1), Amatrice-Visso-Norcia 2016 (Mw6.5), L'Aquila 2009 (Mw6.3), and Iquique 2014 (Mw8.1, subduction megathrust). All five returned NULL on a prospective temporal b-precursor under the Van der Elst (2021) b-positive estimator. This note states the one robust cross-case finding, a controlled experiment on the mechanism, and -- importantly -- the limits of both the mechanism claim and of b-positive itself. It introduces no new method; it diagnoses a published prediction system and delineates a known estimator's robustness boundary.
 

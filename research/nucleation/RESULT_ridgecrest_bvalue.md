@@ -1,5 +1,11 @@
 # Independent-magnitude b-value / Foreshock-Traffic-Light test — 2019 Ridgecrest M6.4 to M7.1
 
+> ⚠️ **Research record, not a forecast.** This document is part of a personal research log. It is not an earthquake prediction, forecast, warning, advisory, or operational product of any kind, and it issues no alerts. The figures in it are exploratory retrospective metrics computed on public data and have not been validated for operational use. Do not rely on it for safety, evacuation, business, or any other disaster-response decision. For official information in Japan, use the Japan Meteorological Agency (https://www.jma.go.jp/en/) and your local government. Provided as-is, without warranty of any kind; the author accepts no liability for any loss or damage arising from its use.
+>
+> ⚠️ **免責事項: 本文書は研究記録であり、予報ではありません**
+>
+> 地震の予知・予測・予報・警報その他の運用情報ではなく、いかなる警報も発信しません。記載の数値は公開データを用いた探索段階の事後的な研究指標であり、実運用に向けた検証は行っていません。安全確保・避難・事業判断その他の防災上の判断には使用しないでください。日本の公式情報は気象庁（https://www.jma.go.jp/）および各自治体の発表をご確認ください。現状のまま無保証で提供され、利用により生じたいかなる損害についても作者は責任を負いません。
+
 ## Motivation
 Gulia & Wiemer (2019, Nature) proposed the Foreshock-Traffic-Light System (FTLS): a sequence whose b-value DROPS relative to background is flagged as foreshocks of a larger impending event (a RED light). They featured the 2019 Ridgecrest M6.4 to M7.1 sequence as a real-time RED-light success — after the M6.4 their FTLS turned red, and the M7.1 followed about 34 h later. However, Dascher-Cousineau et al. (2020) and Gulia & Wiemer (2021) showed the Ridgecrest FTLS output is highly sensitive to expert-judgment parameter choices (the warning level is ambiguous / parameter-dependent). An earlier test in this program applied the same idea to the 2016 Kumamoto M6.5 to M7.3 sequence with INDEPENDENT network relative magnitudes and found the b-value channel retrospective-only (no prospective temporal precursor). This is the n=2 independent-magnitude reproduction, on Gulia & Wiemer's own showcase case — and a contested one.
 

@@ -1,5 +1,11 @@
 # Independent high-resolution b-value / Foreshock-Traffic-Light test — 2016 Amatrice-Visso-NORCIA (Mw6.5)
 
+> ⚠️ **Research record, not a forecast.** This document is part of a personal research log. It is not an earthquake prediction, forecast, warning, advisory, or operational product of any kind, and it issues no alerts. The figures in it are exploratory retrospective metrics computed on public data and have not been validated for operational use. Do not rely on it for safety, evacuation, business, or any other disaster-response decision. For official information in Japan, use the Japan Meteorological Agency (https://www.jma.go.jp/en/) and your local government. Provided as-is, without warranty of any kind; the author accepts no liability for any loss or damage arising from its use.
+>
+> ⚠️ **免責事項: 本文書は研究記録であり、予報ではありません**
+>
+> 地震の予知・予測・予報・警報その他の運用情報ではなく、いかなる警報も発信しません。記載の数値は公開データを用いた探索段階の事後的な研究指標であり、実運用に向けた検証は行っていません。安全確保・避難・事業判断その他の防災上の判断には使用しないでください。日本の公式情報は気象庁（https://www.jma.go.jp/）および各自治体の発表をご確認ください。現状のまま無保証で提供され、利用により生じたいかなる損害についても作者は責任を負いません。
+
 ## Motivation
 Gulia and Wiemer (2019, Nature) proposed the Foreshock-Traffic-Light System (FTLS): when the b-value of an ongoing aftershock sequence DROPS relative to background by more than ~10% (a RED light), the sequence is flagged as foreshocks of a larger impending event; a rate acceleration is the companion signal. Their two headline showcases were the 2016 central-Italy sequence (Amatrice Mw6.0 to NORCIA Mw6.5) and the 2019 Ridgecrest sequence. Dascher-Cousineau et al. (2020) and Gulia and Wiemer (2021) showed the FTLS output is highly sensitive to expert-judgment parameter choices. This program already returned prospective-temporal nulls on the b-value channel for Kumamoto 2016 (test 6) and Ridgecrest 2019 (test 19), both with independent magnitudes. This is the THIRD and final G and W showcase, and the only one of the three on which the full FTLS — including the B1 relative-drop test — is actually computable, because the high-resolution catalogue supplies a real pre-Amatrice background and a Norcia-aftershock comparison phase.
 

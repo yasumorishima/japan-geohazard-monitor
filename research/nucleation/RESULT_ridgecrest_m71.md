@@ -1,5 +1,11 @@
 # Onshore dense-array nucleation test #2 — 2019 Ridgecrest M7.1
 
+> ⚠️ **Research record, not a forecast.** This document is part of a personal research log. It is not an earthquake prediction, forecast, warning, advisory, or operational product of any kind, and it issues no alerts. The figures in it are exploratory retrospective metrics computed on public data and have not been validated for operational use. Do not rely on it for safety, evacuation, business, or any other disaster-response decision. For official information in Japan, use the Japan Meteorological Agency (https://www.jma.go.jp/en/) and your local government. Provided as-is, without warranty of any kind; the author accepts no liability for any loss or damage arising from its use.
+>
+> ⚠️ **免責事項: 本文書は研究記録であり、予報ではありません**
+>
+> 地震の予知・予測・予報・警報その他の運用情報ではなく、いかなる警報も発信しません。記載の数値は公開データを用いた探索段階の事後的な研究指標であり、実運用に向けた検証は行っていません。安全確保・避難・事業判断その他の防災上の判断には使用しないでください。日本の公式情報は気象庁（https://www.jma.go.jp/）および各自治体の発表をご確認ください。現状のまま無保証で提供され、利用により生じたいかなる損害についても作者は責任を負いません。
+
 ## Motivation
 The onshore Hi-net Kumamoto M6.5 test (case #1) returned a power-calibrated null on foreshock-rate acceleration, but was a single event. This extends the same matched-filter + injection-floor + powered end-loading methodology to the **best-instrumented foreshock sequence in the literature**, the 2019 Ridgecrest M7.1, on the dense Southern California Seismic Network (SCSN). Ridgecrest is the strongest possible second case: its foreshocks are explicitly described as a "cascade to failure" (Huang et al. 2020 EPSL), yet that study concluded that "slip acceleration as the time to failure approached could largely be ruled out," and reports that the M7.1 nucleated in a local seismicity concentration that "intensified ~3 h before" — exactly the acceleration question this test is built to adjudicate, on the most completely recorded foreshock sequence available.
 

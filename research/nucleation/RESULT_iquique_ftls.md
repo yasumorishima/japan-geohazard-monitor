@@ -1,5 +1,11 @@
 # Independent b-value / Foreshock-Traffic-Light + acceleration test — 2014 Iquique Mw8.1 (subduction megathrust)
 
+> ⚠️ **Research record, not a forecast.** This document is part of a personal research log. It is not an earthquake prediction, forecast, warning, advisory, or operational product of any kind, and it issues no alerts. The figures in it are exploratory retrospective metrics computed on public data and have not been validated for operational use. Do not rely on it for safety, evacuation, business, or any other disaster-response decision. For official information in Japan, use the Japan Meteorological Agency (https://www.jma.go.jp/en/) and your local government. Provided as-is, without warranty of any kind; the author accepts no liability for any loss or damage arising from its use.
+>
+> ⚠️ **免責事項: 本文書は研究記録であり、予報ではありません**
+>
+> 地震の予知・予測・予報・警報その他の運用情報ではなく、いかなる警報も発信しません。記載の数値は公開データを用いた探索段階の事後的な研究指標であり、実運用に向けた検証は行っていません。安全確保・避難・事業判断その他の防災上の判断には使用しないでください。日本の公式情報は気象庁（https://www.jma.go.jp/）および各自治体の発表をご確認ください。現状のまま無保証で提供され、利用により生じたいかなる損害についても作者は責任を負いません。
+
 ## Motivation
 The 2014 Iquique (Pisagua) Mw8.1 (Mw8.2 in some solutions), northern Chile megathrust, is the canonical "accelerated nucleation" foreshock case: a ~2-week intense, MIGRATING foreshock sequence with documented precursory SLOW SLIP (Ruiz et al. 2014 Science; Kato and Nakagawa 2014 GRL), a seismicity-rate acceleration starting ~270 d before at Mc~3.8 up-dip (Kato et al. 2016 Sci Rep), and a multi-year b-value decline to ~0.6 with a terminal reversal (Schurr et al. 2014 Nature). This arc earlier tested the precursory slow slip geodetically and found it at/below open geodetic resolution. Here we extend the FTLS b-value/rate channel from crustal cases (Kumamoto, Ridgecrest, Norcia, L'Aquila) to a subduction megathrust, and ask specifically whether the operational SHORT-TERM FTLS b/rate SEISMICITY signatures are present. This is the fifth b-channel case and the first megathrust.
 
