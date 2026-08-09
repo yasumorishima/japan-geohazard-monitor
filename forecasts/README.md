@@ -26,5 +26,11 @@ quakes remain unpredictable -- that is the irreducible limit at a one-month hori
 
 Method: per-cell magnitude-weighted ETAS intensities (multiple spatial and temporal
 scales) plus background climatology, ENET + gradient-boosting ensemble,
-isotonic-calibrated. Each monthly forecast is committed before its window opens so it
-can be scored prospectively (no hindsight).
+isotonic-calibrated. Each monthly run takes a catalogue cut date, records its own
+34-day window and generation date inside the JSON, and is committed shortly after:
+measured against this repository, the commit has landed two to three days AFTER the
+window start (2026-06 window opened 06-29 and was committed 07-01; 2026-07 opened
+07-29 and was committed 08-01). The first days of each window are therefore NOT
+strictly prospective, and scoring that treats a whole window as out-of-sample is
+optimistic by that margin. The forecast_window and generated fields are in every file
+so this can be checked rather than taken on trust.
