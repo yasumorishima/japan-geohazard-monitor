@@ -5,6 +5,10 @@
 > ⚠️ **免責事項: 本文書は研究記録であり、予報ではありません**
 >
 > 地震の予知・予測・予報・警報その他の運用情報ではなく、いかなる警報も発信しません。記載の数値は公開データを用いた探索段階の事後的な研究指標であり、実運用に向けた検証は行っていません。安全確保・避難・事業判断その他の防災上の判断には使用しないでください。日本の公式情報は気象庁（https://www.jma.go.jp/）および各自治体の発表をご確認ください。現状のまま無保証で提供され、利用により生じたいかなる損害についても作者は責任を負いません。
+>
+> 🔴 **Correction 2026-08-11.** Three statements below went further than the measurements supported and are retracted. The original wording is left in place so the record shows what was claimed. **(1)** "genuine (probabilistically-skillful) ceiling is AUC ~0.895" -- what was measured is that 0.895 was the best value reached by the feature families tried here at 1 degree. A best-so-far is not a ceiling. **(2)** The heading of section 3, "Modeling is exhausted (deep would not help)" -- later falsified on its own terms. The spatial kernels in this pipeline were being evaluated at a single point per cell, while the triggering widths the zone fits imply are 6.4 to 14.1 km against a 222 km cell; replacing that with exact integration over the cell accounted for 92 to 99 percent of a deficit this document had read as physics, on both evaluation windows. A basis that contained no width below 55.5 km, and an operator that saw 0.4 to 7 percent of a narrow kernel's mass, is not an exhausted model. **(3)** "The ceiling is an INFORMATION limit, not a modeling limit" -- this turns a handful of tested feature families into a claim about information, which those tests do not license.
+> **What is not retracted:** the individual measurements. Position alone reaching 0.861, the active-cell AUC of 0.760, the aftershock-primed +0.040 from temporal features, the flat driver-density sweep on the 1.4-million-event JMA catalogue, and the negative BSS at 0.5 degrees all stand as reported, as do the null results for the deep and aftershock-physics feature sets. What changes is the conclusion drawn from them, not the numbers.
+> **Stated symmetrically, so this correction is not read as a claim of the opposite:** the narrow-scale columns that exposed the missing widths gained +0.0206 and +0.0117 against a column-count-matched control on the two windows used for selection, and only +0.0026 on a window that had been held back and was spent once, with its two halves disagreeing in sign. That candidate is therefore not confirmed either. The honest position is that the question is open in both directions, and the target of genuine skill at 0.90 is treated as open rather than closed. Details of every round are in the project's research log.
 
 A push to raise the operational M5+ forecast AUC toward 0.9, decomposed honestly. Conclusion: the
 genuine (probabilistically-skillful) ceiling is AUC ~0.895; AUC 0.9 is reachable only as an
@@ -25,7 +29,7 @@ cells). Trench-core 48 cells: 0.684. Aftershock-primed (recent M>=5.5 within 200
 where temporal adds the most (+0.040 over climatology). Short windows lift the primed AUC: HOR 7d
 0.774, 3d 0.809, 1d 0.810 -- the aftershock regime is where temporal physics is genuinely predictable.
 
-## 3. Modeling is exhausted (deep would not help)
+## 3. Modeling is exhausted (deep would not help) -- RETRACTED, see the correction at the top
 Adding the structures an isotropic ETAS cannot represent -- anisotropy, foreshock-migration-toward-cell
 (the migration-arc signature), burstiness, neighbour rate -- moves active-region AUC by +0.0001.
 Aftershock-physics features (triggering-mainshock distance/time/magnitude, rupture-length scaling,
