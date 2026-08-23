@@ -151,7 +151,7 @@ def predict(co, T, Tm):
     x = np.array([(Tm - T) / 365.25])
     ph = 2.0 * np.pi * np.array([Tm]) / 365.25
     B = basis(x, ph)
-    return float(B.dot(co[0])), float(B.dot(co[1]))
+    return float(B[0].dot(co[0])), float(B[0].dot(co[1]))
 
 
 def datum_series(dd, de, dn, S, E, N):
