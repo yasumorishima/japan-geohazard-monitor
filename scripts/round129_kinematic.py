@@ -25,7 +25,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 TENV = "https://geodesy.unr.edu/gps_timeseries/IGS20/tenv3/IGS20/%s.tenv3"
 KENV = "https://geodesy.unr.edu/gps_timeseries/IGS20/kenv/%s/%s.%d.kenv.zip"
-YEARS = list(range(2001, 2026))
+YEARS = list(range(1998, 2026))
 SPAN0 = DT.date(2001, 1, 1)
 SPAN1 = DT.date(2026, 1, 1)
 SPAN = (SPAN1 - SPAN0).days
@@ -36,7 +36,7 @@ EPOCH = 300.0
 J2000 = DT.datetime(2000, 1, 1, 12, 0, 0)
 SIG_EN, SIG_U = 20.0, 60.0
 REF_A, REF_B, REF_MIN = 1095, 90, 400
-CAP = 32760
+CAP = 2 ** 31 - 100
 
 CHUNK = int(os.environ.get("CHUNK", "0"))
 CHUNKS = int(os.environ.get("CHUNKS", "12"))
@@ -181,7 +181,7 @@ def summarise(sta, steps, offs):
     S, E, N = kin
     gd, ge, gn = datum_series(dd, de, dn, S, E, N)
     ns = len(steps)
-    A = np.zeros((5, ns, 3), np.int16)
+    A = np.zeros((5, ns, 3), np.int32)
     M = np.zeros((5, ns, 3), bool)
     capped = 0
     total_sec = SPAN * 86400.0
@@ -253,7 +253,7 @@ def main():
         names.append(s); AA.append(A); MM.append(M)
         print("  %s epochs %d defined %.1f%% capped %d [%.0fs]"
               % (s, nep, 100.0 * M.mean(), capped, time.time() - t0), flush=True)
-    np.savez_compressed(OUT, station=np.array(names), value=np.array(AA, np.int16),
+    np.savez_compressed(OUT, station=np.array(names), value=np.array(AA, np.int32),
                         mask=np.array(MM), offsets=np.array(offs), steps=steps)
     print("wrote %s with %d stations [%.0fs]" % (OUT, len(names), time.time() - t0), flush=True)
 
