@@ -1,0 +1,71 @@
+name: Publish a local directory to Hugging Face
+
+# Batch sibling of hf-upload-local.yml. RPi5 is compute-only: derived artifacts
+# belong on HF so disk_watchdog.sh can reclaim the local copy (tier C2) without
+# losing anything. Runs ON the RPi5 (self-hosted) to read local paths directly,
+# while HF_TOKEN stays in GitHub Secrets and is never written to that box.
+#
+# Only derived artifacts may be published. The script refuses raw/archive
+# extensions AND any path mentioning hinet / snet / obp / win32, because the
+# destination dataset is public and NIED redistribution is prohibited.
+
+on:
+  workflow_dispatch:
+    inputs:
+      src:
+        description: Absolute directory on the runner host
+        required: true
+        default: /home/yasu/geo-ml/jma
+      repo:
+        description: HF dataset repo id (owner/name)
+        required: true
+        default: yasumorishima/japan-geohazard
+      prefix:
+        description: Destination prefix inside the dataset repo
+        required: true
+        default: derived/jma
+      include:
+        description: Optional fnmatch on the file name (e.g. *.npz)
+        required: false
+        default: ""
+      max_file_mb:
+        description: Refuse any single file larger than this
+        required: false
+        default: "2048"
+      memo:
+        description: Why this publish is being run
+        required: true
+      dry_run:
+        description: Set to true to list what would be uploaded
+        required: false
+        default: "true"
+
+jobs:
+  publish:
+    runs-on: [self-hosted, rpi5]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show intent
+        run: |
+          echo "memo   : ${{ inputs.memo }}"
+          echo "src    : ${{ inputs.src }}"
+          echo "dest   : ${{ inputs.repo }}:${{ inputs.prefix }}"
+          echo "include: ${{ inputs.include }}"
+          echo "dry    : ${{ inputs.dry_run }}"
+
+      - name: Publish and verify
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          DRY=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then DRY="--dry-run"; fi
+          INC=""
+          if [ -n "${{ inputs.include }}" ]; then INC="--include=${{ inputs.include }}"; fi
+          /home/yasu/geo-ml/venv/bin/python scripts/hf_upload_dir.py \
+            --src "${{ inputs.src }}" \
+            --repo "${{ inputs.repo }}" \
+            --prefix "${{ inputs.prefix }}" \
+            --max-file-mb "${{ inputs.max_file_mb }}" \
+            --message "${{ inputs.memo }}" \
+            $INC $DRY
