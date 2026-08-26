@@ -132,13 +132,43 @@ class HinetQuotaError(Exception):
         self.partial_results = partial_results or []
 
 
+def _classify_login_error(exc: Exception) -> str:
+    """Is this login failure about the credentials, or about the connection?
+
+    The portal can accept the TCP connection and then never answer, in which case the
+    credentials are never evaluated at all.  Reporting that as an authentication failure sends
+    the reader to check something that is not broken.  Anything not recognised stays "auth",
+    so an unfamiliar error is still reported the way it always was.
+    """
+    text = str(exc).lower()
+    for word in ("auth", "login", "password", "credential", "401", "403"):
+        if word in text:
+            return "auth"
+    try:
+        import requests.exceptions as _rex
+        if isinstance(exc, (_rex.Timeout, _rex.ConnectionError)):
+            return "unreachable"
+    except ImportError:
+        pass
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return "unreachable"
+    for word in ("timed out", "timeout", "connection refused", "connection reset",
+                 "connection aborted", "name or service not known", "temporary failure",
+                 "network is unreachable", "no route to host"):
+        if word in text:
+            return "unreachable"
+    return "auth"
+
+
 class HinetAuthError(Exception):
     """Raised when HinetPy reports an authentication failure mid-run."""
 
-    def __init__(self, message: str, partial_results: list[dict] | None = None):
+    def __init__(self, message: str, partial_results: list[dict] | None = None,
+                 kind: str = "auth"):
         """Capture the exception message and any records fetched before auth failed."""
         super().__init__(message)
         self.partial_results = partial_results or []
+        self.kind = kind
 
 
 # ---------------------------------------------------------------------------
@@ -879,8 +909,12 @@ def _fetch_and_save(
         client = Client(user, password)
         logger.info("Authenticated to NIED Hi-net")
     except Exception as exc:
-        logger.error("Authentication failed: %s", exc)
-        raise HinetAuthError(str(exc)) from exc
+        kind = _classify_login_error(exc)
+        if kind == "unreachable":
+            logger.error("NIED did not answer the login request: %s", exc)
+        else:
+            logger.error("Authentication failed: %s", exc)
+        raise HinetAuthError(str(exc), kind=kind) from exc
 
     selected, station_coords = select_active_stations(client, MAX_ACTIVE_STATIONS)
     logger.info("Active F-net stations: %d", len(selected))
@@ -1104,6 +1138,16 @@ async def main() -> None:
             None, _fetch_and_save, user, password, dates_to_fetch,
         )
     except HinetAuthError as exc:
+        if getattr(exc, "kind", "auth") == "unreachable":
+            logger.error("NIED portal unreachable: %s", exc)
+            send_discord(
+                "⚠️ F-net Waveform — NIED Portal Unreachable",
+                "The NIED portal accepted the connection and then did not answer "
+                "the login request. The credentials were never evaluated, so there "
+                "is nothing to check on our side; the next run will try again.",
+                color=15844367,
+            )
+            return
         logger.error("Authentication failed: %s", exc)
         send_discord(
             "⚠️ F-net Waveform — Auth Failed",
