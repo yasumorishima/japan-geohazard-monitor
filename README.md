@@ -199,6 +199,28 @@ Phase 1 indicators (b-value, Kp, low-res TEC) were all negative after bias corre
 
 The research narrative -- every pre-registered round, its floors, its verdict and the corrections that followed -- lives in [RESEARCH-LOG.md](RESEARCH-LOG.md), newest last, with an index at the top.  It was kept inline here until 2026-08-23 and was moved unchanged.
 
+**Where the research stands (2026-09-04).** Since 2026-09-02 the question being worked on is
+the *isolated mainshock* -- a shock that is not an aftershock of anything larger -- because a
+measurement that month showed the pooled figure is carried by aftershock sequences: on the
+scored rows the arm beats its own climatology by +0.018 on aftershock-driven positives and by
++0.010 on quiet ones, where the latter does not pass its own interval. Work since then has run
+in a causally-selected global arena (2,280 one-degree cells that were already active in the
+first fifteen years, scored from year twenty, 9,993,240 rows over 36 windows), and it is judged
+against permutation floors under contracts frozen before each run.
+
+Two verdicts stand there. Aiming a second factor at *large* mainshocks rather than at mainshocks
+is worth +0.0027 per window at magnitude 6.0 against a floor whose five worlds average +0.0002
+(round 201). Replacing that fitted factor with a per-cell rate counted directly from past events
+-- no model at all, no feature columns read -- is worth +0.0086 against a floor at -0.0001, and
+beats the fitted version by +0.0059 per window (round 202). Both were verified by a checker
+frozen before the run.
+
+Read those with their limits, which the contracts state and the log repeats: the base is a
+climatology and not the shipped forecast; five permutation worlds give a rank of one in six, not
+a p-value; a within-cell shuffle of the same labels produces a *stronger* arm than the truth, so
+what is demonstrated is a geographic map rather than event-by-event discrimination; and
+magnitudes are not compared across catalogues, so none of it is a statement about Japan.
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
