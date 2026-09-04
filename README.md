@@ -199,7 +199,7 @@ Phase 1 indicators (b-value, Kp, low-res TEC) were all negative after bias corre
 
 The research narrative -- every pre-registered round, its floors, its verdict and the corrections that followed -- lives in [RESEARCH-LOG.md](RESEARCH-LOG.md), newest last, with an index at the top.  It was kept inline here until 2026-08-23 and was moved unchanged.
 
-**Where the research stands (2026-09-04).** Since 2026-09-02 the question being worked on is
+**Where the research stands (2026-09-05).** Since 2026-09-02 the question being worked on is
 the *isolated mainshock* -- a shock that is not an aftershock of anything larger -- because a
 measurement that month showed the pooled figure is carried by aftershock sequences. On the
 scored rows the arm beats its own climatology by +0.018 per window on aftershock-driven
@@ -219,26 +219,31 @@ events -- no model at all, no feature columns read -- is worth +0.0086 against a
 comparison of two arms whose selection rules both saw sizing, not a statement about fitting in
 general. Both rounds were reproduced by a checker frozen before the run.
 
-A third result since then did not come out as cleanly, and the failure is worth more
-than the number. Shrinking each cell toward its smoothed neighbourhood rate rather
-than toward the global rate is worth +0.0031 per window over the counted map, against
-a floor that permutes the cell coordinates the smoothing kernel is built from so that
-every cell borrows from geographically meaningless neighbours; all five of those floor
-worlds came out below zero. The run therefore passes the rule. Its frozen independent
-checker did not: the contract's definition of the kernel gave the distance only as a
-great-circle distance in degrees, and the one formula it names anywhere -- the
-spherical law of cosines, in a gate describing the run -- was not carried into that
-definition. Because the arena's cells sit on a regular one-degree lattice, at five of
-the six smoothing widths hundreds of pairs fall on opposite sides of the kernel's hard
-cutoff depending on which of two mathematically identical formulas is used. A diagnostic written after the failure shows the verdict survives
-either formula, but that diagnostic is not frozen and was written knowing the answer,
-so that third result stands without a clean independent check and is reported that way
-rather than as a verdict of the same standing as the two above. Resolving the formula
-question in the run's favour does not rescue it either: given the run's own formula the
-rebuild agrees to two parts in a hundred million, which still exceeds the checker's own
-frozen tolerance. The shape judged there was also chosen after a different smoothing
-shape had failed in sizing, and its width grid was written after seeing that failure
-(updates 124 and 126).
+A third result took two rounds to land, and the failure in between is worth more than the
+number. Shrinking each cell toward its smoothed neighbourhood rate rather than toward the
+global rate is worth +0.0029 per window over the counted map, against a floor that permutes
+the cell coordinates the smoothing kernel is built from so that every cell borrows from
+geographically meaningless neighbours; all five of those floor worlds came out below zero,
+averaging -0.0027. The first attempt (round 204, +0.0031) passed that rule on the run and
+then failed its own frozen checker on five of twenty-four checks, for two reasons, neither
+of them in the arithmetic. The kernel was not uniquely determined: the contract's definition
+of it gave the separation only as a great-circle distance in degrees, the one formula named
+anywhere in that contract sat in a gate describing the run, and the checker reached for the
+other standard one; because the arena's cells sit on a regular one-degree lattice, at five of
+the six widths between six hundred and seventeen hundred cell pairs per width sit within a
+billionth of a degree of the kernel's hard cutoff, and three to seven hundred of them fell on
+opposite sides of it. And the checker's tolerance had been inherited from earlier rounds
+rather than measured, so the check would have failed even with the formula settled. Round 206
+retook it with two changes -- the formula is named, and the cutoff is removed, since the
+weight four widths out is three ten-thousandths of the peak and mostly cancels between the
+numerator and the denominator of a ratio -- with the prediction frozen in its own file before
+the contract, the run or the checker existed, and with the tolerance measured on the
+arithmetic it governs. The verdict reproduced, the size moved by 0.00016, and the checker
+passed all twenty-seven checks. It is the same rows and the same floor worlds, so the two
+rounds' ranks are one piece of evidence seen twice rather than two. The shape judged there
+was still chosen after a different smoothing shape had failed in sizing, its width grid was
+written after seeing that failure, and the size itself was measured in sizing before either
+contract, so neither round is an independent estimate of it (updates 124, 126 and 127).
 
 Read those with their limits, which the contracts state and the log repeats. None of the three is an
 independent estimate of its own effect size: every effect was measured in fitting-free
@@ -247,7 +252,7 @@ record, not a second measurement. The base is a climatology, not the shipped for
 the counted flag -- the base is identical in every world and is never tested. Five permutation
 worlds give a rank of one in six, not a p-value. The twenty floor worlds of round 202 are round
 201's own, bit for bit, so the two floor passes are not independent evidence about each other. In
-round 202 the causal selection sat at the top of both frozen grids at this threshold, so the
+round 202 the causal selection sat at the top of both frozen grids at this threshold, and in round 206 the shrinkage parameter sat at the top of its grid in all thirty-three windows that had a history, so the
 optimum may lie outside them; no grid was widened after seeing results. No new observable is
 introduced -- the same catalogue is re-read. A within-cell shuffle of the same labels produces a
 *stronger* arm than the truth, but a fitting-free follow-up (round 203) showed why:
