@@ -229,8 +229,12 @@ worlds give a rank of one in six, not a p-value. The twenty floor worlds of roun
 round 202 the causal selection sat at the top of both frozen grids at this threshold, so the
 optimum may lie outside them; no grid was widened after seeing results. No new observable is
 introduced -- the same catalogue is re-read. A within-cell shuffle of the same labels produces a
-*stronger* arm than the truth, so the effect is not separated from a per-cell map and
-event-by-event discrimination is not demonstrated. The cost on all positives was outside these
+*stronger* arm than the truth, but a fitting-free follow-up (round 203) showed why:
+conserving each cell's whole-record count lets the shuffle move the scored window's own
+shock into the training past, so that comparison is a partial oracle and carries no
+evidence in either direction. What stands is narrower -- round 202's arm is a per-cell
+map by construction, since it reads no columns at all, and event-by-event discrimination
+has not been demonstrated. The cost on all positives was outside these
 two rounds; where it was scored in this arena (round 198) the mainshock readout cost -0.019 per
 window. And magnitudes are not compared across catalogues, so none of this is a statement about
 Japan.
