@@ -219,6 +219,21 @@ events -- no model at all, no feature columns read -- is worth +0.0086 against a
 comparison of two arms whose selection rules both saw sizing, not a statement about fitting in
 general. Both rounds were reproduced by a checker frozen before the run.
 
+A third result since then did not come out as cleanly, and the failure is worth more
+than the number. Shrinking each cell toward its smoothed neighbourhood rate rather
+than toward the global rate is worth +0.0031 per window over the counted map, against
+a floor that permutes the cell coordinates the smoothing kernel is built from so that
+every cell borrows from geographically meaningless neighbours; all five of those floor
+worlds came out below zero. The run therefore passes the rule. Its frozen independent
+checker did not: the contract specified the distance between cells only as a
+great-circle distance and never named a formula, and because the arena's cells sit on
+a regular one-degree lattice, hundreds of pairs per smoothing width fall on opposite
+sides of the kernel's hard cutoff depending on which of two mathematically identical
+formulas is used. A diagnostic written after the failure shows the verdict survives
+either formula, but that diagnostic is not frozen and was written knowing the answer,
+so that third result stands without a clean independent check and is reported that way
+rather than as a verdict of the same standing as the two above (update 124).
+
 Read those with their limits, which the contracts state and the log repeats. Neither round is an
 independent estimate of its effect size: both effects were measured in fitting-free sizing before
 the contracts were written, so what the rounds add is the floor and the frozen record, not a
