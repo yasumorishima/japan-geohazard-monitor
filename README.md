@@ -225,19 +225,25 @@ than toward the global rate is worth +0.0031 per window over the counted map, ag
 a floor that permutes the cell coordinates the smoothing kernel is built from so that
 every cell borrows from geographically meaningless neighbours; all five of those floor
 worlds came out below zero. The run therefore passes the rule. Its frozen independent
-checker did not: the contract specified the distance between cells only as a
-great-circle distance and never named a formula, and because the arena's cells sit on
-a regular one-degree lattice, hundreds of pairs per smoothing width fall on opposite
-sides of the kernel's hard cutoff depending on which of two mathematically identical
-formulas is used. A diagnostic written after the failure shows the verdict survives
+checker did not: the contract's definition of the kernel gave the distance only as a
+great-circle distance in degrees, and the one formula it names anywhere -- the
+spherical law of cosines, in a gate describing the run -- was not carried into that
+definition. Because the arena's cells sit on a regular one-degree lattice, at five of
+the six smoothing widths hundreds of pairs fall on opposite sides of the kernel's hard
+cutoff depending on which of two mathematically identical formulas is used. A diagnostic written after the failure shows the verdict survives
 either formula, but that diagnostic is not frozen and was written knowing the answer,
 so that third result stands without a clean independent check and is reported that way
-rather than as a verdict of the same standing as the two above (update 124).
+rather than as a verdict of the same standing as the two above. Resolving the formula
+question in the run's favour does not rescue it either: given the run's own formula the
+rebuild agrees to two parts in a hundred million, which still exceeds the checker's own
+frozen tolerance. The shape judged there was also chosen after a different smoothing
+shape had failed in sizing, and its width grid was written after seeing that failure
+(updates 124 and 126).
 
-Read those with their limits, which the contracts state and the log repeats. Neither round is an
-independent estimate of its effect size: both effects were measured in fitting-free sizing before
-the contracts were written, so what the rounds add is the floor and the frozen record, not a
-second measurement. The base is a climatology, not the shipped forecast, and the floors move only
+Read those with their limits, which the contracts state and the log repeats. None of the three is an
+independent estimate of its own effect size: every effect was measured in fitting-free
+sizing before its contract was written, so what a round adds is the floor and the frozen
+record, not a second measurement. The base is a climatology, not the shipped forecast, and the floors move only
 the counted flag -- the base is identical in every world and is never tested. Five permutation
 worlds give a rank of one in six, not a p-value. The twenty floor worlds of round 202 are round
 201's own, bit for bit, so the two floor passes are not independent evidence about each other. In
