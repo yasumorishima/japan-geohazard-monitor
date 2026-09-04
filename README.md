@@ -201,25 +201,39 @@ The research narrative -- every pre-registered round, its floors, its verdict an
 
 **Where the research stands (2026-09-04).** Since 2026-09-02 the question being worked on is
 the *isolated mainshock* -- a shock that is not an aftershock of anything larger -- because a
-measurement that month showed the pooled figure is carried by aftershock sequences: on the
-scored rows the arm beats its own climatology by +0.018 on aftershock-driven positives and by
-+0.010 on quiet ones, where the latter does not pass its own interval. Work since then has run
-in a causally-selected global arena (2,280 one-degree cells that were already active in the
-first fifteen years, scored from year twenty, 9,993,240 rows over 36 windows), and it is judged
-against permutation floors under contracts frozen before each run.
+measurement that month showed the pooled figure is carried by aftershock sequences. On the
+scored rows the arm beats its own climatology by +0.018 per window on aftershock-driven
+positives (39% of the positives) but by only +0.007 on isolated mainshocks (61%), and by +0.010
+on the stricter 11% that had no M>=4 within 50 km in the prior year -- that last figure being
+the one that does not pass its own interval. The most recent work runs in a causally-selected
+global arena (2,280 one-degree cells that were already active in the first fifteen years, scored
+from year twenty, 9,993,240 rows over 36 windows), judged against permutation floors under
+contracts frozen before each run. Detection completeness in the global catalogue is not uniform
+in space or time, and the arena's seed years are its least complete.
 
-Two verdicts stand there. Aiming a second factor at *large* mainshocks rather than at mainshocks
-is worth +0.0027 per window at magnitude 6.0 against a floor whose five worlds average +0.0002
-(round 201). Replacing that fitted factor with a per-cell rate counted directly from past events
--- no model at all, no feature columns read -- is worth +0.0086 against a floor at -0.0001, and
-beats the fitted version by +0.0059 per window (round 202). Both were verified by a checker
-frozen before the run.
+Two of the floored verdicts there. Aiming a second factor at *large* mainshocks rather than at
+mainshocks is worth +0.0027 per window at magnitude 6.0 against a floor whose five worlds average
++0.0002 (round 201). Replacing that fitted factor with a per-cell rate counted directly from past
+events -- no model at all, no feature columns read -- is worth +0.0086 against a floor at -0.0001
+(round 202), and on the same windows exceeds the fitted version by +0.0059: a floor-free
+comparison of two arms whose selection rules both saw sizing, not a statement about fitting in
+general. Both rounds were reproduced by a checker frozen before the run.
 
-Read those with their limits, which the contracts state and the log repeats: the base is a
-climatology and not the shipped forecast; five permutation worlds give a rank of one in six, not
-a p-value; a within-cell shuffle of the same labels produces a *stronger* arm than the truth, so
-what is demonstrated is a geographic map rather than event-by-event discrimination; and
-magnitudes are not compared across catalogues, so none of it is a statement about Japan.
+Read those with their limits, which the contracts state and the log repeats. Neither round is an
+independent estimate of its effect size: both effects were measured in fitting-free sizing before
+the contracts were written, so what the rounds add is the floor and the frozen record, not a
+second measurement. The base is a climatology, not the shipped forecast, and the floors move only
+the counted flag -- the base is identical in every world and is never tested. Five permutation
+worlds give a rank of one in six, not a p-value. The twenty floor worlds of round 202 are round
+201's own, bit for bit, so the two floor passes are not independent evidence about each other. In
+round 202 the causal selection sat at the top of both frozen grids at this threshold, so the
+optimum may lie outside them; no grid was widened after seeing results. No new observable is
+introduced -- the same catalogue is re-read. A within-cell shuffle of the same labels produces a
+*stronger* arm than the truth, so the effect is not separated from a per-cell map and
+event-by-event discrimination is not demonstrated. The cost on all positives was outside these
+two rounds; where it was scored in this arena (round 198) the mainshock readout cost -0.019 per
+window. And magnitudes are not compared across catalogues, so none of this is a statement about
+Japan.
 
 
 
