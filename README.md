@@ -268,7 +268,21 @@ worth 0.00045 in sixty-one per cent of windows and clears all four conditions --
 floorless, and therefore not a result -- and the gain lives in the twenty windows where the
 earlier rule had settled on a wide kernel while it is absent or negative in the thirteen
 where that rule had chosen a narrow one, the selection doing its damage in the early windows
-where there was nothing to gain (update 129).
+where there was nothing to gain (update 129). That fixed strength was then promoted to a
+judgement of its own, with the choice of it disclosed in the contract as having been made
+after seeing it win, so that the headline number became a reproduction gate rather than
+news: it gives back the stored earlier value in all thirty-three scored windows at exactly
+zero difference. What was new was a second floor. The first, the same unrestricted shuffle
+of widths, the arm again beat in all nine worlds -- though those nine are the previous
+round's own permutations, so that rank and the previous one are a single piece of evidence
+seen twice rather than two. The second holds fixed the one confound the previous contract
+had named and could not resolve, shuffling the widths only within exact levels of how many
+cells of the arena lie within two degrees of a cell; it reproduces that association to about
+one part in ten thousand at the worst window while still moving more than ninety-nine per
+cent of cells. Against that floor the arm came second of ten, so the verdict is null. The
+contract had given every reachable outcome a reading in advance, and this one falls in the
+branch labelled undecided: attributing the gain to the edge property required the arm to
+fail against that floor's average as well, and it did not (update 130).
 
 Read those with their limits, which the contracts state and the log repeats. None of the three
 that landed is an independent estimate of its own effect size: every effect was measured in fitting-free
@@ -296,7 +310,10 @@ window. The floor of the fourth attempt destroys every per-cell property at once
 elongation specifically is what the width tracks: the elongation measure is essentially
 uncorrelated with how many past events a cell has seen, but it is correlated at about minus a
 quarter with how many neighbouring cells lie within two degrees, so a cell at the edge of the
-studied region scores as more elongated, and no floor separating the two has been run.
+studied region scores as more elongated. A floor separating the two has since been run and
+did not settle it: holding that neighbour count fixed, one of nine worlds beat the arm,
+which the frozen contract had ruled in advance to be too weak either to attribute the gain
+to the edge property or to clear it (update 130).
 And magnitudes are not compared across catalogues, so none of this is a statement about
 Japan.
 
