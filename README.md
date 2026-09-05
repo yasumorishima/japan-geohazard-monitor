@@ -282,7 +282,20 @@ one part in ten thousand at the worst window while still moving more than ninety
 cent of cells. Against that floor the arm came second of ten, so the verdict is null. The
 contract had given every reachable outcome a reading in advance, and this one falls in the
 branch labelled undecided: attributing the gain to the edge property required the arm to
-fail against that floor's average as well, and it did not (update 130).
+fail against that floor's average as well, and it did not (update 130). The next step was
+then taken as a measurement rather than as a third floor, by building the rival as an arm.
+Splitting the elongation into the part a cell's neighbour count explains and the part it
+cannot, both halves are positive and neither can be told from the other, and summed they
+overshoot the whole while tracking it across windows, so they overlap rather than add. An
+arm that drops the elongation from its construction entirely -- a width that is an affine
+decreasing function of the neighbour count, with two scalars matched to the elongation
+field's mean and spread and no per-cell seismic quantity anywhere -- is worth 0.00047 per
+window against the elongation arm's 0.00045, and the difference between them fails two of
+the four conditions. So what three rounds pursued as narrowing the kernel where past events
+lie along a line is matched, within what a sizing can resolve, by narrowing it where the
+arena has fewer cells nearby: a statement about the smoother's behaviour at the edge of the
+studied region, not about the earth. That is a sizing, with no contract and no floor, and
+its rival arms were designed after seeing the round they rival (update 131).
 
 Read those with their limits, which the contracts state and the log repeats. None of the three
 that landed is an independent estimate of its own effect size: every effect was measured in fitting-free
@@ -313,7 +326,11 @@ quarter with how many neighbouring cells lie within two degrees, so a cell at th
 studied region scores as more elongated. A floor separating the two has since been run and
 did not settle it: holding that neighbour count fixed, one of nine worlds beat the arm,
 which the frozen contract had ruled in advance to be too weak either to attribute the gain
-to the edge property or to clear it (update 130).
+to the edge property or to clear it (update 130). Building the rival as an arm instead did
+settle which of the two is needed, though only at the strength of a sizing: a width that
+never measures elongation at all, set from the neighbour count alone, matches the
+elongation arm within what that sizing can resolve, so the elongation is not required to
+obtain the gain (update 131).
 And magnitudes are not compared across catalogues, so none of this is a statement about
 Japan.
 
