@@ -245,15 +245,45 @@ was still chosen after a different smoothing shape had failed in sizing, its wid
 written after seeing that failure, and the size itself was measured in sizing before either
 contract, so neither round is an independent estimate of it (updates 124, 126 and 127).
 
-Read those with their limits, which the contracts state and the log repeats. None of the three is an
-independent estimate of its own effect size: every effect was measured in fitting-free
+A fourth attempt did not land, and its contract said in advance how to read that.
+Earthquakes lie along plate boundaries, so the neighbourhood a cell borrows from ought to be
+a line rather than a disc. An ellipse built from the arena's own past counts and stretched
+along the local axis of the cloud around each cell loses at every aspect ratio, and the
+control declared before the run -- the same ellipse turned across that axis -- gains. That
+looked like a statement about direction and it is not: for a cell sitting on a belt the
+across-belt direction is empty, so the turned ellipse is, for the cells that carry the
+counts, simply a narrower circular kernel. An isotropic kernel with no direction in it at
+all, whose width is set separately for each cell by the same elongation factor, recovers
+almost all of it; the two differ by 0.00008 in forty-seven per cent of windows, inside its
+own error bar (update 128). The width, not the direction, was then written into a contract and
+judged. It failed: 0.00030 per window, positive in half of them, where the frozen rule
+required three fifths and a margin clear of its own error bar. The floor there -- nine
+worlds that keep the exact collection of widths and destroy only which cell gets which --
+ranked the real assignment first, and none of the nine refused the intervention, but a floor
+cannot turn a failure into a pass and the contract said so before the run. The contract also
+said, before the run, that if the primary failed the reading was to be that the rule cannot
+choose the strength, not that the width does nothing, and it named the numbers that would
+have to decide that. Held at a fixed strength rather than chosen, the same intervention is
+worth 0.00045 in sixty-one per cent of windows and clears all four conditions -- reported,
+floorless, and therefore not a result -- and the gain lives in the twenty windows where the
+earlier rule had settled on a wide kernel while it is absent or negative in the thirteen
+where that rule had chosen a narrow one, the selection doing its damage in the early windows
+where there was nothing to gain (update 129).
+
+Read those with their limits, which the contracts state and the log repeats. None of the three
+that landed is an independent estimate of its own effect size: every effect was measured in fitting-free
 sizing before its contract was written, so what a round adds is the floor and the frozen
 record, not a second measurement. The base is a climatology, not the shipped forecast, and the floors move only
 the counted flag -- the base is identical in every world and is never tested. Five permutation
 worlds give a rank of one in six, not a p-value. The twenty floor worlds of round 202 are round
 201's own, bit for bit, so the two floor passes are not independent evidence about each other. In
-round 202 the causal selection sat at the top of both frozen grids at this threshold, and in round 206 the shrinkage parameter sat at the top of its grid in all thirty-three windows that had a history, so the
-optimum may lie outside them; no grid was widened after seeing results. No new observable is
+round 202 the causal selection sat at the top of both frozen grids at this threshold, so its
+optimum may lie outside them; no grid was widened after seeing results. Round 206's shrinkage
+parameter also sat at the top of its grid in all thirty-three windows that had a history, and a
+later fitting-free round measured what that meant: taking the parameter to its limit, which
+removes the cell's extra weight on its own count above its share of the kernel, is clearly
+worse, so the optimum lies between the top of the grid and that limit rather than beyond it and
+the grid is merely coarse there (update 128). No new observable is
 introduced -- the same catalogue is re-read. A within-cell shuffle of the same labels produces a
 *stronger* arm than the truth, but a fitting-free follow-up (round 203) showed why:
 conserving each cell's whole-record count lets the shuffle move the scored window's own
@@ -262,7 +292,12 @@ evidence in either direction. What stands is narrower -- round 202's arm is a pe
 map by construction, since it reads no columns at all, and event-by-event discrimination
 has not been demonstrated. The cost on all positives was outside these
 two rounds; where it was scored in this arena (round 198) the mainshock readout cost -0.019 per
-window. And magnitudes are not compared across catalogues, so none of this is a statement about
+window. The floor of the fourth attempt destroys every per-cell property at once, so it cannot say that
+elongation specifically is what the width tracks: the elongation measure is essentially
+uncorrelated with how many past events a cell has seen, but it is correlated at about minus a
+quarter with how many neighbouring cells lie within two degrees, so a cell at the edge of the
+studied region scores as more elongated, and no floor separating the two has been run.
+And magnitudes are not compared across catalogues, so none of this is a statement about
 Japan.
 
 
