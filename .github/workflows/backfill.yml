@@ -485,7 +485,7 @@ jobs:
               # extract_overlay reads data/geohazard.db next, so an in-place
               # finalise is sufficient -- the full copy was only a staging step
               # for the owned-table extraction.
-              src = sqlite3.connect('data/geohazard.db')
+              src = sqlite3.connect('data/geohazard.db', timeout=300)
               src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
               # journal_mode=DELETE rewrites the header WAL flag so a later open
               # cannot checkpoint stray frames past header.page_count (root cause
@@ -895,7 +895,7 @@ jobs:
               # extract_overlay reads data/geohazard.db next, so an in-place
               # finalise is sufficient -- the full copy was only a staging step
               # for the owned-table extraction.
-              src = sqlite3.connect('data/geohazard.db')
+              src = sqlite3.connect('data/geohazard.db', timeout=300)
               src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
               # journal_mode=DELETE rewrites the header WAL flag so a later open
               # cannot checkpoint stray frames past header.page_count (root cause
@@ -1315,7 +1315,7 @@ jobs:
               # extract_overlay reads data/geohazard.db next, so an in-place
               # finalise is sufficient -- the full copy was only a staging step
               # for the owned-table extraction.
-              src = sqlite3.connect('data/geohazard.db')
+              src = sqlite3.connect('data/geohazard.db', timeout=300)
               src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
               # journal_mode=DELETE rewrites the header WAL flag so a later open
               # cannot checkpoint stray frames past header.page_count (root cause
@@ -1769,7 +1769,7 @@ jobs:
               # extract_overlay reads data/geohazard.db next, so an in-place
               # finalise is sufficient -- the full copy was only a staging step
               # for the owned-table extraction.
-              src = sqlite3.connect('data/geohazard.db')
+              src = sqlite3.connect('data/geohazard.db', timeout=300)
               src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
               # journal_mode=DELETE rewrites the header WAL flag so a later open
               # cannot checkpoint stray frames past header.page_count (root cause
@@ -2188,7 +2188,7 @@ jobs:
               # extract_overlay reads data/geohazard.db next, so an in-place
               # finalise is sufficient -- the full copy was only a staging step
               # for the owned-table extraction.
-              src = sqlite3.connect('data/geohazard.db')
+              src = sqlite3.connect('data/geohazard.db', timeout=300)
               src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
               # journal_mode=DELETE rewrites the header WAL flag so a later open
               # cannot checkpoint stray frames past header.page_count (root cause
@@ -2930,7 +2930,7 @@ jobs:
               # 2nd ~24GB copy and VACUUM a 3rd ~24GB temp, overflowing root
               # once cloud_fraction filled the DB (run 26696792708 light:
               # 'database or disk is full').
-              src = sqlite3.connect('data/geohazard.db')
+              src = sqlite3.connect('data/geohazard.db', timeout=300)
               src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
               # journal_mode=DELETE rewrites the header WAL flag so a later open
               # cannot checkpoint stray frames past header.page_count (root cause
@@ -3318,7 +3318,7 @@ jobs:
               # extract_overlay reads data/geohazard.db next, so an in-place
               # finalise is sufficient -- the full copy was only a staging step
               # for the owned-table extraction.
-              src = sqlite3.connect('data/geohazard.db')
+              src = sqlite3.connect('data/geohazard.db', timeout=300)
               src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
               # journal_mode=DELETE rewrites the header WAL flag so a later open
               # cannot checkpoint stray frames past header.page_count (root cause
@@ -3514,7 +3514,7 @@ jobs:
           python3 -c "
           import sqlite3, sys
           try:
-              conn = sqlite3.connect('data/geohazard.db')
+              conn = sqlite3.connect('data/geohazard.db', timeout=300)
               conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
               conn.close()
               print('WAL checkpoint flushed (integrity already verified by merge_checkpoints.py:_verify)')
@@ -3558,7 +3558,7 @@ jobs:
         run: |
           python3 -c "
           import sqlite3, os
-          db = sqlite3.connect(os.environ['GEOHAZARD_DB_PATH'])
+          db = sqlite3.connect(os.environ['GEOHAZARD_DB_PATH'], timeout=300)
           time_col = {
               'earthquakes': 'occurred_at', 'tec': 'epoch', 'geomag_kp': 'time_tag',
               'focal_mechanisms': 'occurred_at', 'gnss_tec': 'epoch',
@@ -3794,7 +3794,7 @@ jobs:
           import sqlite3, json, os, urllib.request
           from datetime import date
 
-          db = sqlite3.connect('data/geohazard.db')
+          db = sqlite3.connect('data/geohazard.db', timeout=300)
           total_days = (date.today() - date(2011, 1, 1)).days
 
           table_info = {
@@ -4079,7 +4079,7 @@ jobs:
             COVERAGE=$(python3 -c "
           import sqlite3
           from datetime import date
-          db = sqlite3.connect('data/geohazard.db')
+          db = sqlite3.connect('data/geohazard.db', timeout=300)
           total = (date.today() - date(2011, 1, 1)).days
           tables = {
               'earthquakes': 'SELECT COUNT(DISTINCT substr(occurred_at,1,10)) FROM earthquakes WHERE substr(occurred_at,1,10) >= \"2011-01-01\"',
