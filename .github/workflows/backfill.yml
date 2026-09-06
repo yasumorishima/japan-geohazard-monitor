@@ -11,9 +11,9 @@ name: Backfill Data
 # fetcher's runaway from taking out the whole batch.
 #
 # Topology:
-#   fetch-modis  (timeout 150m): MODIS LST           -> modis.db artifact
+#   fetch-modis  (timeout 240m): MODIS LST           -> modis.db artifact
 #   fetch-so2    (timeout 120m): OMI SO2 column      -> so2.db artifact
-#   fetch-cloud  (timeout 120m): MODIS cloud_frac    -> cloud.db artifact
+#   fetch-cloud  (timeout 150m): MODIS cloud_frac    -> cloud.db artifact
 #   fetch-snet   (timeout 240m): win32tools install
 #                                 + S-net waveform
 #                                 + S-net pressure   -> snet.db artifact
@@ -147,8 +147,8 @@ jobs:
     # Snapshot DB at exactly 155min. Every scheduled run since at least
     # 2026-08-05 died the same way, so modis_lst has been frozen at 316
     # rows / 2026-06-18 while the fetch itself completes fine (413 records
-    # on that run that never got persisted). light already sits at 200 and
-    # took 178min on the same run; fetch-snet and fetch-hinet are at 240.
+    # on that run that never got persisted). light took 178min on the same
+    # run and now sits at 300; fetch-snet and fetch-hinet are at 240.
     timeout-minutes: 240
     outputs:
       fetch_modis_lst: ${{ steps.fetch_modis_lst.outcome }}
@@ -3066,8 +3066,8 @@ jobs:
 
   # =====================================================================
   # FETCH-GNSS -- GNSS-TEC (Nagoya U. ISEE), split out of the light job so
-  # its long fetch (up to 120min) no longer consumes the light job's budget
-  # budget. #181 raised the step 30->90 and the light monolith then timed
+  # its long fetch (up to 120min) no longer consumes the light job's budget.
+  # #181 raised the step 30->90 and the light monolith then timed
   # out at the ceiling mid-GNSS, failing the snapshot -> base-missing merge ->
   # no checkpoint advance (fnet/gnss/ioc all stalled). Own overlay: gnss_tec.
   # =====================================================================
@@ -3494,8 +3494,10 @@ jobs:
     runs-on: ubuntu-latest
     # Bumped 60->150 after Hi-net Stage 1 (PR #127) pushed merge time past
     # 60min ceiling (run 25276071313 / 25279499629 both cancelled at Snapshot
-    # step). 150min matches fetch-snet/fetch-hinet/light heavy-job tier with
-    # comfortable headroom for ~10min merge + ~5min misc + HF upload.
+    # step). Measured 2026-09-06: merge ran 149.83 min (33704140274) and
+    # 147.63 (33825828789) against this 150, i.e. within ten seconds of the
+    # ceiling, and a kill here loses every job's fetched data plus the
+    # checkpoint. Raising it is open, not decided.
     timeout-minutes: 150
 
     steps:
