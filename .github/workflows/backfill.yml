@@ -469,7 +469,7 @@ jobs:
         if: always()
         run: |
           python3 -c "
-          import sqlite3, sys, os, struct
+          import sqlite3, sys, os, struct, time
           def rm_sidefiles(base):
               for ext in ('-wal', '-shm'):
                   p = base + ext
@@ -486,11 +486,26 @@ jobs:
               # finalise is sufficient -- the full copy was only a staging step
               # for the owned-table extraction.
               src = sqlite3.connect('data/geohazard.db', timeout=300)
-              src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
               # journal_mode=DELETE rewrites the header WAL flag so a later open
               # cannot checkpoint stray frames past header.page_count (root cause
-              # of 2026-05-08 Tree 98196 malformed-image).
-              src.execute('PRAGMA journal_mode = DELETE')
+              # of 2026-05-08 Tree 98196 malformed-image).  Measured 2026-09-06:
+              # wal_checkpoint consults the busy timeout but on expiry RETURNS
+              # (1, ...) rather than raising, so its failure was silent, while
+              # journal_mode does not consult it at all and raises at once if any
+              # other connection has read the db.  So the checkpoint result is
+              # read, and journal_mode gets a deadline of its own.
+              deadline = time.monotonic() + 300
+              while True:
+                  busy, nlog, nck = src.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
+                  print(f'checkpoint busy={busy} log={nlog} checkpointed={nck}')
+                  try:
+                      src.execute('PRAGMA journal_mode = DELETE')
+                      break
+                  except sqlite3.OperationalError as e:
+                      if 'locked' not in str(e) or time.monotonic() > deadline:
+                          raise
+                      print(f'journal_mode locked, retrying: {e}')
+                      time.sleep(2)
               r = src.execute('PRAGMA integrity_check').fetchone()[0]
               src.close()
               rm_sidefiles('data/geohazard.db')
@@ -879,7 +894,7 @@ jobs:
         if: always()
         run: |
           python3 -c "
-          import sqlite3, sys, os, struct
+          import sqlite3, sys, os, struct, time
           def rm_sidefiles(base):
               for ext in ('-wal', '-shm'):
                   p = base + ext
@@ -896,11 +911,26 @@ jobs:
               # finalise is sufficient -- the full copy was only a staging step
               # for the owned-table extraction.
               src = sqlite3.connect('data/geohazard.db', timeout=300)
-              src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
               # journal_mode=DELETE rewrites the header WAL flag so a later open
               # cannot checkpoint stray frames past header.page_count (root cause
-              # of 2026-05-08 Tree 98196 malformed-image).
-              src.execute('PRAGMA journal_mode = DELETE')
+              # of 2026-05-08 Tree 98196 malformed-image).  Measured 2026-09-06:
+              # wal_checkpoint consults the busy timeout but on expiry RETURNS
+              # (1, ...) rather than raising, so its failure was silent, while
+              # journal_mode does not consult it at all and raises at once if any
+              # other connection has read the db.  So the checkpoint result is
+              # read, and journal_mode gets a deadline of its own.
+              deadline = time.monotonic() + 300
+              while True:
+                  busy, nlog, nck = src.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
+                  print(f'checkpoint busy={busy} log={nlog} checkpointed={nck}')
+                  try:
+                      src.execute('PRAGMA journal_mode = DELETE')
+                      break
+                  except sqlite3.OperationalError as e:
+                      if 'locked' not in str(e) or time.monotonic() > deadline:
+                          raise
+                      print(f'journal_mode locked, retrying: {e}')
+                      time.sleep(2)
               r = src.execute('PRAGMA integrity_check').fetchone()[0]
               src.close()
               rm_sidefiles('data/geohazard.db')
@@ -1299,7 +1329,7 @@ jobs:
         if: always()
         run: |
           python3 -c "
-          import sqlite3, sys, os, struct
+          import sqlite3, sys, os, struct, time
           def rm_sidefiles(base):
               for ext in ('-wal', '-shm'):
                   p = base + ext
@@ -1316,11 +1346,26 @@ jobs:
               # finalise is sufficient -- the full copy was only a staging step
               # for the owned-table extraction.
               src = sqlite3.connect('data/geohazard.db', timeout=300)
-              src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
               # journal_mode=DELETE rewrites the header WAL flag so a later open
               # cannot checkpoint stray frames past header.page_count (root cause
-              # of 2026-05-08 Tree 98196 malformed-image).
-              src.execute('PRAGMA journal_mode = DELETE')
+              # of 2026-05-08 Tree 98196 malformed-image).  Measured 2026-09-06:
+              # wal_checkpoint consults the busy timeout but on expiry RETURNS
+              # (1, ...) rather than raising, so its failure was silent, while
+              # journal_mode does not consult it at all and raises at once if any
+              # other connection has read the db.  So the checkpoint result is
+              # read, and journal_mode gets a deadline of its own.
+              deadline = time.monotonic() + 300
+              while True:
+                  busy, nlog, nck = src.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
+                  print(f'checkpoint busy={busy} log={nlog} checkpointed={nck}')
+                  try:
+                      src.execute('PRAGMA journal_mode = DELETE')
+                      break
+                  except sqlite3.OperationalError as e:
+                      if 'locked' not in str(e) or time.monotonic() > deadline:
+                          raise
+                      print(f'journal_mode locked, retrying: {e}')
+                      time.sleep(2)
               r = src.execute('PRAGMA integrity_check').fetchone()[0]
               src.close()
               rm_sidefiles('data/geohazard.db')
@@ -1753,7 +1798,7 @@ jobs:
         if: always()
         run: |
           python3 -c "
-          import sqlite3, sys, os, struct
+          import sqlite3, sys, os, struct, time
           def rm_sidefiles(base):
               for ext in ('-wal', '-shm'):
                   p = base + ext
@@ -1770,11 +1815,26 @@ jobs:
               # finalise is sufficient -- the full copy was only a staging step
               # for the owned-table extraction.
               src = sqlite3.connect('data/geohazard.db', timeout=300)
-              src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
               # journal_mode=DELETE rewrites the header WAL flag so a later open
               # cannot checkpoint stray frames past header.page_count (root cause
-              # of 2026-05-08 Tree 98196 malformed-image).
-              src.execute('PRAGMA journal_mode = DELETE')
+              # of 2026-05-08 Tree 98196 malformed-image).  Measured 2026-09-06:
+              # wal_checkpoint consults the busy timeout but on expiry RETURNS
+              # (1, ...) rather than raising, so its failure was silent, while
+              # journal_mode does not consult it at all and raises at once if any
+              # other connection has read the db.  So the checkpoint result is
+              # read, and journal_mode gets a deadline of its own.
+              deadline = time.monotonic() + 300
+              while True:
+                  busy, nlog, nck = src.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
+                  print(f'checkpoint busy={busy} log={nlog} checkpointed={nck}')
+                  try:
+                      src.execute('PRAGMA journal_mode = DELETE')
+                      break
+                  except sqlite3.OperationalError as e:
+                      if 'locked' not in str(e) or time.monotonic() > deadline:
+                          raise
+                      print(f'journal_mode locked, retrying: {e}')
+                      time.sleep(2)
               r = src.execute('PRAGMA integrity_check').fetchone()[0]
               src.close()
               rm_sidefiles('data/geohazard.db')
@@ -2172,7 +2232,7 @@ jobs:
         if: always()
         run: |
           python3 -c "
-          import sqlite3, sys, os, struct
+          import sqlite3, sys, os, struct, time
           def rm_sidefiles(base):
               for ext in ('-wal', '-shm'):
                   p = base + ext
@@ -2189,11 +2249,26 @@ jobs:
               # finalise is sufficient -- the full copy was only a staging step
               # for the owned-table extraction.
               src = sqlite3.connect('data/geohazard.db', timeout=300)
-              src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
               # journal_mode=DELETE rewrites the header WAL flag so a later open
               # cannot checkpoint stray frames past header.page_count (root cause
-              # of 2026-05-08 Tree 98196 malformed-image).
-              src.execute('PRAGMA journal_mode = DELETE')
+              # of 2026-05-08 Tree 98196 malformed-image).  Measured 2026-09-06:
+              # wal_checkpoint consults the busy timeout but on expiry RETURNS
+              # (1, ...) rather than raising, so its failure was silent, while
+              # journal_mode does not consult it at all and raises at once if any
+              # other connection has read the db.  So the checkpoint result is
+              # read, and journal_mode gets a deadline of its own.
+              deadline = time.monotonic() + 300
+              while True:
+                  busy, nlog, nck = src.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
+                  print(f'checkpoint busy={busy} log={nlog} checkpointed={nck}')
+                  try:
+                      src.execute('PRAGMA journal_mode = DELETE')
+                      break
+                  except sqlite3.OperationalError as e:
+                      if 'locked' not in str(e) or time.monotonic() > deadline:
+                          raise
+                      print(f'journal_mode locked, retrying: {e}')
+                      time.sleep(2)
               r = src.execute('PRAGMA integrity_check').fetchone()[0]
               src.close()
               rm_sidefiles('data/geohazard.db')
@@ -2916,7 +2991,7 @@ jobs:
         if: always()
         run: |
           python3 -c "
-          import sqlite3, sys, os, struct
+          import sqlite3, sys, os, struct, time
           def rm_sidefiles(base):
               for ext in ('-wal', '-shm'):
                   p = base + ext
@@ -2931,11 +3006,26 @@ jobs:
               # once cloud_fraction filled the DB (run 26696792708 light:
               # 'database or disk is full').
               src = sqlite3.connect('data/geohazard.db', timeout=300)
-              src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
               # journal_mode=DELETE rewrites the header WAL flag so a later open
               # cannot checkpoint stray frames past header.page_count (root cause
-              # of 2026-05-08 Tree 98196 malformed-image).
-              src.execute('PRAGMA journal_mode = DELETE')
+              # of 2026-05-08 Tree 98196 malformed-image).  Measured 2026-09-06:
+              # wal_checkpoint consults the busy timeout but on expiry RETURNS
+              # (1, ...) rather than raising, so its failure was silent, while
+              # journal_mode does not consult it at all and raises at once if any
+              # other connection has read the db.  So the checkpoint result is
+              # read, and journal_mode gets a deadline of its own.
+              deadline = time.monotonic() + 300
+              while True:
+                  busy, nlog, nck = src.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
+                  print(f'checkpoint busy={busy} log={nlog} checkpointed={nck}')
+                  try:
+                      src.execute('PRAGMA journal_mode = DELETE')
+                      break
+                  except sqlite3.OperationalError as e:
+                      if 'locked' not in str(e) or time.monotonic() > deadline:
+                          raise
+                      print(f'journal_mode locked, retrying: {e}')
+                      time.sleep(2)
               r = src.execute('PRAGMA integrity_check').fetchone()[0]
               src.close()
               rm_sidefiles('data/geohazard.db')
@@ -3302,7 +3392,7 @@ jobs:
         if: always()
         run: |
           python3 -c "
-          import sqlite3, sys, os, struct
+          import sqlite3, sys, os, struct, time
           def rm_sidefiles(base):
               for ext in ('-wal', '-shm'):
                   p = base + ext
@@ -3319,11 +3409,26 @@ jobs:
               # finalise is sufficient -- the full copy was only a staging step
               # for the owned-table extraction.
               src = sqlite3.connect('data/geohazard.db', timeout=300)
-              src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
               # journal_mode=DELETE rewrites the header WAL flag so a later open
               # cannot checkpoint stray frames past header.page_count (root cause
-              # of 2026-05-08 Tree 98196 malformed-image).
-              src.execute('PRAGMA journal_mode = DELETE')
+              # of 2026-05-08 Tree 98196 malformed-image).  Measured 2026-09-06:
+              # wal_checkpoint consults the busy timeout but on expiry RETURNS
+              # (1, ...) rather than raising, so its failure was silent, while
+              # journal_mode does not consult it at all and raises at once if any
+              # other connection has read the db.  So the checkpoint result is
+              # read, and journal_mode gets a deadline of its own.
+              deadline = time.monotonic() + 300
+              while True:
+                  busy, nlog, nck = src.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
+                  print(f'checkpoint busy={busy} log={nlog} checkpointed={nck}')
+                  try:
+                      src.execute('PRAGMA journal_mode = DELETE')
+                      break
+                  except sqlite3.OperationalError as e:
+                      if 'locked' not in str(e) or time.monotonic() > deadline:
+                          raise
+                      print(f'journal_mode locked, retrying: {e}')
+                      time.sleep(2)
               r = src.execute('PRAGMA integrity_check').fetchone()[0]
               src.close()
               rm_sidefiles('data/geohazard.db')
