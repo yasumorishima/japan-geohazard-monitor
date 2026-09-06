@@ -3503,8 +3503,12 @@ jobs:
     # HF upload that day; 33704140274 ran 149.83 and 33825828789 147.63. Step
     # maxima on successful runs: Merge 68.3, HF upload 54.9 (00:00 tick only),
     # checkpoint upload 14.3, download light 5.4. A kill here loses every job's
-    # fetched data plus the checkpoint advance. Raising it is open, not decided.
-    timeout-minutes: 150
+    # fetched data plus the checkpoint advance, so it is now 270: the observed
+    # Merge plus a full HF day is roughly 220-240, and 360 is the hosted max.
+    # The HF upload was also moved behind the checkpoint upload, so a kill
+    # during it no longer costs the checkpoint -- only that day's HF copy,
+    # which hf-upload-checkpoint.yml can re-push.
+    timeout-minutes: 270
 
     steps:
       - uses: actions/checkout@v4
@@ -3597,7 +3601,12 @@ jobs:
         # resumes from the previous checkpoint. A GENUINE light-job failure
         # still fails the run (and emails) via the light job itself, and the
         # Notify Discord step still posts the skip/failure embed either way.
-        if: needs.light.result == 'success'
+        # A light job killed at its own ceiling reports 'cancelled' even when it
+        # finished and uploaded a complete light.db (33936283586), and gating on
+        # success threw that away. The download's outcome is the direct test:
+        # a missing artifact still skips, which is what the paragraph above is
+        # about, and a genuine light failure still skips via != 'failure'.
+        if: needs.light.result != 'failure' && steps.download_light.outcome == 'success'
         run: |
           mkdir -p data
           # --require-base ensures we never let an overlay-only DB through as a
@@ -3643,32 +3652,6 @@ jobs:
               print(f'wal_checkpoint failed: {e}')
               sys.exit(1)
           "
-
-      - name: Upload canonical DB to Hugging Face (durable primary storage)
-        id: hf_upload
-        # Replaces the retired RPi5 SSD mirror. The Hugging Face dataset
-        # yasumorishima/japan-geohazard is now the canonical durable copy.
-        # Gated to ONE cron tick per day (UTC 00:00) -- not every 3h run --
-        # because each push is a ~16.5GB git-LFS commit; uploading 8x/day
-        # would balloon the dataset's LFS storage. hf_sync.py squashes LFS
-        # history after a verified upload to keep usedStorage bounded.
-        # schedule-only + master-only: a targeted/feature-branch dispatch
-        # carries a partial DB and must never overwrite the canonical copy.
-        # To push manually, use the hf-upload-checkpoint.yml workflow.
-        if: >-
-          steps.snapshot.outcome == 'success'
-          && github.ref == 'refs/heads/master'
-          && github.event_name == 'schedule'
-          && github.event.schedule == '0 0 * * *'
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: |
-          pip install --quiet "huggingface_hub>=0.26"
-          python3 scripts/hf_sync.py \
-            --src data/geohazard.db \
-            --repo yasumorishima/japan-geohazard \
-            --path geohazard.db \
-            --squash
 
       - name: Coverage report
         if: >-
@@ -3734,6 +3717,32 @@ jobs:
           name: backfill-checkpoint-${{ github.run_id }}
           path: data/geohazard.db
           retention-days: 30
+
+      - name: Upload canonical DB to Hugging Face (durable primary storage)
+        id: hf_upload
+        # Replaces the retired RPi5 SSD mirror. The Hugging Face dataset
+        # yasumorishima/japan-geohazard is now the canonical durable copy.
+        # Gated to ONE cron tick per day (UTC 00:00) -- not every 3h run --
+        # because each push is a ~16.5GB git-LFS commit; uploading 8x/day
+        # would balloon the dataset's LFS storage. hf_sync.py squashes LFS
+        # history after a verified upload to keep usedStorage bounded.
+        # schedule-only + master-only: a targeted/feature-branch dispatch
+        # carries a partial DB and must never overwrite the canonical copy.
+        # To push manually, use the hf-upload-checkpoint.yml workflow.
+        if: >-
+          steps.snapshot.outcome == 'success'
+          && github.ref == 'refs/heads/master'
+          && github.event_name == 'schedule'
+          && github.event.schedule == '0 0 * * *'
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          pip install --quiet "huggingface_hub>=0.26"
+          python3 scripts/hf_sync.py \
+            --src data/geohazard.db \
+            --repo yasumorishima/japan-geohazard \
+            --path geohazard.db \
+            --squash
 
       - name: Prune old artifacts (bound the storage inventory)
         # Storage discipline (2026-08-06). retention-days is back to 30 so a
