@@ -462,12 +462,13 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_modis_lst.py
+          exec python3 scripts/fetch_modis_lst.py
 
       - name: Snapshot DB
         id: snapshot
         if: always()
         run: |
+          if pkill -TERM -f 'scripts/fetch_' 2>/dev/null; then sleep 5; pkill -KILL -f 'scripts/fetch_' 2>/dev/null || true; fi
           python3 -c "
           import sqlite3, sys, os, struct, time
           def rm_sidefiles(base):
@@ -494,7 +495,7 @@ jobs:
               # journal_mode does not consult it at all and raises at once if any
               # other connection has read the db.  So the checkpoint result is
               # read, and journal_mode gets a deadline of its own.
-              deadline = time.monotonic() + 300
+              deadline = time.monotonic() + 60
               while True:
                   busy, nlog, nck = src.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
                   print(f'checkpoint busy={busy} log={nlog} checkpointed={nck}')
@@ -893,6 +894,7 @@ jobs:
         id: snapshot
         if: always()
         run: |
+          if pkill -TERM -f 'scripts/fetch_' 2>/dev/null; then sleep 5; pkill -KILL -f 'scripts/fetch_' 2>/dev/null || true; fi
           python3 -c "
           import sqlite3, sys, os, struct, time
           def rm_sidefiles(base):
@@ -919,7 +921,7 @@ jobs:
               # journal_mode does not consult it at all and raises at once if any
               # other connection has read the db.  So the checkpoint result is
               # read, and journal_mode gets a deadline of its own.
-              deadline = time.monotonic() + 300
+              deadline = time.monotonic() + 60
               while True:
                   busy, nlog, nck = src.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
                   print(f'checkpoint busy={busy} log={nlog} checkpointed={nck}')
@@ -1328,6 +1330,7 @@ jobs:
         id: snapshot
         if: always()
         run: |
+          if pkill -TERM -f 'scripts/fetch_' 2>/dev/null; then sleep 5; pkill -KILL -f 'scripts/fetch_' 2>/dev/null || true; fi
           python3 -c "
           import sqlite3, sys, os, struct, time
           def rm_sidefiles(base):
@@ -1354,7 +1357,7 @@ jobs:
               # journal_mode does not consult it at all and raises at once if any
               # other connection has read the db.  So the checkpoint result is
               # read, and journal_mode gets a deadline of its own.
-              deadline = time.monotonic() + 300
+              deadline = time.monotonic() + 60
               while True:
                   busy, nlog, nck = src.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
                   print(f'checkpoint busy={busy} log={nlog} checkpointed={nck}')
@@ -1797,6 +1800,7 @@ jobs:
         id: snapshot
         if: always()
         run: |
+          if pkill -TERM -f 'scripts/fetch_' 2>/dev/null; then sleep 5; pkill -KILL -f 'scripts/fetch_' 2>/dev/null || true; fi
           python3 -c "
           import sqlite3, sys, os, struct, time
           def rm_sidefiles(base):
@@ -1823,7 +1827,7 @@ jobs:
               # journal_mode does not consult it at all and raises at once if any
               # other connection has read the db.  So the checkpoint result is
               # read, and journal_mode gets a deadline of its own.
-              deadline = time.monotonic() + 300
+              deadline = time.monotonic() + 60
               while True:
                   busy, nlog, nck = src.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
                   print(f'checkpoint busy={busy} log={nlog} checkpointed={nck}')
@@ -2231,6 +2235,7 @@ jobs:
         id: snapshot
         if: always()
         run: |
+          if pkill -TERM -f 'scripts/fetch_' 2>/dev/null; then sleep 5; pkill -KILL -f 'scripts/fetch_' 2>/dev/null || true; fi
           python3 -c "
           import sqlite3, sys, os, struct, time
           def rm_sidefiles(base):
@@ -2257,7 +2262,7 @@ jobs:
               # journal_mode does not consult it at all and raises at once if any
               # other connection has read the db.  So the checkpoint result is
               # read, and journal_mode gets a deadline of its own.
-              deadline = time.monotonic() + 300
+              deadline = time.monotonic() + 60
               while True:
                   busy, nlog, nck = src.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
                   print(f'checkpoint busy={busy} log={nlog} checkpointed={nck}')
@@ -2316,7 +2321,7 @@ jobs:
   light:
     if: inputs.target != 'diagnostic'
     runs-on: ubuntu-latest
-    timeout-minutes: 200
+    timeout-minutes: 240
     outputs:
       fetch_earthquakes: ${{ steps.fetch_earthquakes.outcome }}
       fetch_tec_event: ${{ steps.fetch_tec_event.outcome }}
@@ -2687,7 +2692,7 @@ jobs:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
           mkdir -p data
-          python3 scripts/fetch_earthquakes.py
+          exec python3 scripts/fetch_earthquakes.py
 
       - name: Fetch TEC data (continuous 2011-now, recent-first)
         id: fetch_tec_event
@@ -2698,7 +2703,7 @@ jobs:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           TEC_MAX_DATES: "150"
         run: |
-          python3 scripts/fetch_tec.py --mode continuous
+          exec python3 scripts/fetch_tec.py --mode continuous
 
       - name: Fetch TEC random baseline (legacy, skipped in continuous mode)
         id: fetch_tec_random
@@ -2708,7 +2713,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_tec.py --mode random --n-dates 300
+          exec python3 scripts/fetch_tec.py --mode random --n-dates 300
 
       - name: Fetch Kp data (2011-2026)
         id: fetch_kp
@@ -2718,7 +2723,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_kp.py
+          exec python3 scripts/fetch_kp.py
 
       - name: Fetch CMT focal mechanisms (GCMT, 2011-present)
         id: fetch_cmt
@@ -2728,7 +2733,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_cmt.py
+          exec python3 scripts/fetch_cmt.py
 
       - name: Fetch Kakioka ULF magnetic data
         id: fetch_ulf
@@ -2739,7 +2744,7 @@ jobs:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           ULF_MAX_DATES: "300"
         run: |
-          python3 scripts/fetch_kakioka_ulf.py
+          exec python3 scripts/fetch_kakioka_ulf.py
 
       - name: Fetch NMDB cosmic ray data
         id: fetch_cosmic_ray
@@ -2749,7 +2754,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_nmdb_cosmicray.py
+          exec python3 scripts/fetch_nmdb_cosmicray.py
 
       - name: Fetch ISS LIS lightning data (Earthdata auth, 2017-2023)
         id: fetch_iss_lis
@@ -2764,7 +2769,7 @@ jobs:
           MAX_GRANULES_PER_RUN: ${{ vars.ISS_LIS_MAX_GRANULES || '700' }}
           ISS_LIS_PARALLEL_FETCHES: ${{ vars.ISS_LIS_PARALLEL_FETCHES || '1' }}
         run: |
-          python3 scripts/fetch_iss_lis_lightning.py
+          exec python3 scripts/fetch_iss_lis_lightning.py
 
       - name: Fetch WWLLN Monthly Thunder Hour (Earthdata auth, 2013-2025)
         id: fetch_wwlln_thunder_hour
@@ -2777,7 +2782,7 @@ jobs:
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         run: |
-          python3 scripts/fetch_wwlln_thunder_hour.py
+          exec python3 scripts/fetch_wwlln_thunder_hour.py
 
       - name: Fetch LIS/OTD Monthly Climatology Time Series (Earthdata auth, 1995-2014)
         id: fetch_lis_otd_monthly
@@ -2790,7 +2795,7 @@ jobs:
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         run: |
-          python3 scripts/fetch_lis_otd_monthly.py
+          exec python3 scripts/fetch_lis_otd_monthly.py
 
       - name: Fetch INTERMAGNET hourly geomagnetic (CSES portion deprecated 2026-04-26, see fetch_swarm_em)
         id: fetch_geomag
@@ -2823,7 +2828,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_olr.py
+          exec python3 scripts/fetch_olr.py
 
       - name: Fetch IERS Earth Orientation Parameters
         id: fetch_iers
@@ -2833,7 +2838,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_iers_eop.py
+          exec python3 scripts/fetch_iers_eop.py
 
       - name: Fetch NASA OMNIWeb solar wind hourly
         id: fetch_solar_wind
@@ -2843,7 +2848,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_solar_wind.py
+          exec python3 scripts/fetch_solar_wind.py
 
       - name: Fetch GRACE/GRACE-FO gravity anomaly
         id: fetch_grace
@@ -2856,7 +2861,7 @@ jobs:
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         run: |
-          python3 scripts/fetch_grace_gravity.py
+          exec python3 scripts/fetch_grace_gravity.py
 
       - name: Fetch UHSLC tide gauge data
         id: fetch_tide_gauge
@@ -2866,7 +2871,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_tide_gauge.py
+          exec python3 scripts/fetch_tide_gauge.py
 
       - name: Fetch soil moisture (NOAA CPC monthly + SMOPS daily)
         id: fetch_soil_moisture
@@ -2876,7 +2881,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_smap_moisture.py
+          exec python3 scripts/fetch_smap_moisture.py
 
       - name: Fetch NASA ocean color chlorophyll-a
         id: fetch_ocean_color
@@ -2889,7 +2894,7 @@ jobs:
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         run: |
-          python3 scripts/fetch_ocean_color.py
+          exec python3 scripts/fetch_ocean_color.py
 
       - name: Fetch VIIRS nighttime light/airglow (Earthdata auth)
         id: fetch_nightlight
@@ -2902,7 +2907,7 @@ jobs:
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         run: |
-          python3 scripts/fetch_viirs_nighttime.py
+          exec python3 scripts/fetch_viirs_nighttime.py
 
       - name: Fetch GOES X-ray flux (solar flares)
         id: fetch_goes_xray
@@ -2912,7 +2917,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_goes_xray.py
+          exec python3 scripts/fetch_goes_xray.py
 
       - name: Fetch GOES proton flux (SEP events)
         id: fetch_goes_proton
@@ -2922,7 +2927,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_goes_proton.py
+          exec python3 scripts/fetch_goes_proton.py
 
       - name: Compute tidal stress (lunar+solar, pure calculation)
         id: fetch_tidal_stress
@@ -2932,7 +2937,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_tidal_stress.py
+          exec python3 scripts/fetch_tidal_stress.py
 
       - name: Fetch GOES electron flux (particle precipitation)
         id: fetch_particle_flux
@@ -2942,7 +2947,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_poes_particles.py
+          exec python3 scripts/fetch_poes_particles.py
 
       - name: Fetch NOAA DART ocean bottom pressure
         id: fetch_dart
@@ -2952,7 +2957,7 @@ jobs:
         env:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
         run: |
-          python3 scripts/fetch_dart_pressure.py
+          exec python3 scripts/fetch_dart_pressure.py
 
       - name: Fetch IOC sea level monitoring
         id: fetch_ioc_sealevel
@@ -2968,7 +2973,7 @@ jobs:
           IOC_CHUNK_DAYS: ${{ vars.IOC_CHUNK_DAYS || '30' }}
           IOC_MAX_CHUNKS: ${{ vars.IOC_MAX_CHUNKS || '72' }}
         run: |
-          python3 scripts/fetch_ioc_sealevel.py
+          exec python3 scripts/fetch_ioc_sealevel.py
 
       - name: Fetch IOC DART ocean bottom pressure (Stage 2.B)
         id: fetch_ioc_dart
@@ -2984,12 +2989,13 @@ jobs:
           IOC_DART_CHUNK_DAYS: ${{ vars.IOC_DART_CHUNK_DAYS || '30' }}
           IOC_DART_MAX_CHUNKS: ${{ vars.IOC_DART_MAX_CHUNKS || '72' }}
         run: |
-          python3 scripts/fetch_ioc_dart.py
+          exec python3 scripts/fetch_ioc_dart.py
 
       - name: Snapshot DB for light artifact
         id: snapshot
         if: always()
         run: |
+          if pkill -TERM -f 'scripts/fetch_' 2>/dev/null; then sleep 5; pkill -KILL -f 'scripts/fetch_' 2>/dev/null || true; fi
           python3 -c "
           import sqlite3, sys, os, struct, time
           def rm_sidefiles(base):
@@ -3014,7 +3020,7 @@ jobs:
               # journal_mode does not consult it at all and raises at once if any
               # other connection has read the db.  So the checkpoint result is
               # read, and journal_mode gets a deadline of its own.
-              deadline = time.monotonic() + 300
+              deadline = time.monotonic() + 60
               while True:
                   busy, nlog, nck = src.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
                   print(f'checkpoint busy={busy} log={nlog} checkpointed={nck}')
@@ -3385,12 +3391,13 @@ jobs:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           GNSS_TEC_MAX_DATES: ${{ vars.GNSS_TEC_MAX_DATES || '200' }}
         run: |
-          python3 scripts/fetch_gnss_tec.py
+          exec python3 scripts/fetch_gnss_tec.py
 
       - name: Snapshot DB
         id: snapshot
         if: always()
         run: |
+          if pkill -TERM -f 'scripts/fetch_' 2>/dev/null; then sleep 5; pkill -KILL -f 'scripts/fetch_' 2>/dev/null || true; fi
           python3 -c "
           import sqlite3, sys, os, struct, time
           def rm_sidefiles(base):
@@ -3417,7 +3424,7 @@ jobs:
               # journal_mode does not consult it at all and raises at once if any
               # other connection has read the db.  So the checkpoint result is
               # read, and journal_mode gets a deadline of its own.
-              deadline = time.monotonic() + 300
+              deadline = time.monotonic() + 60
               while True:
                   busy, nlog, nck = src.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
                   print(f'checkpoint busy={busy} log={nlog} checkpointed={nck}')
