@@ -17,7 +17,7 @@ name: Backfill Data
 #   fetch-snet   (timeout 240m): win32tools install
 #                                 + S-net waveform
 #                                 + S-net pressure   -> snet.db artifact
-#   light        (timeout 200m): remaining ~26 fetchers -> light.db artifact
+#   light        (timeout 300m): remaining ~26 fetchers -> light.db artifact
 #   merge        (ubuntu-latest): needs all above, runs
 #                                 scripts/merge_checkpoints.py with light
 #                                 as base and the per-table overlays.
@@ -888,7 +888,7 @@ jobs:
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
           SO2_MAX_DATES: "2000"
-        run: python3 -u scripts/fetch_omi_so2.py
+        run: exec python3 -u scripts/fetch_omi_so2.py
 
       - name: Snapshot DB
         id: snapshot
@@ -1324,7 +1324,7 @@ jobs:
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
           CLOUD_MAX_DATES: "900"
-        run: python3 -u scripts/fetch_cloud_fraction.py
+        run: exec python3 -u scripts/fetch_cloud_fraction.py
 
       - name: Snapshot DB
         id: snapshot
@@ -2316,12 +2316,13 @@ jobs:
 
   # =====================================================================
   # LIGHT JOB -- all 26 other fetchers. Combined estimated runtime ~1h45m;
-  # timeout 200m leaves slack. Serves as the base DB for merge.
+  # timeout 300m: three light jobs were killed at the old 200m ceiling (201.5/205.0/205.0 min),
+  # one mid-snapshot and one mid-upload.  Serves as the base DB for merge.
   # =====================================================================
   light:
     if: inputs.target != 'diagnostic'
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 300
     outputs:
       fetch_earthquakes: ${{ steps.fetch_earthquakes.outcome }}
       fetch_tec_event: ${{ steps.fetch_tec_event.outcome }}
@@ -2806,7 +2807,7 @@ jobs:
           GEOHAZARD_DB_PATH: ./data/geohazard.db
           GEOMAG_MAX_DAYS: "2000"
         run: |
-          python3 -u scripts/fetch_cses_satellite.py
+          exec python3 -u scripts/fetch_cses_satellite.py
 
       - name: Fetch ESA Swarm EM (satellite ionosphere + magnetic, replaces CSES)
         id: fetch_swarm_em
@@ -2818,7 +2819,7 @@ jobs:
           SWARM_TOKEN: ${{ secrets.SWARM_TOKEN }}
           SWARM_MAX_DAYS: ${{ vars.SWARM_MAX_DAYS || '90' }}
         run: |
-          python3 -u scripts/fetch_swarm_em.py
+          exec python3 -u scripts/fetch_swarm_em.py
 
       - name: Fetch NOAA OLR daily (thermal anomaly)
         id: fetch_olr
@@ -3065,9 +3066,9 @@ jobs:
 
   # =====================================================================
   # FETCH-GNSS -- GNSS-TEC (Nagoya U. ISEE), split out of the light job so
-  # its long fetch (up to 120min) no longer consumes the light job's 200min
+  # its long fetch (up to 120min) no longer consumes the light job's budget
   # budget. #181 raised the step 30->90 and the light monolith then timed
-  # out at ~200min mid-GNSS, failing the snapshot -> base-missing merge ->
+  # out at the ceiling mid-GNSS, failing the snapshot -> base-missing merge ->
   # no checkpoint advance (fnet/gnss/ioc all stalled). Own overlay: gnss_tec.
   # =====================================================================
   fetch-gnss:
