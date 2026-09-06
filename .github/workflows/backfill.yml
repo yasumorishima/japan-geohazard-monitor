@@ -3500,9 +3500,10 @@ jobs:
     # 30.4 min, and neither run's step list survives, so 'at Snapshot step' is
     # unverifiable). Measured 2026-09-06 against this 150: 33303286706 WAS
     # killed, cancelled at 155.0 min with the Merge step alone at 143.8 and no
-    # HF upload that day; 33704140274 ran 149.83 and 33825828789 147.63. Step
-    # maxima on successful runs: Merge 68.3, HF upload 54.9 (00:00 tick only),
-    # checkpoint upload 14.3, download light 5.4. A kill here loses every job's
+    # HF upload that day; 33704140274 ran 149.83 and 33825828789 147.63, all
+    # three against the previous 150. Step
+    # maxima on successful runs: Merge 68.3, HF upload 55.0 (00:00 tick only),
+    # checkpoint upload 14.4, download light 8.4. A kill here loses every job's
     # fetched data plus the checkpoint advance, so it is now 270: the observed
     # Merge plus a full HF day is roughly 220-240, and 360 is the hosted max.
     # The HF upload was also moved behind the checkpoint upload, so a kill
@@ -3603,10 +3604,14 @@ jobs:
         # Notify Discord step still posts the skip/failure embed either way.
         # A light job killed at its own ceiling reports 'cancelled' even when it
         # finished and uploaded a complete light.db (33936283586), and gating on
-        # success threw that away. The download's outcome is the direct test:
-        # a missing artifact still skips, which is what the paragraph above is
-        # about, and a genuine light failure still skips via != 'failure'.
-        if: needs.light.result != 'failure' && steps.download_light.outcome == 'success'
+        # success alone threw that away, so that case is named explicitly.
+        # It is named rather than excluded on purpose: a first attempt at this
+        # used `result != 'failure' && download == 'success'`, which also
+        # swallowed light-succeeded-but-download-failed. That used to run the
+        # merge, hit --require-base, and turn the run red; skipping it instead
+        # left the run green with only the Discord embed aware, because
+        # download_light is visible to no other gate in this file.
+        if: needs.light.result == 'success' || (needs.light.result == 'cancelled' && steps.download_light.outcome == 'success')
         run: |
           mkdir -p data
           # --require-base ensures we never let an overlay-only DB through as a
@@ -3782,8 +3787,8 @@ jobs:
         # run. Keeping the newest N copies is what protects the chain, and
         # that holds regardless of whether this run added a new one.
         # always(), not (success() || failure()): merge has been cancelled by a
-        # timeout before -- 25279499629 at the old 60m ceiling, 33303286706 at
-        # this 150m one --
+        # timeout before -- 25279499629 at the 60m ceiling, 33303286706 at the
+        # 150m one that preceded the current 270 --
         # and prune is now the only thing bounding the inventory, so it has
         # to run in the cancellation grace period too. Deleting only the
         # copies older than the newest KEEP is safe at any job outcome.
