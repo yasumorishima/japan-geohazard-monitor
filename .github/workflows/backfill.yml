@@ -7,7 +7,7 @@ name: Backfill Data
 # heavy/light split still hit the 5h GitHub job limit because MODIS LST +
 # SO2 + cloud_fraction serialised inside one heavy job drifted to ~4h52m
 # before timeout and consistently got cancelled mid-cloud_fraction on
-# schedule runs. 5 parallel fetch jobs + light + merge keeps any single
+# schedule runs. 6 parallel fetch jobs + light + merge keeps any single
 # fetcher's runaway from taking out the whole batch.
 #
 # Topology:
@@ -17,6 +17,8 @@ name: Backfill Data
 #   fetch-snet   (timeout 240m): win32tools install
 #                                 + S-net waveform
 #                                 + S-net pressure   -> snet.db artifact
+#   fetch-hinet  (timeout 240m): Hi-net waveform       -> hinet.db artifact
+#   fetch-gnss   (timeout 210m): GNSS-TEC (ISEE)       -> gnss.db artifact
 #   light        (timeout 300m): remaining ~26 fetchers -> light.db artifact
 #   merge        (ubuntu-latest): needs all above, runs
 #                                 scripts/merge_checkpoints.py with light
@@ -129,7 +131,7 @@ concurrency:
 
 jobs:
   # =====================================================================
-  # FETCH-MODIS — MODIS LST only. Typical runtime ~70min; timeout 150m
+  # FETCH-MODIS — MODIS LST only. Typical runtime ~70min; timeout 240m
   # leaves slack for Phase 2 random-control fetches.
   # =====================================================================
   fetch-modis:
@@ -3492,12 +3494,16 @@ jobs:
     needs: [fetch-modis, fetch-so2, fetch-cloud, fetch-snet, fetch-hinet, fetch-gnss, light]
     if: always() && inputs.target != 'diagnostic'
     runs-on: ubuntu-latest
-    # Bumped 60->150 after Hi-net Stage 1 (PR #127) pushed merge time past
-    # 60min ceiling (run 25276071313 / 25279499629 both cancelled at Snapshot
-    # step). Measured 2026-09-06: merge ran 149.83 min (33704140274) and
-    # 147.63 (33825828789) against this 150, i.e. within ten seconds of the
-    # ceiling, and a kill here loses every job's fetched data plus the
-    # checkpoint. Raising it is open, not decided.
+    # Bumped 60->150 after Hi-net Stage 1 (PR #127) pushed merge past the old
+    # 60min ceiling (25279499629 was cancelled there at 65.0 min; 25276071313
+    # is cited alongside it in this file but the API reports it as failure at
+    # 30.4 min, and neither run's step list survives, so 'at Snapshot step' is
+    # unverifiable). Measured 2026-09-06 against this 150: 33303286706 WAS
+    # killed, cancelled at 155.0 min with the Merge step alone at 143.8 and no
+    # HF upload that day; 33704140274 ran 149.83 and 33825828789 147.63. Step
+    # maxima on successful runs: Merge 68.3, HF upload 54.9 (00:00 tick only),
+    # checkpoint upload 14.3, download light 5.4. A kill here loses every job's
+    # fetched data plus the checkpoint advance. Raising it is open, not decided.
     timeout-minutes: 150
 
     steps:
@@ -3579,7 +3585,7 @@ jobs:
           name: backfill-hinet-${{ github.run_id }}
           path: /mnt/merge/hinet
 
-      - name: Merge light + 4 overlays
+      - name: Merge light + 6 overlays
         id: merge
         # Gate on the light (base) job actually succeeding. When GitHub-side
         # hosted-runner capacity incidents cancel the fetch jobs (2026-07-09:
@@ -3766,8 +3772,9 @@ jobs:
         # gating here would mean the step that frees the space can never
         # run. Keeping the newest N copies is what protects the chain, and
         # that holds regardless of whether this run added a new one.
-        # always(), not (success() || failure()): merge has been cancelled
-        # by its own 150m timeout before (runs 25276071313 / 25279499629),
+        # always(), not (success() || failure()): merge has been cancelled by a
+        # timeout before -- 25279499629 at the old 60m ceiling, 33303286706 at
+        # this 150m one --
         # and prune is now the only thing bounding the inventory, so it has
         # to run in the cancellation grace period too. Deleting only the
         # copies older than the newest KEEP is safe at any job outcome.
