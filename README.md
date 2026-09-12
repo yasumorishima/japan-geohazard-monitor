@@ -371,6 +371,27 @@ either, because membership of it is defined by the labels of the very window bei
 (update 133). That too is a sizing carrying no floor, and the rate that counts the scored event
 was added while the machinery was being written rather than named in the frozen prediction.
 
+Whether one score could carry both base rates was then measured, and it could not. Adding the
+cell's own causal count of past large isolated shocks to the arm, at a weight chosen causally
+from earlier windows only, loses 0.0004 pooled, and it beats none of the three rivals built
+beside it in the same round: the cell's own rate with the shrinkage released, a single bit
+recording whether the cell has ever had such a shock, and a wider weight on the smoothed map.
+The duller explanation the last of those was built to test is itself refuted, the fixed-weight
+curve peaking at 0.35 inside a range that runs to 0.50. A control adding the count of any shock
+rather than the isolated one behaved as predicted, at precisely zero. Two readings of my own
+were blocked by audit and corrected here: only two of the six families rise on the hard quarter
+throughout rather than all of them, and the best trade across all of them is 2.62 units gained
+there for each unit lost elsewhere against the 3.00 that breaking even needs, at the smallest
+weight on the grids, where I had quoted 1.30 from one family alone. Eighty-seven per cent of
+break-even at the edge of a grid is a boundary of measurement, not a wall, so the claim licensed
+is only that none of the five declared additive perturbations raises pooled skill at any of
+their non-zero weights. Even choosing the best weight per window with that window's own labels
+the family returns 0.0018, below the 0.0029 the smoothing round already banked (update 134).
+What the split exposed cannot be used directly, since membership is defined by the scored
+window's labels, but a causal stand-in for it is strong: the arm's own background orders cells
+by whether they will carry any shock at all at 0.785. A weight that varies with predicted
+activity, and the weights below this grid's minimum, are what gets measured next.
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
