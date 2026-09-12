@@ -3529,7 +3529,19 @@ jobs:
     # A kill here loses every job's fetched data plus the checkpoint advance.
     # A worst case assembled from the measured maxima -- 8.7 download, 213.7
     # merge, about 10 coverage, 30.6 checkpoint, 38.6 HF -- is roughly 302,
-    # which 270 cannot hold, so it is now 330 against a hosted maximum of 360.
+    # and counting the steps nobody names (setup and checkout about 2.3, the
+    # six non-light downloads about 0.8, prune 0.45, Notify Discord up to 5.5)
+    # it is nearer 311, which 270 cannot hold, so it is now 330 against a
+    # hosted maximum of 360. Two caveats on that 311. It mixes runners: on
+    # 34604468261 the I/O-bound steps ran 2.1 to 2.4 times their usual maximum
+    # while the download did not, and the 38.6 for HF comes from an ordinary
+    # runner, so a 00:00 tick on a slow one could pass 330. That is survivable
+    # rather than fatal precisely because reaching the checkpoint upload on
+    # that slow run took about 265 min, which 330 holds with room. Second,
+    # concurrency above is cancel-in-progress: false, so a running pass is
+    # never killed by the next cron -- queued ticks are superseded instead --
+    # which means light 300 plus merge 330 sanctions a pass of up to 630 min
+    # against a 180 min cron.
     # The HF upload was also moved behind the checkpoint upload, so a kill
     # during it no longer costs the checkpoint -- only that day's HF copy,
     # which hf-upload-checkpoint.yml can re-push.
@@ -3633,9 +3645,15 @@ jobs:
         # resumes from the previous checkpoint. A GENUINE light-job failure
         # still fails the run (and emails) via the light job itself, and the
         # Notify Discord step still posts the skip/failure embed either way.
-        # A light job killed at its own ceiling reports 'cancelled' even when it
-        # finished and uploaded a complete light.db (33936283586), and gating on
-        # success alone threw that away, so that case is named explicitly.
+        # A light job can report 'cancelled' having finished its fetchers and
+        # uploaded a complete light.db, and gating on success alone threw that
+        # away, so that case is named explicitly. Its example, 33936283586, was
+        # described here as killed at its own ceiling; measured 2026-09-12 it
+        # ran 201.4 min against a 300 ceiling with no failed step, and its
+        # Snapshot began at minute 126, so the fetchers had already finished.
+        # The ceiling is not what stopped it, and nothing in this repository
+        # calls the cancel API, so the mechanism is unknown and only the
+        # observation is stated.
         # It is named rather than excluded on purpose: a first attempt at this
         # used `result != 'failure' && download == 'success'`, which also
         # swallowed light-succeeded-but-download-failed. That used to run the
@@ -3647,10 +3665,15 @@ jobs:
         # three reads here exactly like one that finished, because the snapshot
         # and the upload both run on always(). Merging such an artifact loses no
         # row (the merge restores and appends) but advances the checkpoint as if
-        # the tick had fetched everything, and nothing reports the gap: on
-        # cancellation the fetch_* outputs are '' or 'skipped', never 'failure',
-        # so no issue gate sees them. Skipping instead leaves the last good
-        # checkpoint in place for the next tick to extend.
+        # the tick had fetched everything. Measured on 33936283586, whose light
+        # was cancelled: the fetch_* outputs are NOT empty -- 30 came back
+        # 'success', 6 'skipped' and 1 'failure' -- so a cancelled light does
+        # publish real per-fetcher outcomes, and the issue gate can see a
+        # failure among them when one exists. What it cannot see is the case
+        # where every fetcher was fine and only the sequence was cut short, so
+        # the issue gate carries an explicit distrusted-light term rather than
+        # leaning on a fetcher having failed. Skipping the merge leaves the last
+        # good checkpoint in place for the next tick to extend.
         if: needs.light.result == 'success' || (needs.light.result == 'cancelled' && steps.download_light.outcome == 'success' && needs.light.outputs.light_complete == 'yes')
         run: |
           mkdir -p data
@@ -4164,13 +4187,23 @@ jobs:
       # only the red run and its mail said anything. Measured on the gate
       # 2026-09-12: the second clause already listed steps.merge.outcome, so
       # the omission was in the suppression clause alone.
+      # The merge exemption is itself conditioned on no fetch job and not light
+      # having failed, because if one of them did then auto-rerun still
+      # dispatches attempt 2 and attempt 2 files its own issue: exempting
+      # attempt 1 unconditionally would file two for one incident, and
+      # gh issue create does not deduplicate. A merge failure with every job
+      # otherwise healthy is the only case auto-rerun will never revisit.
+      # The distrusted-light term covers the hole the light_complete gate
+      # opened: when a cancelled light is refused the merge step SKIPS, and a
+      # skip is neither a 'failure' here nor anything auto-rerun retries, so
+      # without naming it the refusal would be silent.
       # Only create an issue if (a) manual dispatch, or (b) schedule but
       # already on attempt >= 2 (rerun didn't fix it), or (c) the failure is
       # one auto-rerun will never retry.
       - name: Create issue on failure
         if: >-
           always()
-          && (steps.merge.outcome == 'failure' || steps.hf_upload.outcome == 'failure' || needs.light.outputs.restore_restored == 'none' || needs.light.outputs.base_check == 'failure' || !(github.event_name == 'schedule' && github.run_attempt == 1))
+          && ((steps.merge.outcome == 'failure' && needs.fetch-modis.result != 'failure' && needs.fetch-so2.result != 'failure' && needs.fetch-cloud.result != 'failure' && needs.fetch-snet.result != 'failure' && needs.fetch-hinet.result != 'failure' && needs.fetch-gnss.result != 'failure' && needs.light.result != 'failure') || (needs.light.result == 'cancelled' && needs.light.outputs.light_complete != 'yes' && steps.download_light.outcome == 'success') || steps.hf_upload.outcome == 'failure' || needs.light.outputs.restore_restored == 'none' || needs.light.outputs.base_check == 'failure' || !(github.event_name == 'schedule' && github.run_attempt == 1))
           && (
             needs.light.outputs.fetch_earthquakes == 'failure' ||
             needs.light.outputs.fetch_tec_event == 'failure' ||
@@ -4214,7 +4247,8 @@ jobs:
             needs.fetch-snet.result == 'failure' ||
             needs.fetch-hinet.result == 'failure' ||
             needs.fetch-gnss.result == 'failure' ||
-            needs.light.result == 'failure'
+            needs.light.result == 'failure' ||
+            (needs.light.result == 'cancelled' && needs.light.outputs.light_complete != 'yes' && steps.download_light.outcome == 'success')
           )
         env:
           GH_TOKEN: ${{ github.token }}
