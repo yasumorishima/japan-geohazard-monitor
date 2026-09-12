@@ -2357,6 +2357,7 @@ jobs:
       restore_outcome: ${{ steps.restore.outcome }}
       restore_restored: ${{ steps.restore.outputs.restored }}
       base_check: ${{ steps.base_check.outcome }}
+      light_complete: ${{ steps.light_complete.outputs.ok }}
 
     steps:
       # Free ~30GB of pre-installed software we never use, to keep the runner's
@@ -2994,6 +2995,19 @@ jobs:
         run: |
           exec python3 scripts/fetch_ioc_dart.py
 
+      # The Snapshot step below runs on always() and kills the fetchers itself
+      # (pkill -TERM -f 'scripts/fetch_'), and the uploader after it asks only
+      # for snapshot.outcome == 'success'. So a light job cancelled at minute
+      # three uploads an artifact indistinguishable from one that ran the full
+      # 300, and the merge gate has nothing to tell them apart by. This marker
+      # is the last thing the fetcher sequence does, so it is absent precisely
+      # when that sequence did not finish. It carries no if:, so it is skipped
+      # on cancellation and runs otherwise -- every fetcher is
+      # continue-on-error, so a failing fetcher does not suppress it.
+      - name: Mark the fetcher sequence complete
+        id: light_complete
+        run: echo "ok=yes" >> "$GITHUB_OUTPUT"
+
       - name: Snapshot DB for light artifact
         id: snapshot
         if: always()
@@ -3611,7 +3625,16 @@ jobs:
         # merge, hit --require-base, and turn the run red; skipping it instead
         # left the run green with only the Discord embed aware, because
         # download_light is visible to no other gate in this file.
-        if: needs.light.result == 'success' || (needs.light.result == 'cancelled' && steps.download_light.outcome == 'success')
+        # The cancelled cell also requires light_complete, the marker the light
+        # job sets after its last fetcher. Without it a light killed at minute
+        # three reads here exactly like one that finished, because the snapshot
+        # and the upload both run on always(). Merging such an artifact loses no
+        # row (the merge restores and appends) but advances the checkpoint as if
+        # the tick had fetched everything, and nothing reports the gap: on
+        # cancellation the fetch_* outputs are '' or 'skipped', never 'failure',
+        # so no issue gate sees them. Skipping instead leaves the last good
+        # checkpoint in place for the next tick to extend.
+        if: needs.light.result == 'success' || (needs.light.result == 'cancelled' && steps.download_light.outcome == 'success' && needs.light.outputs.light_complete == 'yes')
         run: |
           mkdir -p data
           # --require-base ensures we never let an overlay-only DB through as a
@@ -4115,12 +4138,22 @@ jobs:
           fi
 
       # Skip issue creation on schedule run_attempt == 1 because auto-rerun
-      # will kick in. Only create an issue if (a) manual dispatch, or
-      # (b) schedule but already on attempt >= 2 (rerun didn't fix it).
+      # will kick in -- but that holds only for the failures auto-rerun
+      # actually covers. Its own `if` above fires only when one of the fetch
+      # jobs or light reports a job-level 'failure', and the merge job cannot
+      # appear in its own needs, so a merge STEP failure dispatches no rerun
+      # at all. Before steps.merge.outcome was added to the clause below, such
+      # a run on a scheduled first attempt was neither retried nor ticketed:
+      # only the red run and its mail said anything. Measured on the gate
+      # 2026-09-12: the second clause already listed steps.merge.outcome, so
+      # the omission was in the suppression clause alone.
+      # Only create an issue if (a) manual dispatch, or (b) schedule but
+      # already on attempt >= 2 (rerun didn't fix it), or (c) the failure is
+      # one auto-rerun will never retry.
       - name: Create issue on failure
         if: >-
           always()
-          && (steps.hf_upload.outcome == 'failure' || needs.light.outputs.restore_restored == 'none' || needs.light.outputs.base_check == 'failure' || !(github.event_name == 'schedule' && github.run_attempt == 1))
+          && (steps.merge.outcome == 'failure' || steps.hf_upload.outcome == 'failure' || needs.light.outputs.restore_restored == 'none' || needs.light.outputs.base_check == 'failure' || !(github.event_name == 'schedule' && github.run_attempt == 1))
           && (
             needs.light.outputs.fetch_earthquakes == 'failure' ||
             needs.light.outputs.fetch_tec_event == 'failure' ||
