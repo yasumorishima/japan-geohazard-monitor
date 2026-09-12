@@ -3515,15 +3515,32 @@ jobs:
     # unverifiable). Measured 2026-09-06 against this 150: 33303286706 WAS
     # killed, cancelled at 155.0 min with the Merge step alone at 143.8 and no
     # HF upload that day; 33704140274 ran 149.83 and 33825828789 147.63, all
-    # three against the previous 150. Step
-    # maxima on successful runs: Merge 68.3, HF upload 55.0 (00:00 tick only),
-    # checkpoint upload 14.4, download light 8.4. A kill here loses every job's
-    # fetched data plus the checkpoint advance, so it is now 270: the observed
-    # Merge plus a full HF day is roughly 220-240, and 360 is the hosted max.
+    # three against the previous 150.
+    # Re-measured 2026-09-12 over the nine successful runs then in the API
+    # (34288784227 through 34588400488) plus the cancelled 34604468261, every
+    # figure below read off that run's own step timestamps rather than quoted
+    # from anywhere: Merge light + 6 overlays 35.2-90.4 on the successful runs
+    # but 213.7 on 34604468261; upload checkpoint 11.7-14.4 but 30.6 on that
+    # same run; download light.db 3.9-8.7; and the HF upload, which runs on the
+    # 00:00 tick alone, 38.6 on 34551088828 and skipped in the other eight.
+    # The figures this file carried before -- Merge 68.3, HF 55.0, checkpoint
+    # 14.4, download 8.4 -- understated three of the four, and the 55.0 cannot
+    # have come from the run cited for it, which skipped the HF upload.
+    # A kill here loses every job's fetched data plus the checkpoint advance.
+    # A worst case assembled from the measured maxima -- 8.7 download, 213.7
+    # merge, about 10 coverage, 30.6 checkpoint, 38.6 HF -- is roughly 302,
+    # which 270 cannot hold, so it is now 330 against a hosted maximum of 360.
     # The HF upload was also moved behind the checkpoint upload, so a kill
     # during it no longer costs the checkpoint -- only that day's HF copy,
     # which hf-upload-checkpoint.yml can re-push.
-    timeout-minutes: 270
+    # Residual, deliberately not fixed here: a timeout kill reports
+    # 'cancelled', so no step inside this job can be relied on to report it --
+    # on 34604468261 every substantive step had already succeeded (merge,
+    # coverage, checkpoint upload, prune) and the kill landed on Notify
+    # Discord, which never completed. What that run lost was the notification,
+    # not the checkpoint advance. Alarming on a stalled checkpoint has to live
+    # outside the workflow that is being killed.
+    timeout-minutes: 330
 
     steps:
       - uses: actions/checkout@v4
