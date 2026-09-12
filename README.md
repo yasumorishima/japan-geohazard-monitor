@@ -428,6 +428,37 @@ counts of the same events behind and prices per-cell quantities that cannot be d
 them: the time since the cell's last large isolated shock, and the largest magnitude it has
 ever produced (update 135).
 
+Both were then priced, and the round decided a sign rather than finding a lever. Its design was
+audited three times before freezing and every round found a blocking fault, all three mine: an
+independence claim computed on cells that have had such a shock rather than on the vector a
+family adds, where the same quantity is the count relabelled at -0.94 to -0.88; then the same
+error mirrored, an all-cell correlation describing a tie block that covers 36 to 55 per cent of
+cells rather than the vector, which on its own support sits at -0.46 to -0.57 with the count;
+and a control whose covariance with what it was meant to rule out is zero by construction, so it
+was the arm itself. The frozen text now carries a standing rule from that: never quote a
+correlation computed on a population other than the one the family actually moves. The
+independent check was also written before the run this time, with the absence of its output
+recorded, which repairs a fault the previous two rounds shared.
+Every gate passed and every prediction that would have shown a gain was refuted: the causal arm
+loses 0.0000249 pooled, the largest past magnitude and the negative count weight never left the
+arm so their arcs are exactly zero, and the curve peaks at zero weight. What the round decided
+is that the direction declared in advance is the harmful one. A recent large isolated shock
+raising the score loses at every weight, pooled t from -3.35 to -23.5, and its arc on the hard
+quarter is decisively negative at t -3.72. The opposite direction is not established either: it
+passes the shape bar at one weight of seven at t +0.79, and it received a real causal test,
+live in thirty of thirty-three windows, returning +0.0000134 at t +0.07. So the graded age is
+not a lever in either sign. Recency is not therefore anti-predictive; the licensed statement is
+only about adding that term to this arm, since the arm already prices recency, the perturbation
+carries an implicit bit at a negative weight while the bit at a positive weight raises the same
+quarter at t +7.3, and the count component pushes the other way.
+Two facts close. The negative half of the count weight, never measured before, is monotonically
+harmful from -0.0196 to -0.467 with t from -8.9 to -47, which is a fact about the grid. And
+across two rounds and roughly forty grid points every per-cell additive term has raised the hard
+quarter decisively and paid more than that back on the rest. The arm's map is estimated from
+4,634 isolated shocks at magnitude six and above while the catalogue holds 13,047 at five and a
+half and 35,605 at five, so the next sizing estimates the same field from the graded magnitude
+structure rather than from the sparse top of it (update 136).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
