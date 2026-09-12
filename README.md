@@ -380,9 +380,18 @@ The duller explanation the last of those was built to test is itself refuted, th
 curve peaking at 0.35 inside a range that runs to 0.50. A control adding the count of any shock
 rather than the isolated one behaved as predicted, at precisely zero. Two readings of my own
 were blocked by audit and corrected here: only two of the six families rise on the hard quarter
-throughout rather than all of them, and the best trade across all of them is 2.62 units gained
-there for each unit lost elsewhere against the 3.00 that breaking even needs, at the smallest
-weight on the grids, where I had quoted 1.30 from one family alone. Eighty-seven per cent of
+throughout rather than all of them, and the best trade across the five ADDITIVE families is 2.62
+units gained there for each unit lost elsewhere against the 3.00 that breaking even needs, at
+the smallest weight on the grids, where I had quoted 1.30 from one family alone. A third
+correction, found while designing the next round and verified against the saved array: an
+earlier version of this paragraph said the best trade anywhere on the grids was 2.62, which is
+true only of those five additive families. The sixth family reweights the smoothed map instead
+of adding to the arm, and one of its fixed points shows a positive pooled arc, +0.00038938 with
+a ratio of 15.78. That is not a perturbation that beat the obstruction: its weight is the arm's
+own causal choice in twenty-five of the thirty-three windows, so the arc is non-zero only in the
+eight early windows where the causal path chose a smaller weight, and there it mixes gains and
+losses from +0.0069 to -0.0049. It prices the causal weight choice in the early windows.
+Eighty-seven per cent of
 break-even at the edge of a grid is a boundary of measurement, not a wall, so the claim licensed
 is only that none of the five declared additive perturbations raises pooled skill at any of
 their non-zero weights. Even choosing the best weight per window with that window's own labels
