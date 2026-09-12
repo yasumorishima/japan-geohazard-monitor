@@ -401,6 +401,33 @@ window's labels, but a causal stand-in for it is strong: the arm's own backgroun
 by whether they will carry any shock at all at 0.785. A weight that varies with predicted
 activity, and the weights below this grid's minimum, are what gets measured next.
 
+Both were then measured, and neither pays. A weight that rises with the cell's causally
+predicted activity loses 0.0004 pooled, no fixed value of it raises pooled at all, and the
+curve peaks at zero weight; the own-cell rate at weights below the last grid gives pooled arcs
+of +0.00003 to +0.00009, but with t statistics of +0.69 down to +0.27, no weight satisfying the
+four conditions, and twenty-six of thirty-three windows carrying the same sign at all five
+weights, so five looks are one look. Three readings of my own were withdrawn after audit and
+recomputation: that the small weights cross break-even, that the gate's direction is right, and
+that gating improves the trade. The first is a point estimate that is not resolved; the second
+is a forbidden mechanism sentence that also has a duller explanation, since the gating variable
+is the arm's own first term relabelled; the third compares two falling curves at different
+perturbation sizes, and matched against each other the gate merely shrinks the perturbation on
+both sides. The causal layer is one window: the causal weight is zero in thirty-two of
+thirty-three, so the headline number is one window's arc divided by thirty-three.
+What is decisively measured is the shape of the failure, and it is not the shape of a null. At
+every small weight the gain on the hard quarter has a t statistic between +7.6 and +8.9 and
+appears in twenty-eight to thirty-one windows, while the cost on the rest has a t between -1.6
+and -2.6 and appears in twenty to twenty-three. The pooled sign is the difference between a
+well-measured positive and an unmeasured negative, which is a resolution limit rather than an
+absence of information; at the smallest weight it would take about two hundred windows to
+decide, and this arena has thirty-three. One candidate lever was killed before being proposed:
+collapsing the arm to a per-cell constant inside the window scores 0.0085 above it, but that
+averages over rows later than the row being scored, and the causal version of the same idea
+scores 0.00003 BELOW the arm on the same five probe windows. The next sizing therefore leaves
+counts of the same events behind and prices per-cell quantities that cannot be derived from
+them: the time since the cell's last large isolated shock, and the largest magnitude it has
+ever produced (update 135).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
