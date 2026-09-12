@@ -355,6 +355,22 @@ scores 0.58, rather than in any cell's estimate (update 132). That too is a sizi
 no floor, the nine control worlds are the previous round's own, and the neighbour count is a
 property of the arena's footprint rather than a physical boundary.
 
+Where that leaves the arm was then measured rather than assumed. Pricing the same reference
+levels on that active quarter alone -- a causal climatology, a two-sided rate, a whole-record
+rate and the window's own -- puts the arm below a causal climatology that counts the scored
+event itself, by 0.0247 in eighty-eight per cent of windows, while on the whole problem the
+deployed base rate beats that same climatology by 0.0416. The crossover is mostly about which
+event is counted rather than about the map: swapping the counted event is worth 0.0449 on the
+quarter and the map returns 0.0203 on top of it, so no single base rate serves both halves. A
+claim did not survive the round and is withdrawn here rather than published. The two-sided rate
+gains 0.0287 on that quarter, which holds a quarter of the negatives and so is worth 0.0071
+pooled, but the identity runs in both directions: the same rate loses 0.0415 on the rest and
+0.0240 on the whole, the roll-up reproducing that whole-problem loss to seventeen decimal
+places. A component is not a lever, and the quarter cannot be singled out inside a forecaster
+either, because membership of it is defined by the labels of the very window being scored
+(update 133). That too is a sizing carrying no floor, and the rate that counts the scored event
+was added while the machinery was being written rather than named in the frozen prediction.
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
