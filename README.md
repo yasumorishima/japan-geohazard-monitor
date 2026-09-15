@@ -489,6 +489,29 @@ family, so the next step is a preregistered judgement with a floor that moves th
 map between cells of matched event count and neighbourhood, at least nineteen worlds, with the
 fixed value registered alongside the causal path (update 137).
 
+That judgement was run under a floor that keeps the arm's own map real and moves only the
+increment between cells of the same decile of past event count, the same third of neighbourhood
+density and the same decile of the arm's level, with every world rerunning the causal selection.
+Two easier floors were rejected first, because moving the magnitude factor itself destroys the
+geography the arm already carries and drops every world to about 0.013 below the arm. It is not
+blind: the real numbers were the previous entry's, and a design audit had already run this floor
+with other seeds and found the arm above all nineteen worlds. The first run stopped at a gate
+requiring ninety per cent of cells to move, a number I had guessed; a permutation inside a
+stratum leaves one cell in place on average, so about 88 per cent was expected, and the assertion
+sat before anything was saved or printed. The tolerance was measured without labels and the
+contract re-cut with only that gate and the seeds changed. The second run passed every gate and
+its check, written first, regenerated all 1,254 permutations from their seeds. The verdict is
+REAL on all three: +0.00182522 against a world maximum of +0.00021937 on the primary floor
+(rank one of twenty, world mean -0.00064608), rank one at the hindsight value and on the
+secondary floor. A post-run audit narrowed it, recomputed here: the claim is the increment as a
+whole, whose two parts track the arm's level at +0.92 to +0.98 and -0.95 to -0.99 and nearly
+cancel; it is a static prior over where large isolated mainshocks occur, not a signal of when,
+raising the window-mean AUC from 0.7670 to 0.7688; the real arm beats every world in only four
+of thirty-three windows, so the verdict rests on the mean; and the effective sample is the fifty
+to a hundred target cells per window, not the rows. Every window of this arena is now spent for
+this family, so the next step carries the same increment to the Japan catalogue, where it has
+never been looked at, under its own preregistration and floor (update 138).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
