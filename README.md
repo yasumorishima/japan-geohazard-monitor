@@ -459,6 +459,36 @@ quarter decisively and paid more than that back on the rest. The arm's map is es
 half and 35,605 at five, so the next sizing estimates the same field from the graded magnitude
 structure rather than from the sparse top of it (update 136).
 
+That premise was false, and a five-window probe said so before anything was frozen: the map
+built from isolated shocks at magnitude five is not a denser copy of the map at six, with rank
+correlation -0.21 to -0.13 across cells and a cost of 0.0114 pooled when swapped in. The arm's
+map factorises into the cell's isolated fraction at five and the fraction of those reaching six,
+and the two describe different things. What did move was the isolated fraction counted in rows,
+as the arm counts, times the fraction of ALL past magnitude-five events in the cell that reached
+six, counted in events. It was chosen after fourteen variants on five windows, and eight of the
+thirty-three windows were looked at before freezing. The design audit blocked my description of
+it twice: the second factor is not a seventeen-times denser, different event set, because the
+arm's denominator is already painted from all 78,071 driving events and 69 per cent of the new
+numerator is the arm's own targets; what changed is the unit and composition of a denominator.
+Rivals were built from isolated events only, from rows, from the event factor alone, and as a
+residual orthogonal to the counts, and the check was written before the run.
+Every gate passed and the result landed in the strongest frozen branch: the causal arm gains
++0.00182522 pooled with all four conditions, +0.00166043 with all four on the twenty-five
+windows never looked at, beats the isolated-only rival by +0.00239 and the row-unit rival by
++0.00264 on both sets, and is positive on the wide side of the negatives. A post-run audit
+rebuilt the scores exactly and narrowed the reading in three places, each recomputed: the causal
+selection settles on the shrinkage value the probes favoured, and without it in the grid the
+gain drops to +0.000831 and fails, so what holds is that value on the unseen windows (+0.002302,
+t 3.92), not robustness to the grid; the gain is carried by the all-event denominator, while an
+all-event numerator is not shown to matter; and the trade-off between the two sides of the
+negatives has not gone away but moves along the shrinkage axis, with the chosen value at the
+crossing. It is not called independent of counts, not robust to its best windows (dropping the
+three largest unseen windows fails the bar), and not compared as a ratio with the smoothing
+round, whose increment the arm already contains. The unseen windows are now spent for this
+family, so the next step is a preregistered judgement with a floor that moves the new factor's
+map between cells of matched event count and neighbourhood, at least nineteen worlds, with the
+fixed value registered alongside the causal path (update 137).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
