@@ -407,9 +407,9 @@ jobs:
             # Nothing is lost by skipping, because this was never where
             # corruption of a big DB got caught -- it is gated at write time:
             # merge_checkpoints.py runs PRAGMA integrity_check over the merged
-            # DB and exits non-zero otherwise, and the Snapshot DB step below
-            # runs an untimed PRAGMA integrity_check that must pass before any
-            # artifact is uploaded. Jobs restoring a small own-overlay are
+            # DB and exits non-zero otherwise, and every artifact must
+            # pass an untimed full PRAGMA integrity_check before upload (the small
+            # overlay, or the whole DB when extraction fails). Jobs restoring a small own-overlay are
             # under the threshold and still get the real check here.
             DB_BYTES=$(stat -c %s data/geohazard.db 2>/dev/null || echo 0)
             SKIPPED_BY_SIZE=0
@@ -428,7 +428,7 @@ jobs:
                   # 31075628300 logged "quick_check timed out rc=124; verified
                   # at creation, accepting"). The real guarantee is the
                   # write-time gate described above.
-                  echo "::warning::full integrity check skipped -- DB is ${DB_BYTES} bytes and cannot finish in 1200s. Keeping it: integrity is gated when checkpoints are written (merge_checkpoints.py verify + the untimed check in Snapshot DB), not here."
+                  echo "::warning::full integrity check skipped -- DB is ${DB_BYTES} bytes and cannot finish in 1200s. Keeping it: integrity is gated when checkpoints are written (merge_checkpoints.py verify + the untimed full check every artifact passes before upload), not here."
                 else
                   echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
                 fi
@@ -509,7 +509,20 @@ jobs:
                           raise
                       print(f'journal_mode locked, retrying: {e}')
                       time.sleep(2)
-              r = src.execute('PRAGMA integrity_check').fetchone()[0]
+              # Only this job's own tables are checked here (2026-09-16): the artifact is an
+              # overlay rebuilt from them, which gets its own full integrity_check below, so
+              # a full-DB check here only guarded tables that are never uploaded. On the
+              # full-checkpoint restore it took 35-50 min and once 133+ min, killing the job
+              # at its timeout (run 34919287114). Table-scoped integrity_check needs 3.33+.
+              assert sqlite3.sqlite_version_info >= (3, 33, 0), sqlite3.sqlite_version
+              bad = []
+              for t in ('modis_lst',):
+                  if src.execute('SELECT 1 FROM sqlite_master WHERE type=? AND name=?', ('table', t)).fetchone() is None:
+                      continue
+                  rows = src.execute(f'PRAGMA integrity_check({t})').fetchall()
+                  if rows != [('ok',)]:
+                      bad.append(f'{t}: {rows[0][0]}')
+              r = 'ok' if not bad else '; '.join(bad)
               src.close()
               rm_sidefiles('data/geohazard.db')
               if r != 'ok':
@@ -539,10 +552,19 @@ jobs:
             --src data/geohazard.db \
             --dst data/geohazard_overlay.db \
             --tables modis_lst \
+            && python3 -c "import sqlite3,sys; c=sqlite3.connect('data/geohazard_overlay.db'); r=c.execute('PRAGMA integrity_check').fetchall(); print('overlay integrity_check:', r[:3]); sys.exit(0 if r == [('ok',)] else 1)" \
             && mv data/geohazard_overlay.db data/geohazard.db
 
+      # If extraction failed the whole DB is uploaded instead; it was only table-checked
+      # in Snapshot DB, so it gets the untimed full check here before it may be uploaded.
+      - name: Full integrity check before uploading the whole DB
+        id: fallback_check
+        if: steps.snapshot.outcome == 'success' && steps.extract_overlay.outcome != 'success'
+        run: |
+          python3 -c "import sqlite3,sys; c=sqlite3.connect('data/geohazard.db'); r=c.execute('PRAGMA integrity_check').fetchall(); print('full integrity_check:', r[:3]); sys.exit(0 if r == [('ok',)] else 1)"
+
       - name: Upload modis.db artifact
-        if: always() && steps.snapshot.outcome == 'success'
+        if: always() && steps.snapshot.outcome == 'success' && (steps.extract_overlay.outcome == 'success' || steps.fallback_check.outcome == 'success')
         uses: actions/upload-artifact@v4
         with:
           name: backfill-modis-${{ github.run_id }}
@@ -815,9 +837,9 @@ jobs:
             # Nothing is lost by skipping, because this was never where
             # corruption of a big DB got caught -- it is gated at write time:
             # merge_checkpoints.py runs PRAGMA integrity_check over the merged
-            # DB and exits non-zero otherwise, and the Snapshot DB step below
-            # runs an untimed PRAGMA integrity_check that must pass before any
-            # artifact is uploaded. Jobs restoring a small own-overlay are
+            # DB and exits non-zero otherwise, and every artifact must
+            # pass an untimed full PRAGMA integrity_check before upload (the small
+            # overlay, or the whole DB when extraction fails). Jobs restoring a small own-overlay are
             # under the threshold and still get the real check here.
             DB_BYTES=$(stat -c %s data/geohazard.db 2>/dev/null || echo 0)
             SKIPPED_BY_SIZE=0
@@ -836,7 +858,7 @@ jobs:
                   # 31075628300 logged "quick_check timed out rc=124; verified
                   # at creation, accepting"). The real guarantee is the
                   # write-time gate described above.
-                  echo "::warning::full integrity check skipped -- DB is ${DB_BYTES} bytes and cannot finish in 1200s. Keeping it: integrity is gated when checkpoints are written (merge_checkpoints.py verify + the untimed check in Snapshot DB), not here."
+                  echo "::warning::full integrity check skipped -- DB is ${DB_BYTES} bytes and cannot finish in 1200s. Keeping it: integrity is gated when checkpoints are written (merge_checkpoints.py verify + the untimed full check every artifact passes before upload), not here."
                 else
                   echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
                 fi
@@ -935,7 +957,20 @@ jobs:
                           raise
                       print(f'journal_mode locked, retrying: {e}')
                       time.sleep(2)
-              r = src.execute('PRAGMA integrity_check').fetchone()[0]
+              # Only this job's own tables are checked here (2026-09-16): the artifact is an
+              # overlay rebuilt from them, which gets its own full integrity_check below, so
+              # a full-DB check here only guarded tables that are never uploaded. On the
+              # full-checkpoint restore it took 35-50 min and once 133+ min, killing the job
+              # at its timeout (run 34919287114). Table-scoped integrity_check needs 3.33+.
+              assert sqlite3.sqlite_version_info >= (3, 33, 0), sqlite3.sqlite_version
+              bad = []
+              for t in ('so2_column',):
+                  if src.execute('SELECT 1 FROM sqlite_master WHERE type=? AND name=?', ('table', t)).fetchone() is None:
+                      continue
+                  rows = src.execute(f'PRAGMA integrity_check({t})').fetchall()
+                  if rows != [('ok',)]:
+                      bad.append(f'{t}: {rows[0][0]}')
+              r = 'ok' if not bad else '; '.join(bad)
               src.close()
               rm_sidefiles('data/geohazard.db')
               if r != 'ok':
@@ -965,10 +1000,19 @@ jobs:
             --src data/geohazard.db \
             --dst data/geohazard_overlay.db \
             --tables so2_column \
+            && python3 -c "import sqlite3,sys; c=sqlite3.connect('data/geohazard_overlay.db'); r=c.execute('PRAGMA integrity_check').fetchall(); print('overlay integrity_check:', r[:3]); sys.exit(0 if r == [('ok',)] else 1)" \
             && mv data/geohazard_overlay.db data/geohazard.db
 
+      # If extraction failed the whole DB is uploaded instead; it was only table-checked
+      # in Snapshot DB, so it gets the untimed full check here before it may be uploaded.
+      - name: Full integrity check before uploading the whole DB
+        id: fallback_check
+        if: steps.snapshot.outcome == 'success' && steps.extract_overlay.outcome != 'success'
+        run: |
+          python3 -c "import sqlite3,sys; c=sqlite3.connect('data/geohazard.db'); r=c.execute('PRAGMA integrity_check').fetchall(); print('full integrity_check:', r[:3]); sys.exit(0 if r == [('ok',)] else 1)"
+
       - name: Upload so2.db artifact
-        if: always() && steps.snapshot.outcome == 'success'
+        if: always() && steps.snapshot.outcome == 'success' && (steps.extract_overlay.outcome == 'success' || steps.fallback_check.outcome == 'success')
         uses: actions/upload-artifact@v4
         with:
           name: backfill-so2-${{ github.run_id }}
@@ -1242,9 +1286,9 @@ jobs:
             # Nothing is lost by skipping, because this was never where
             # corruption of a big DB got caught -- it is gated at write time:
             # merge_checkpoints.py runs PRAGMA integrity_check over the merged
-            # DB and exits non-zero otherwise, and the Snapshot DB step below
-            # runs an untimed PRAGMA integrity_check that must pass before any
-            # artifact is uploaded. Jobs restoring a small own-overlay are
+            # DB and exits non-zero otherwise, and every artifact must
+            # pass an untimed full PRAGMA integrity_check before upload (the small
+            # overlay, or the whole DB when extraction fails). Jobs restoring a small own-overlay are
             # under the threshold and still get the real check here.
             DB_BYTES=$(stat -c %s data/geohazard.db 2>/dev/null || echo 0)
             SKIPPED_BY_SIZE=0
@@ -1263,7 +1307,7 @@ jobs:
                   # 31075628300 logged "quick_check timed out rc=124; verified
                   # at creation, accepting"). The real guarantee is the
                   # write-time gate described above.
-                  echo "::warning::full integrity check skipped -- DB is ${DB_BYTES} bytes and cannot finish in 1200s. Keeping it: integrity is gated when checkpoints are written (merge_checkpoints.py verify + the untimed check in Snapshot DB), not here."
+                  echo "::warning::full integrity check skipped -- DB is ${DB_BYTES} bytes and cannot finish in 1200s. Keeping it: integrity is gated when checkpoints are written (merge_checkpoints.py verify + the untimed full check every artifact passes before upload), not here."
                 else
                   echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
                 fi
@@ -1371,7 +1415,20 @@ jobs:
                           raise
                       print(f'journal_mode locked, retrying: {e}')
                       time.sleep(2)
-              r = src.execute('PRAGMA integrity_check').fetchone()[0]
+              # Only this job's own tables are checked here (2026-09-16): the artifact is an
+              # overlay rebuilt from them, which gets its own full integrity_check below, so
+              # a full-DB check here only guarded tables that are never uploaded. On the
+              # full-checkpoint restore it took 35-50 min and once 133+ min, killing the job
+              # at its timeout (run 34919287114). Table-scoped integrity_check needs 3.33+.
+              assert sqlite3.sqlite_version_info >= (3, 33, 0), sqlite3.sqlite_version
+              bad = []
+              for t in ('cloud_fraction',):
+                  if src.execute('SELECT 1 FROM sqlite_master WHERE type=? AND name=?', ('table', t)).fetchone() is None:
+                      continue
+                  rows = src.execute(f'PRAGMA integrity_check({t})').fetchall()
+                  if rows != [('ok',)]:
+                      bad.append(f'{t}: {rows[0][0]}')
+              r = 'ok' if not bad else '; '.join(bad)
               src.close()
               rm_sidefiles('data/geohazard.db')
               if r != 'ok':
@@ -1401,10 +1458,19 @@ jobs:
             --src data/geohazard.db \
             --dst data/geohazard_overlay.db \
             --tables cloud_fraction \
+            && python3 -c "import sqlite3,sys; c=sqlite3.connect('data/geohazard_overlay.db'); r=c.execute('PRAGMA integrity_check').fetchall(); print('overlay integrity_check:', r[:3]); sys.exit(0 if r == [('ok',)] else 1)" \
             && mv data/geohazard_overlay.db data/geohazard.db
 
+      # If extraction failed the whole DB is uploaded instead; it was only table-checked
+      # in Snapshot DB, so it gets the untimed full check here before it may be uploaded.
+      - name: Full integrity check before uploading the whole DB
+        id: fallback_check
+        if: steps.snapshot.outcome == 'success' && steps.extract_overlay.outcome != 'success'
+        run: |
+          python3 -c "import sqlite3,sys; c=sqlite3.connect('data/geohazard.db'); r=c.execute('PRAGMA integrity_check').fetchall(); print('full integrity_check:', r[:3]); sys.exit(0 if r == [('ok',)] else 1)"
+
       - name: Upload cloud.db artifact
-        if: always() && steps.snapshot.outcome == 'success'
+        if: always() && steps.snapshot.outcome == 'success' && (steps.extract_overlay.outcome == 'success' || steps.fallback_check.outcome == 'success')
         uses: actions/upload-artifact@v4
         with:
           name: backfill-cloud-${{ github.run_id }}
@@ -1684,9 +1750,9 @@ jobs:
             # Nothing is lost by skipping, because this was never where
             # corruption of a big DB got caught -- it is gated at write time:
             # merge_checkpoints.py runs PRAGMA integrity_check over the merged
-            # DB and exits non-zero otherwise, and the Snapshot DB step below
-            # runs an untimed PRAGMA integrity_check that must pass before any
-            # artifact is uploaded. Jobs restoring a small own-overlay are
+            # DB and exits non-zero otherwise, and every artifact must
+            # pass an untimed full PRAGMA integrity_check before upload (the small
+            # overlay, or the whole DB when extraction fails). Jobs restoring a small own-overlay are
             # under the threshold and still get the real check here.
             DB_BYTES=$(stat -c %s data/geohazard.db 2>/dev/null || echo 0)
             SKIPPED_BY_SIZE=0
@@ -1705,7 +1771,7 @@ jobs:
                   # 31075628300 logged "quick_check timed out rc=124; verified
                   # at creation, accepting"). The real guarantee is the
                   # write-time gate described above.
-                  echo "::warning::full integrity check skipped -- DB is ${DB_BYTES} bytes and cannot finish in 1200s. Keeping it: integrity is gated when checkpoints are written (merge_checkpoints.py verify + the untimed check in Snapshot DB), not here."
+                  echo "::warning::full integrity check skipped -- DB is ${DB_BYTES} bytes and cannot finish in 1200s. Keeping it: integrity is gated when checkpoints are written (merge_checkpoints.py verify + the untimed full check every artifact passes before upload), not here."
                 else
                   echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
                 fi
@@ -1841,7 +1907,20 @@ jobs:
                           raise
                       print(f'journal_mode locked, retrying: {e}')
                       time.sleep(2)
-              r = src.execute('PRAGMA integrity_check').fetchone()[0]
+              # Only this job's own tables are checked here (2026-09-16): the artifact is an
+              # overlay rebuilt from them, which gets its own full integrity_check below, so
+              # a full-DB check here only guarded tables that are never uploaded. On the
+              # full-checkpoint restore it took 35-50 min and once 133+ min, killing the job
+              # at its timeout (run 34919287114). Table-scoped integrity_check needs 3.33+.
+              assert sqlite3.sqlite_version_info >= (3, 33, 0), sqlite3.sqlite_version
+              bad = []
+              for t in ('snet_waveform', 'fnet_waveform'):
+                  if src.execute('SELECT 1 FROM sqlite_master WHERE type=? AND name=?', ('table', t)).fetchone() is None:
+                      continue
+                  rows = src.execute(f'PRAGMA integrity_check({t})').fetchall()
+                  if rows != [('ok',)]:
+                      bad.append(f'{t}: {rows[0][0]}')
+              r = 'ok' if not bad else '; '.join(bad)
               src.close()
               rm_sidefiles('data/geohazard.db')
               if r != 'ok':
@@ -1871,10 +1950,19 @@ jobs:
             --src data/geohazard.db \
             --dst data/geohazard_overlay.db \
             --tables snet_waveform,fnet_waveform \
+            && python3 -c "import sqlite3,sys; c=sqlite3.connect('data/geohazard_overlay.db'); r=c.execute('PRAGMA integrity_check').fetchall(); print('overlay integrity_check:', r[:3]); sys.exit(0 if r == [('ok',)] else 1)" \
             && mv data/geohazard_overlay.db data/geohazard.db
 
+      # If extraction failed the whole DB is uploaded instead; it was only table-checked
+      # in Snapshot DB, so it gets the untimed full check here before it may be uploaded.
+      - name: Full integrity check before uploading the whole DB
+        id: fallback_check
+        if: steps.snapshot.outcome == 'success' && steps.extract_overlay.outcome != 'success'
+        run: |
+          python3 -c "import sqlite3,sys; c=sqlite3.connect('data/geohazard.db'); r=c.execute('PRAGMA integrity_check').fetchall(); print('full integrity_check:', r[:3]); sys.exit(0 if r == [('ok',)] else 1)"
+
       - name: Upload snet.db artifact
-        if: always() && steps.snapshot.outcome == 'success'
+        if: always() && steps.snapshot.outcome == 'success' && (steps.extract_overlay.outcome == 'success' || steps.fallback_check.outcome == 'success')
         uses: actions/upload-artifact@v4
         with:
           name: backfill-snet-${{ github.run_id }}
@@ -2145,9 +2233,9 @@ jobs:
             # Nothing is lost by skipping, because this was never where
             # corruption of a big DB got caught -- it is gated at write time:
             # merge_checkpoints.py runs PRAGMA integrity_check over the merged
-            # DB and exits non-zero otherwise, and the Snapshot DB step below
-            # runs an untimed PRAGMA integrity_check that must pass before any
-            # artifact is uploaded. Jobs restoring a small own-overlay are
+            # DB and exits non-zero otherwise, and every artifact must
+            # pass an untimed full PRAGMA integrity_check before upload (the small
+            # overlay, or the whole DB when extraction fails). Jobs restoring a small own-overlay are
             # under the threshold and still get the real check here.
             DB_BYTES=$(stat -c %s data/geohazard.db 2>/dev/null || echo 0)
             SKIPPED_BY_SIZE=0
@@ -2166,7 +2254,7 @@ jobs:
                   # 31075628300 logged "quick_check timed out rc=124; verified
                   # at creation, accepting"). The real guarantee is the
                   # write-time gate described above.
-                  echo "::warning::full integrity check skipped -- DB is ${DB_BYTES} bytes and cannot finish in 1200s. Keeping it: integrity is gated when checkpoints are written (merge_checkpoints.py verify + the untimed check in Snapshot DB), not here."
+                  echo "::warning::full integrity check skipped -- DB is ${DB_BYTES} bytes and cannot finish in 1200s. Keeping it: integrity is gated when checkpoints are written (merge_checkpoints.py verify + the untimed full check every artifact passes before upload), not here."
                 else
                   echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
                 fi
@@ -2276,7 +2364,20 @@ jobs:
                           raise
                       print(f'journal_mode locked, retrying: {e}')
                       time.sleep(2)
-              r = src.execute('PRAGMA integrity_check').fetchone()[0]
+              # Only this job's own tables are checked here (2026-09-16): the artifact is an
+              # overlay rebuilt from them, which gets its own full integrity_check below, so
+              # a full-DB check here only guarded tables that are never uploaded. On the
+              # full-checkpoint restore it took 35-50 min and once 133+ min, killing the job
+              # at its timeout (run 34919287114). Table-scoped integrity_check needs 3.33+.
+              assert sqlite3.sqlite_version_info >= (3, 33, 0), sqlite3.sqlite_version
+              bad = []
+              for t in ('hinet_waveform',):
+                  if src.execute('SELECT 1 FROM sqlite_master WHERE type=? AND name=?', ('table', t)).fetchone() is None:
+                      continue
+                  rows = src.execute(f'PRAGMA integrity_check({t})').fetchall()
+                  if rows != [('ok',)]:
+                      bad.append(f'{t}: {rows[0][0]}')
+              r = 'ok' if not bad else '; '.join(bad)
               src.close()
               rm_sidefiles('data/geohazard.db')
               if r != 'ok':
@@ -2306,10 +2407,19 @@ jobs:
             --src data/geohazard.db \
             --dst data/geohazard_overlay.db \
             --tables hinet_waveform \
+            && python3 -c "import sqlite3,sys; c=sqlite3.connect('data/geohazard_overlay.db'); r=c.execute('PRAGMA integrity_check').fetchall(); print('overlay integrity_check:', r[:3]); sys.exit(0 if r == [('ok',)] else 1)" \
             && mv data/geohazard_overlay.db data/geohazard.db
 
+      # If extraction failed the whole DB is uploaded instead; it was only table-checked
+      # in Snapshot DB, so it gets the untimed full check here before it may be uploaded.
+      - name: Full integrity check before uploading the whole DB
+        id: fallback_check
+        if: steps.snapshot.outcome == 'success' && steps.extract_overlay.outcome != 'success'
+        run: |
+          python3 -c "import sqlite3,sys; c=sqlite3.connect('data/geohazard.db'); r=c.execute('PRAGMA integrity_check').fetchall(); print('full integrity_check:', r[:3]); sys.exit(0 if r == [('ok',)] else 1)"
+
       - name: Upload hinet.db artifact
-        if: always() && steps.snapshot.outcome == 'success'
+        if: always() && steps.snapshot.outcome == 'success' && (steps.extract_overlay.outcome == 'success' || steps.fallback_check.outcome == 'success')
         uses: actions/upload-artifact@v4
         with:
           name: backfill-hinet-${{ github.run_id }}
@@ -3350,9 +3460,9 @@ jobs:
             # Nothing is lost by skipping, because this was never where
             # corruption of a big DB got caught -- it is gated at write time:
             # merge_checkpoints.py runs PRAGMA integrity_check over the merged
-            # DB and exits non-zero otherwise, and the Snapshot DB step below
-            # runs an untimed PRAGMA integrity_check that must pass before any
-            # artifact is uploaded. Jobs restoring a small own-overlay are
+            # DB and exits non-zero otherwise, and every artifact must
+            # pass an untimed full PRAGMA integrity_check before upload (the small
+            # overlay, or the whole DB when extraction fails). Jobs restoring a small own-overlay are
             # under the threshold and still get the real check here.
             DB_BYTES=$(stat -c %s data/geohazard.db 2>/dev/null || echo 0)
             SKIPPED_BY_SIZE=0
@@ -3371,7 +3481,7 @@ jobs:
                   # 31075628300 logged "quick_check timed out rc=124; verified
                   # at creation, accepting"). The real guarantee is the
                   # write-time gate described above.
-                  echo "::warning::full integrity check skipped -- DB is ${DB_BYTES} bytes and cannot finish in 1200s. Keeping it: integrity is gated when checkpoints are written (merge_checkpoints.py verify + the untimed check in Snapshot DB), not here."
+                  echo "::warning::full integrity check skipped -- DB is ${DB_BYTES} bytes and cannot finish in 1200s. Keeping it: integrity is gated when checkpoints are written (merge_checkpoints.py verify + the untimed full check every artifact passes before upload), not here."
                 else
                   echo "::warning::full integrity check timed out (rc=$integrity_rc) -- keeping DB (quick check passed at restore step)"
                 fi
@@ -3453,7 +3563,20 @@ jobs:
                           raise
                       print(f'journal_mode locked, retrying: {e}')
                       time.sleep(2)
-              r = src.execute('PRAGMA integrity_check').fetchone()[0]
+              # Only this job's own tables are checked here (2026-09-16): the artifact is an
+              # overlay rebuilt from them, which gets its own full integrity_check below, so
+              # a full-DB check here only guarded tables that are never uploaded. On the
+              # full-checkpoint restore it took 35-50 min and once 133+ min, killing the job
+              # at its timeout (run 34919287114). Table-scoped integrity_check needs 3.33+.
+              assert sqlite3.sqlite_version_info >= (3, 33, 0), sqlite3.sqlite_version
+              bad = []
+              for t in ('gnss_tec',):
+                  if src.execute('SELECT 1 FROM sqlite_master WHERE type=? AND name=?', ('table', t)).fetchone() is None:
+                      continue
+                  rows = src.execute(f'PRAGMA integrity_check({t})').fetchall()
+                  if rows != [('ok',)]:
+                      bad.append(f'{t}: {rows[0][0]}')
+              r = 'ok' if not bad else '; '.join(bad)
               src.close()
               rm_sidefiles('data/geohazard.db')
               if r != 'ok':
@@ -3483,10 +3606,19 @@ jobs:
             --src data/geohazard.db \
             --dst data/geohazard_overlay.db \
             --tables gnss_tec \
+            && python3 -c "import sqlite3,sys; c=sqlite3.connect('data/geohazard_overlay.db'); r=c.execute('PRAGMA integrity_check').fetchall(); print('overlay integrity_check:', r[:3]); sys.exit(0 if r == [('ok',)] else 1)" \
             && mv data/geohazard_overlay.db data/geohazard.db
 
+      # If extraction failed the whole DB is uploaded instead; it was only table-checked
+      # in Snapshot DB, so it gets the untimed full check here before it may be uploaded.
+      - name: Full integrity check before uploading the whole DB
+        id: fallback_check
+        if: steps.snapshot.outcome == 'success' && steps.extract_overlay.outcome != 'success'
+        run: |
+          python3 -c "import sqlite3,sys; c=sqlite3.connect('data/geohazard.db'); r=c.execute('PRAGMA integrity_check').fetchall(); print('full integrity_check:', r[:3]); sys.exit(0 if r == [('ok',)] else 1)"
+
       - name: Upload gnss.db artifact
-        if: always() && steps.snapshot.outcome == 'success'
+        if: always() && steps.snapshot.outcome == 'success' && (steps.extract_overlay.outcome == 'success' || steps.fallback_check.outcome == 'success')
         uses: actions/upload-artifact@v4
         with:
           name: backfill-gnss-${{ github.run_id }}
