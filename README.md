@@ -512,6 +512,22 @@ to a hundred target cells per window, not the rows. Every window of this arena i
 this family, so the next step carries the same increment to the Japan catalogue, where it has
 never been looked at, under its own preregistration and floor (update 138).
 
+That step was taken on 163 Japan cells chosen by the global arena rule, with an isolated
+magnitude-six target and thirty-four judged windows. Only three to fifteen cells carry a target
+per window, and two design audits measured the power before freezing: on twelve global
+sub-arenas of that size the procedure ranked the known increment in the top five of a hundred
+in five of twelve on the primary floor. The frozen verdict is not replicated at this power: the
+causal increment over the arm was +0.0055 and ranked 22 of 100 on the primary floor (10 of 100
+at hindsight). The secondary, residual floor ranked it 2 of 100, which the contract reports as a
+number only. The map arm itself sits 0.0041 below the climatology here. The frozen independent
+check failed on four of eleven items. The fault is a knife edge in the contract and the run, not
+the checker: neighbourhood density counted cells within 2.0 degrees, cells two degrees apart
+along a meridian sit exactly on it, and the run's radian arithmetic dropped 47 of 92 such pairs.
+Using the run's values reproduces every permutation and world score exactly, which verifies what
+was run but not the contract's floor. The same knife edge is in the global geometry, where 526
+of 2,280 cells get a density that depends on latitude; the REAL verdict above stands as a valid
+within-strata permutation, but its density was never the literal count (update 139).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
