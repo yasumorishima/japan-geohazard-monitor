@@ -11,7 +11,7 @@ name: Backfill Data
 # fetcher's runaway from taking out the whole batch.
 #
 # Topology:
-#   fetch-modis  (timeout 240m): MODIS LST           -> modis.db artifact
+#   fetch-modis  (timeout 330m): MODIS LST           -> modis.db artifact
 #   fetch-so2    (timeout 120m): OMI SO2 column      -> so2.db artifact
 #   fetch-cloud  (timeout 150m): MODIS cloud_frac    -> cloud.db artifact
 #   fetch-snet   (timeout 240m): win32tools install
@@ -151,7 +151,14 @@ jobs:
     # rows / 2026-06-18 while the fetch itself completes fine (413 records
     # on that run that never got persisted). light took 178min on the same
     # run and now sits at 300; fetch-snet and fetch-hinet are at 240.
-    timeout-minutes: 240
+    # 240 -> 330 (2026-09-16). Run 34919287114 was killed at 240 min inside Snapshot DB:
+    # restore 36 min, fetch 70 min, then the untimed full integrity_check ran 133+ min
+    # against its usual 35-50 min (the 14 runs before it: 35-50 min, job 143-159 min).
+    # Scoping that check to modis_lst was tried and rejected (PR #209): a table-scoped
+    # integrity_check returns ok when the table tree points at another tree page, and
+    # the overlay then silently carries the other table rows. So the full check stays
+    # and the job gets the headroom instead; 330 stays under the 360 min hosted limit.
+    timeout-minutes: 330
     outputs:
       fetch_modis_lst: ${{ steps.fetch_modis_lst.outcome }}
       snapshot_outcome: ${{ steps.snapshot.outcome }}
