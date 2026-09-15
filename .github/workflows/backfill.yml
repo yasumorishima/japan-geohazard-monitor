@@ -11,7 +11,7 @@ name: Backfill Data
 # fetcher's runaway from taking out the whole batch.
 #
 # Topology:
-#   fetch-modis  (timeout 240m): MODIS LST           -> modis.db artifact
+#   fetch-modis  (timeout 330m): MODIS LST           -> modis.db artifact
 #   fetch-so2    (timeout 120m): OMI SO2 column      -> so2.db artifact
 #   fetch-cloud  (timeout 150m): MODIS cloud_frac    -> cloud.db artifact
 #   fetch-snet   (timeout 240m): win32tools install
@@ -131,8 +131,8 @@ concurrency:
 
 jobs:
   # =====================================================================
-  # FETCH-MODIS — MODIS LST only. Typical runtime ~70min; timeout 240m
-  # leaves slack for Phase 2 random-control fetches.
+  # FETCH-MODIS — MODIS LST only. The fetch step takes ~70 min; the whole
+  # job 132-158 min, timeout 330m (see the comment on timeout-minutes below).
   # =====================================================================
   fetch-modis:
     if: >-
@@ -151,7 +151,17 @@ jobs:
     # rows / 2026-06-18 while the fetch itself completes fine (413 records
     # on that run that never got persisted). light took 178min on the same
     # run and now sits at 300; fetch-snet and fetch-hinet are at 240.
-    timeout-minutes: 240
+    # 240 -> 330 (2026-09-16). Run 34919287114 was killed at 240 min inside Snapshot DB:
+    # restore 36 min, fetch 70 min, then Snapshot DB (WAL checkpoint, journal switch and
+    # the untimed full integrity_check) ran 133+ min against its usual 35-50 min (the 14
+    # successful runs before it: Snapshot 35-50 min, whole job 132-158 min).
+    # Scoping that check to modis_lst was tried and rejected (PR #209): a table-scoped
+    # integrity_check returns ok when the table tree points at another tree page, and
+    # the overlay then silently carries the other table rows. So the full check stays
+    # and the job gets the headroom instead; 330 stays under the 360 min hosted limit.
+    # Residual: the step caps still allow about 216 min before Snapshot starts (restore
+    # 90 + fetch 120), so a run slow in all three phases at once can still reach 330.
+    timeout-minutes: 330
     outputs:
       fetch_modis_lst: ${{ steps.fetch_modis_lst.outcome }}
       snapshot_outcome: ${{ steps.snapshot.outcome }}
@@ -3540,7 +3550,7 @@ jobs:
     # that slow run took about 265 min, which 330 holds with room. Second,
     # concurrency above is cancel-in-progress: false, so a running pass is
     # never killed by the next cron -- queued ticks are superseded instead --
-    # which means light 300 plus merge 330 sanctions a pass of up to 630 min
+    # which means fetch-modis 330 plus merge 330 sanctions a pass of up to 660 min
     # against a 180 min cron.
     # The HF upload was also moved behind the checkpoint upload, so a kill
     # during it no longer costs the checkpoint -- only that day's HF copy,
