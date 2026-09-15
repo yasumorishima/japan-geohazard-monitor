@@ -82,6 +82,7 @@ Moved out of the README on 2026-08-23, unchanged.  Every step below is the text 
 - [Checkpoint chain expiry: the base DB was silently rebuilt from empty (2026-07-24, recovered 2026-07-29, PR #197; guard extended 2026-08-01, PR #198)](#checkpoint-chain-expiry-the-base-db-was-silently-rebuilt-from-empty-2026-07-24-recovered-2026-07-29-pr-197-guard-extended-2026-08-01-pr-198)
 - [Artifact inventory bounded by count, and three quiet failure modes in the fetch jobs (2026-08-06, PRs #199-#202)](#artifact-inventory-bounded-by-count-and-three-quiet-failure-modes-in-the-fetch-jobs-2026-08-06-prs-199-202)
 - [The three open items from the section above, closed by measurement (2026-08-07, run 31132546412)](#the-three-open-items-from-the-section-above-closed-by-measurement-2026-08-07-run-31132546412)
+- [fetch-modis killed by its own integrity check: headroom instead of a narrower check (2026-09-16, PR #210)](#fetch-modis-killed-by-its-own-integrity-check-headroom-instead-of-a-narrower-check-2026-09-16-pr-210)
 
 ---
 
@@ -720,3 +721,27 @@ observation, recorded without a conclusion attached: the `dates` endpoint for th
 `MOD11A1` returns 404 at this point, while `main()` decides daily-versus-8-day availability from
 the global `/products` listing -- a listing entry and a per-point 404 can therefore disagree. That
 is unrelated to the frontier question settled here.
+
+### fetch-modis killed by its own integrity check: headroom instead of a narrower check (2026-09-16, PR #210)
+
+Scheduled run 34919287114 ended `cancelled` although its `merge` job succeeded in 92 minutes: the
+`fetch-modis` job hit its 240-minute timeout inside `Snapshot DB`. The phases were restore 36 min,
+fetch 70 min, then the step itself 133+ min, against 35-50 min in the fourteen successful runs
+before it, where the whole job took 132-158 min. The step is dominated by the untimed full-DB
+`PRAGMA integrity_check` on the 42 GB+ checkpoint that `fetch-modis` restores in full.
+
+The obvious repair -- scope that check to the one table the job owns, `PRAGMA
+integrity_check(modis_lst)` -- was implemented, reviewed and rejected (PR #209, closed). A
+table-scoped check does not detect a b-tree of one table pointing at a page of another. Measured on
+SQLite 3.40.1 by redirecting a child pointer of table `a` to a leaf page of table `b`:
+`integrity_check(a)` returns `ok`, the full check reports `2nd reference to page 9`, 17 of `a`'s 400
+rows carry `b`'s payload, and an overlay built from `a` by `ATTACH` + `INSERT ... SELECT` copies
+those rows and passes its own full check. That is precisely the artifact this job uploads, so
+narrowing the check would let wrong-but-structurally-valid rows into the merge unnoticed.
+
+PR #210 therefore keeps the full check and raises `fetch-modis` to `timeout-minutes: 330`, under the
+360-minute hosted-runner limit. Nothing else needs the old 240: `merge` starts its own clock only
+after all seven fetch jobs end, `concurrency` is `cancel-in-progress: false`, and a cancelled (as
+opposed to failed) job does not change the issue or rerun gates. One residual is written into the
+workflow rather than fixed: the step caps still allow about 216 minutes before `Snapshot DB` starts
+(restore 90 + fetch 120), so a run slow in all three phases at once can still reach 330.
