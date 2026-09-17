@@ -546,6 +546,20 @@ sized is a within-window activity term, not a depth term; the declared control m
 permuting the flag destroys the column magnitude as well as its direction. There is no floor in
 that round, so none of it is a claim about the Earth (update 140).
 
+The floor for that judgement was then built and measured before anything was pre-registered, and
+the judgement was abandoned. Three floors -- a circular shift of the cell-window profile, an
+exchange of profiles between cells inside strata, and a straight permutation in time -- all share
+the real column's cell-window level exactly, so only the alignment differs. In eight windows of
+eight, under all three, every world scored higher than the real column. The permutation floor
+carries no future, so this is not an oracle: the true within-window alignment of recent activity
+is anti-predictive for an isolated mainshock. Splitting the gain at the same weight, the
+cell-window level is worth +0.0104 with eight of eight windows positive and the within-window part
+-0.0105 with none of them; that level is not an arm, because it averages over rows later than the
+one being scored, and a cell that hosts the mainshock has its level raised by the aftershocks that
+follow it. Reading a slower causal level instead was refuted too: +0.0027 at 33 days falling to
++0.0012 at 366, near zero when frozen at the window start, and negative on the active-cell reading
+in all ten variants (update 141).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
