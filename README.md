@@ -560,6 +560,19 @@ follow it. Reading a slower causal level instead was refuted too: +0.0027 at 33 
 +0.0012 at 366, near zero when frozen at the window start, and negative on the active-cell reading
 in all ten variants (update 141).
 
+The same question was then put to every within-window column the arena already holds: the six ETAS
+variants and the cumulative count in the feature file, which the global arm never reads, plus the
+trailing activity column. Each was added at both signs and priced against nine worlds that permute
+it in time inside each cell-window with the level held fixed. All 128 comparisons -- eight columns,
+eight windows, two signs -- agree: at a positive weight the real column ranks tenth of ten every
+time, and at a negative weight first of ten every time. One reading covers that symmetry -- the
+real column is a level plus a harmful structure and a world is the same level plus neutral noise.
+What is closed is narrow: every within-window column this arena holds is a functional of
+magnitude-weighted intensity, and the within-window ordering of intensity is anti-predictive for
+this target. A shape rather than an amount -- how the trailing magnitude distribution moves, how
+compact the trailing events are, how regular their inter-event times are -- is not proportional to
+how much aftershock activity a cell produces and has not been measured (update 142).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
