@@ -573,6 +573,25 @@ this target. A shape rather than an amount -- how the trailing magnitude distrib
 compact the trailing events are, how regular their inter-event times are -- is not proportional to
 how much aftershock activity a cell produces and has not been measured (update 142).
 
+It has now been measured, and it carries nothing. Three shapes were built; two failed outright and
+the third -- the share of the 33-day trailing weight in the most recent 15 days -- passed a
+criterion declared before the run and was, on the mainshock side, the first positive column in this
+arc (+0.0039, seven of eight windows). A design audit blocked the judgement drafted on it, on four
+counts that all reproduced: inside a cell-window the column's deviation correlates +0.87 to +0.93
+with the trailing amount, so the floor deleted when the cell was active rather than how its
+activity was split; the criterion is met by the within-window cumulative count, a monotone time
+trend with no content, in eight windows of eight; the twenty-five windows held back were already
+scored by the preceding round with a sibling column, which is also where the weight came from; and
+a clause about the ETAS variants on the mainshock side was never measured. A repaired floor, which
+permutes only within quartiles of the trailing amount, was then built -- and the content-free
+columns passed that too. Measured directly, the row's index inside the window, alone, gives
++0.0019 to +0.0039 on the mainshock side, and the cumulative count +0.0089 at eight of eight; kept
+positives sit at mean position 0.5189 in the window against 0.4999 for negatives. Removing the
+arm's own within-window drift is worth +0.095 pooled and +0.115 on the mainshock side, but that
+removal averages over later rows and is not causal, and its causal form was closed earlier at
+-0.00003. What is closed is a shape, not a ceiling: the next lever has to be something a
+within-window position cannot imitate (update 143).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
