@@ -528,6 +528,24 @@ was run but not the contract's floor. The same knife edge is in the global geome
 of 2,280 cells get a density that depends on latitude; the REAL verdict above stands as a valid
 within-strata permutation, but its density was never the literal count (update 139).
 
+Every term added since that arc began is fixed for a cell across the whole scoring year, so it can
+reorder cells but never the three-day steps inside one cell-year, which is where the arm is weakest
+(0.5785 against 0.8296). The next round built the first term that is mostly not cell-constant, from
+an observable the project had never read: event depth, which the catalogue reader drops. It failed
+its own gate. The trailing sums were differences of float32 cumulative sums; the cumulative sums
+reach 600 while a 33-day window can hold 1e-6, so 32 of 200 gate draws exceeded tolerance and 37
+returned exact zero where the truth lay between 1e-12 and 1e-6 -- the same knife edge as above, now
+in floating point. The contract was not loosened. The re-cut takes the trailing sum as a direct sum
+of eleven bins, which cancels nothing (max relative error 4.21e-16), and its independent check
+passes 19 of 19. The window-constant depth map then passes the four conditions in no reading at any
+grid point. The within-window column does move the arm, +0.00094050 under the causal rule with all
+four conditions, raising the pooled, active and dead readings together. But a column built from the
+same field with the deep flag simply deleted reaches +0.00116444 under the same rule, and
+orthogonalising that direction out of the depth column leaves +0.00029472, which fails. What was
+sized is a within-window activity term, not a depth term; the declared control missed it because
+permuting the flag destroys the column magnitude as well as its direction. There is no floor in
+that round, so none of it is a claim about the Earth (update 140).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
