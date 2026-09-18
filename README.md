@@ -592,6 +592,27 @@ removal averages over later rows and is not causal, and its causal form was clos
 -0.00003. What is closed is a shape, not a ceiling: the next lever has to be something a
 within-window position cannot imitate (update 143).
 
+The next entry put two numbers that had been lying beside each other onto one axis, and the first
+thing it found was a leak of its own. The band of M>=4.5 events the arm already sees runs at 2.667
+times its own local background in the 34 days before an isolated M>=6, measured on sixty targets;
+the arm scores 0.579 on the rows of cells that hold a target in that year. Read out of one piece
+of code on 2,703 targets, the elevation is 2.261 for the estimator that produced the 2.667, 2.167
+with the disc moved to the cell centre, 2.006 for the Gaussian at the epicentre and 1.947 for the
+Gaussian the field itself uses, and 69 per cent of sixty-target resamples fall at or below 2.667,
+so the earlier figure is one draw of sixty rather than a disagreement. The alignment gate had
+failed at 5.207 because the field was being read at a row whose trailing window ends up to three
+days after the event, so the window said to be before the target held the target and its first
+aftershocks: a factor of 3.07. A repaired read overshot the other way, the tolerance was not
+loosened, and the readings that gate covered stay unread. Two measurements declared separately do
+not depend on it. Normalised against the active negatives of its own cell and year, a positive row
+carries 1.229 in the last three days before its target, 1.060 from three to six, and 1.01 or below
+in all nine bins beyond six days. And relabelling with a target within h days, the field alone
+against the frozen arm on identical rows differs by -0.0049 at three days, rising monotonically to
+-0.0248 at thirty-four, with the arm not rebuilt for the shorter horizon so only the difference is
+read. The label paints about eleven three-day rows before each target and the elevation lives in
+one or two of them; that is arithmetic about the target definition, not a mechanism and not a
+ceiling (update 144).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
