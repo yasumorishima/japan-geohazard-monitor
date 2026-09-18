@@ -684,6 +684,31 @@ a scrambled copy of itself while carrying nothing. It is not claimed as the whol
 since the bias is positive in only 18 to 20 windows of 33 and the row index alone gains 0.0012
 where the cumulative count gains 0.0073 (update 147).
 
+The third floor was abandoned too, and this time the fault was located. In it each cell reads its
+own real band series from another part of the record, cyclically shifted, so a world keeps the
+positional structure, the smoothness and a real band's distribution and loses only its alignment.
+The groundwork measured first that such a floor could not be built naively -- the band's level
+runs across the scored era by a factor of 2.68 against a limit of two declared in advance -- so
+the era was split where each half satisfies that rule, 1.33 and 1.78, and a window is shifted only
+inside its own half, never by less than two years, at which lag the band's autocorrelation is
+0.035. The guard was deliberately not widened, since any correlation a world keeps raises its
+score and makes the floor harder. Every gate passed: the zero shift reproduces the earlier
+increments exactly at both horizons, every world's rows are a contiguous cyclic block inside its
+half past the guard, and the verifier, checksummed before the run, passed 16 of 16. Then both
+controls ranked first of 100 -- the within-window cumulative count at +0.011626 against worlds at
++0.003623, the per-cell mean at +0.029018 against +0.000679 -- so the round is abandoned and the
+real column's rank was neither printed nor read. Measured afterwards, each of those columns
+predicts on its own: the per-cell mean alone reaches 0.6007 on the active subset in all 33 windows
+and the cumulative count 0.5331 in 31, and the per-cell mean is mostly self-knowledge, since
+making it causal drops its increment from +0.029018 to +0.006913. A floor that changes the year
+destroys contemporaneity and both controls carried it, so both had to pass: a column is content-
+free only with respect to a particular floor, and these two were carried over from one that
+destroys order alone. That withdraws a word from the previous entry. The cumulative count has been
+called a column with no content in it since the twenty-sixth round of this arc, and it is not one;
+the content-free column is the row's own index inside the window, which broke that floor at rank 3
+of 100 by itself, so the previous abandonment stands and only the wording changes. Three abandoned
+floors say how floors and controls were built, not whether the band holds anything (update 148).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
