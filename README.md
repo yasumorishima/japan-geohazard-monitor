@@ -659,6 +659,31 @@ the window and so carries the target's own aftershocks. The next cut rebuilds th
 control that behaved, and must declare in advance that two content-free columns have to fail it
 (update 146).
 
+The replacement floor was broken too, and by the same two empty columns as before. It permutes,
+inside each cell and each window, when the band took each of its values, so a cell keeps its mean,
+its maximum and its whole marginal distribution and loses only the order -- the construction that
+had behaved correctly as a control in the abandoned round. Before the run its contract was re-cut
+once, recorded rather than hidden: the first version required a map-only column to be bit
+identical across worlds, which is a knife edge, because permuting a cell's values changes the
+order a floating-point sum is taken in. The tolerance was not loosened; the check moved onto the
+multiset, which is exactly invariant, and the mean's deviation became something reported, measured
+at 1.489e-15. The contract also declared in advance that this floor is conservative: a world can
+carry a value from after a target onto a row before it, which can make a real effect fail but
+cannot manufacture a pass. The gates passed -- the identity permutation reproduces the previous
+increments to zero at both horizons, every world keeps its cell's multiset exactly, 0.82 per cent
+of rows stay in place, and the verifier, checksummed before the run, passed 13 of 13. Then the
+clause fired: the within-window cumulative count ranked first of 100 at +0.011626 against worlds
+at +0.004323, and the row's index inside the window ranked third, so both controls that had to
+fail passed, and the real column's rank was neither printed nor read. This is the fourth time a
+floor permuting time inside the scoring window has been broken by a column with no content in it,
+three times at 34 days and now at three, which closes that family of floors for this arena -- a
+way of building a floor, not the question it was built to ask. The reason was then measured: kept
+positives sit slightly later inside their window than negatives at every horizon, 0.5056 against
+0.5000 at three days, which is a route by which any column smooth in the window's own clock beats
+a scrambled copy of itself while carrying nothing. It is not claimed as the whole explanation,
+since the bias is positive in only 18 to 20 windows of 33 and the row index alone gains 0.0012
+where the cumulative count gains 0.0073 (update 147).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
