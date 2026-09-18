@@ -613,6 +613,28 @@ read. The label paints about eleven three-day rows before each target and the el
 one or two of them; that is arithmetic about the target definition, not a mechanism and not a
 ceiling (update 144).
 
+The hole in that comparison was closed next. Everything the arm is made of was rebuilt at each of
+five horizons -- the broad label, the target paint, the causal base rate with its determined-rows
+count taken at that horizon, the magnitude term's counts, and the causal choice of its three
+knobs, re-derived window by window with the frozen rule -- while the scoring windows, the row set,
+the trailing field and the nine-point weight grid were held fixed and declared as held. The
+verifier was written and checksummed before the run. At the 34-day horizon the rebuilt grid
+reproduces the frozen one to zero wherever the kernel width is non-zero, the causal selection
+matches in all 33 windows, and the arm returns 0.7670, 0.5785 and 0.8296, a maximum deviation of
+0.00003; the verifier passed 12 of 12, including two windows rebuilt from the arena rather than
+read back. The declared primary, the causal increment of the band over the rebuilt arm on the
+active subset, is +0.004649 at three days, +0.003218 at six, +0.000212 at twelve, +0.000172 at
+twenty-one and -0.000635 at thirty-four: monotone as the horizon shortens, and negative at the
+horizon the product uses. The declared pass required all four conditions at both three and six
+days and they are not all met -- at three days 20 of 33 windows are positive, which is 0.606
+against a threshold of 0.60, so the leave-one-out condition fails on that boundary -- and the
+contract's remaining branch says to report the numbers and put no story on them. Reported beside
+it and not read alone, because their weight was selected on another axis: on all rows and on the
+rest the increment does meet all four at three and six days, and reverses sign from twelve days
+on. The rebuilt arm's own levels at different horizons are different label sets with different
+base rates and are not one scale. There is no floor here, so none of it is a verdict, and it does
+not show that shortening the horizon repairs anything (update 145).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
