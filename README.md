@@ -635,6 +635,30 @@ on. The rebuilt arm's own levels at different horizons are different label sets 
 base rates and are not one scale. There is no floor here, so none of it is a verdict, and it does
 not show that shortening the horizon repairs anything (update 145).
 
+The floored judgement that was to follow was written, frozen and run, and then abandoned without a
+verdict by a clause its own contract had put there. The floor gave each cell, window by window,
+the band series of a different cell drawn from the same stratum -- deciles of the cell's mean band
+level crossed with terciles of its causal past count, both of them counts, so that no threshold
+sat on a lattice of cell separations. The contract said first that the round was not blind, and
+that it could therefore only ask whether the real column beats worlds whose alignment had been
+destroyed, never how large the effect is. Its gates passed: the identity permutation reproduces
+the previous entry's increments to zero at both horizons, every world respects its strata, and the
+verifier, checksummed before the run with a failing directory listing for the result recorded
+beside it, passed 14 of 14. Then the clause fired. Two controls had to fail the floor before the
+real column could be read, and while the one carrying the map, the marginal and the cell's own
+level but no alignment did fail, ranking 73rd and 60th of 100, the one carrying only the per-cell
+map ranked first of 100 at both horizons, +0.029018 against worlds at +0.019408. So the floor does
+not isolate what it claims, and the real column's rank was neither printed nor read. The reason
+was then measured. The strata number thirty, a world's map keeps a rank correlation of 0.990 with
+the true one -- and yet 54 to 83 per cent of the spread in the cell's mean band level survives
+inside a stratum, with 32 to 63 per cent surviving even at fifty quantile bins. The quantity is
+heavy-tailed, so strata preserve the ordering almost perfectly while leaving most of the level
+inside the bin, and only the true assignment is exactly right; a rank correlation would have
+hidden that. Neither control number is a lever, because a cell mean averages over rows later in
+the window and so carries the target's own aftershocks. The next cut rebuilds the floor from the
+control that behaved, and must declare in advance that two content-free columns have to fail it
+(update 146).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
