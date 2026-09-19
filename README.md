@@ -755,6 +755,52 @@ have now been seen. What is established is where the room is -- no score fixing 
 cell reaches 0.90 here however fitted, the part that changes between windows is real and worth
 +0.017 so far, and the honestly estimable static map sits at 0.6034 against 0.8112 because 510 of
 the 1,141 cells that ever fire do so in exactly one of the 33 windows (update 149).
+The room the proof left open was then attacked with fields that do not count the cell's own
+earthquakes: trench geometry from the USGS Slab2 repository (public domain, CC0), the plate
+boundary steps of Bird (2003) whose supplement carries no licence statement, and the geodetic
+strain rate of Kreemer, Blewitt and Klein (2014) under CC-BY-NC-SA 3.0, the last two used only as
+local inputs with nothing derived from them committed or published. The independence is of the
+pipeline, not of the sources -- Bird drew the traces partly along seismicity, the trench file is a
+modification of Bird, and the GSRM deforming zone is delineated partly from seismicity -- so what
+is true is only that none of the twenty-seven fields reads the count of events in the cell being
+scored. They carry real information about which cell: against a within-arena permutation floor,
+each field shuffled across the 2,280 cells three hundred times with a null spread of 0.0077, nine
+of the twenty-seven lie outside a Bonferroni band, the strongest being the Gaussian-weighted
+subduction velocity within nine hundred kilometres at 0.5617, z +8.05, while distance to the
+nearest trench is informative in the direction physics predicts for a distance at 0.4634, z -4.50,
+which is not an inversion; all five strain rate fields are inside the noise band. The count of
+windows above a half is not evidence and is reported only beside the z, since a static field gives
+the same ordering in all twenty-five windows and the eligible sets overlap heavily. They are
+nevertheless decisively worse than the catalogue as a map of which cell: the tectonic model alone
+reaches 0.55642 against 0.60445 for the causal static map, a paired difference of -0.04803 with
+standard error 0.00833, higher in three of twenty-five windows, Wilcoxon p 1.2e-5, and the
+trench-only variant reaches 0.52746. On top of the catalogue they add nothing measurable, and the
+interval is the result rather than the sign: adding all twenty-seven to the frozen catalogue model
+moves the mean by -0.0027 with standard error 0.0028, higher in twelve of twenty-five, p 0.40; as
+genuine static maps -0.0030, higher in ten; at each window's own cut -0.0041, higher in eleven.
+Three of those four are indistinguishable from zero, so the honest statement is that the data
+exclude a gain larger than about +0.003 against a room of 0.21. Both clauses of the pre-registered
+reading fail, the drop-the-best-five margins being -0.0075 and -0.0085. The null is about the
+fields and not the learner: an out-of-cell five-fold fit allowed to read every scored label
+reaches 0.54447, below the causal figure. Of the two encumbered sources it is the unlicensed one
+that carries what little there is -- removing the strain rate changes the result by -0.00035, p
+0.71, while removing the Bird fields costs 0.02930, t +4.63. The reason was measured rather than
+told: against six thousand random cells outside the arena in the same latitude band, distance to
+the nearest plate boundary separates arena from non-arena at 0.904 while inside the arena it is
+0.5085 and inside the noise band, so the seeding rule of at least two M5 events has largely spent
+tectonics already; that is consistent with range restriction and is not a proof, which would need
+the same target on a cell set not selected on seismicity. Four defects of my own are recorded
+rather than repaired in silence: the first run's verdict line implemented a rule the contract does
+not contain and never computed the comparison the contract declared; the mark it used was labelled
+the best static map the catalogue can honestly supply when it reads the other twenty-four windows
+including later ones and is neither static nor causal; a gate declared as checking that no
+tectonic field varies with the window printed three counts and asserted nothing; and each plate
+boundary midpoint was an arithmetic mean of longitudes, so six of the 5,819 steps that straddle
+the antimeridian were placed near zero degrees east, two of them subduction steps at 58 and 72
+millimetres a year, which moved the strongest field for 242 of the 2,280 cells and changed its
+score by +0.0002, and none of the six existing gates could have caught it, so a new one requires
+each midpoint to lie on its own step. There is no floor here, nothing is called real, and all
+twenty-five windows had been seen before the round was designed (update 150).
 
 
 
