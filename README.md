@@ -708,6 +708,53 @@ called a column with no content in it since the twenty-sixth round of this arc, 
 the content-free column is the row's own index inside the window, which broke that floor at rank 3
 of 100 by itself, so the previous abandonment stands and only the wording changes. Three abandoned
 floors say how floors and controls were built, not whether the band holds anything (update 148).
+Before designing another floor the arc asked which dimension it was working in, and the answer
+changed what was built. The arm is constant inside a scored window, and on the mainshock subset
+only 0.15 per cent of the (positive, negative) pairs sit in the same cell, so its ordering is
+between cells. Ordering cells by their in-window positive-to-negative ratio is optimal among
+window-constant scores and reaches 0.9482 at 34 days; the corresponding oracle over scores that
+are the same in every cell and vary only with the row reaches 0.6043. Both read the labels. A
+third family can be bounded without an oracle: for a static score, one number per cell held fixed
+in every window, the mean over windows of the subset AUC depends only on the cell ordering and is
+a sum over pairs of a matrix M that sums to one, so no pair contributes more than the larger of
+its two entries and the mean is at most 0.8112 at 34 days and 0.8047 at three -- for every static
+score, including one fitted on the scored labels, recomputed two independent ways to 1.1e-16. Maps
+re-estimated at each window start, scores that re-rank cells using the window's own active set,
+and scores that vary by row are outside that bound and are named rather than left implicit. On 25
+scored windows the ladder runs: the arm 0.58288; the arm flattened to its per-cell mean 0.59033,
+higher, so the arm pays 0.0075 for row-level jitter; a leave-one-out per-cell ratio 0.59368; its
+positive count alone 0.59943; those counts smoothed over half a degree 0.60344; the oracle
+0.95017. Posed directly as a prediction problem -- for each cell active in a window, will it hold
+an isolated M6 this window -- with thirty features from catalogue events before that window's
+training cut and a model trained only on windows whose scoring had finished by that cut, it
+reaches 0.62086, +0.03799 over the arm, higher in 23 of 25 windows, Wilcoxon p 2.1e-6, and +0.0281
+after discarding the best five. The increment splits exactly three ways: +0.00745 row-level
+jitter, +0.01311 being a better static map, +0.01742 the estimate being recent, the last isolated
+by retraining on features from older cuts, which stays causal and can only lose information --
+0.61285 at five windows of staleness, 0.61030 at ten, 0.60304 frozen at one early cut, level with
+the best static map, and 0.60445 frozen in coefficients too, below the proved bound as it must be.
+An audit returned three blockers and five serious findings, all reproduced from the data before
+being accepted and all mine. "Everything above 0.5892 must change between windows" was false,
+since the positive count alone reaches 0.59684 under the same rule and smoothing 0.59970, so that
+family is not used up and its proved ceiling leaves a fifth of the scale unclaimed. A line printed
+as "the same windows" compared 25 windows against a 33-window mark. The claim that a
+previous-window indicator fell below the static map was the same mismatch: matched, the difference
+is -6e-7, indistinguishable from zero, though the ties it could reorder carry 5.96 per cent of the
+pair mass, so the test had power. The time-since-last-event features looked anti-predictive at
+0.4267, but 129 to 201 of the eligible cells had never had such an event and sat pinned at the
+sentinel: never-having-fired scores 0.4435 alone and the recency among cells with a history is
+0.4748 and near null, the count channel with its sign flipped. Calling the arm 98 per cent of the
+static map was wrong twice, since an AUC ratio is read from a half and that map reads later
+windows -- the past-only version is 0.5753 where the arm is 0.5809, so a causal static map does
+not beat the arm. One gate failed on its own terms, at 1.07e-03 against a declared 1e-12 because a
+feature store was kept in single precision, and was repaired by changing the store rather than the
+tolerance. Two other gates are recorded as constraining nothing, and a local search weak enough to
+reach only 0.514 from random starts found 0.7594, which is the best ordering found and not the
+static optimum. There is no floor: this is a sizing, nothing in it is real, and all 25 windows
+have now been seen. What is established is where the room is -- no score fixing one number per
+cell reaches 0.90 here however fitted, the part that changes between windows is real and worth
++0.017 so far, and the honestly estimable static map sits at 0.6034 against 0.8112 because 510 of
+the 1,141 cells that ever fire do so in exactly one of the 33 windows (update 149).
 
 
 
