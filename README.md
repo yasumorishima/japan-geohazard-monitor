@@ -802,6 +802,58 @@ score by +0.0002, and none of the six existing gates could have caught it, so a 
 each midpoint to lie on its own step. There is no floor here, nothing is called real, and all
 twenty-five windows had been seen before the round was designed (update 150).
 
+Whether the room that proof leaves open is learnable at all was then measured directly: the
+thirty-three scored windows were split in two, a static ordering of the cells fitted on one half
+and scored on the other, over seven splits -- odd against even, early against late, five random
+halves -- in both directions, fourteen fits, under four rules (the ratio of firing windows to
+eligible windows, the positive count, that count smoothed with a half-degree kernel, and a local
+search on the training half's own score). Held out the rules reach 0.5755, 0.5840, 0.5883 and
+0.5726, individual fits spread from 0.5579 to 0.5999, against 0.769 to 0.810 in sample. My first
+reading of that gap -- that the room is not learnable and the static family is closed -- was
+wrong, and an audit returned three blockers and five serious findings against it, every one
+recomputed from the primary counts before being accepted. What is broken is coverage, not
+fitting. Decomposed by how often a cell fires, with the parts recombining to the whole exactly,
+the 510 cells that fire in exactly one window carry 0.1935 of the positive mass and fall from
+0.6052 to 0.1505 when their own window is withheld, the 263 that fire twice fall from 0.6965 to
+0.5177, and the 368 that fire three times or more, carrying 0.6184 of the mass, hold 0.8262
+against 0.7482: fifty-two per cent of the drop sits in the cells that fire once and most of the
+mass transfers. The half-split says the same from the other side -- 0.6638 of the held-out
+positive mass lies in cells that also fired in the training half, where the smoothed map scores
+0.7361 against its own hindsight 0.7591, while the remaining 0.3362 scores 0.2965, below chance,
+because a map fitted on labels must bury a cell with no precedent at the bottom. Nor is the
+static family at the arm's level: held out one window at a time on the same thirty-three-window
+frame the ratio map reaches 0.5892 against the arm's 0.5785, the count map 0.5968 and the
+smoothed map 0.5997, higher in twenty, twenty-nine and twenty-eight windows at t +2.23, +5.21 and
++3.94, while the activity-only map, which reads no label, is 0.5557 and below the arm in thirty
+of thirty-three, so the labels teach about +0.044 over activity. Nor can learnability be denied
+from these numbers: fitting on k windows and scoring on the rest, the smoothed map goes 0.5542,
+0.5596, 0.5729, 0.5834 and 0.5981 for k of two, four, eight, sixteen and twenty-four, still
+rising over the range the test side can measure -- the audit read k of thirty-two as rising too,
+but my recomputation puts it at 0.5821 on a single test window, so that is not claimed -- and a
+causal expanding-window static map over twenty-eight windows reaches 0.5855 against the arm's
+0.5809. Five further findings are recorded rather than repaired in silence: the declared pass
+line of 0.65 to reopen and 0.62 to close could only return one of its two answers, since 0.5892
+on thirty-two windows was already published; calling the local search textbook overfitting was an
+overstatement, its held-out cost being 0.00287 in all fourteen fits against an in-sample gain of
+0.00042; twelve of the fourteen fits train on later windows and are cross-validated rather than
+causal; the contract said each half's own ceiling would be computed and it was not, and measured
+now those ceilings are 0.8445 to 0.8604 against 0.8112 for the full record, so eighty-five per
+cent of the in-sample excess is the ceiling itself rising and attainment is 94.8 against 93.6 per
+cent; and the early-against-late split is best held out only because the later windows are easier
+on every yardstick, the arm going 0.5700 to 0.5866 and the per-window cell oracle 0.9433 to
+0.9527, with 795 cells firing early, 789 late and only 443 in both. Geology does not fill the
+hole either, which was measured rather than assumed: on cells with no precedent the fields that
+were strongest across the arena are all at or below chance, 0.4657, 0.4524, 0.4838 and 0.4527,
+and a hybrid that orders precedented cells by the label map and the rest by the strongest field,
+reading no test label, reaches 0.5878 against 0.5883, a difference of -0.00046 with standard
+error 0.00096. What the label map drops is quiet in the catalogue and unremarkable in the
+tectonic fields alike. There is no floor here, nothing is called real, and all thirty-three
+windows had been seen before the round was designed; the narrow statement that survives is that
+thirty-three windows of counts do not bring the room below 0.8112 out, that the loss is
+concentrated in cells holding a single positive which neither the counts nor the twenty-seven
+static fields reach, and that the static family is nevertheless above the arm by +0.0212 and
+improving as the record lengthens (update 151).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
