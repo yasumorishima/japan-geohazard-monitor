@@ -926,6 +926,71 @@ least 299 days over all 475 selected pairs. There is no floor anywhere here, not
 called real, all twenty-five windows had been seen, and the ceilings read the scored labels
 by construction (update 152).
 
+Two sizing rounds were then run against that within-class number. The first built the moment
+budget -- what the geodetic field has loaded a cell against what the cell has already
+released -- which is the one physical quantity separating two cells with the same earthquake
+history that this project had never assembled. Released moment is the base ten logarithm of
+the summed 10^(1.5 m + 9.1) over driving events strictly before each cut; loading is the GSRM
+v2.1 second invariant of the strain rate and its smoothings, a CC-BY-NC-SA 3.0 source used
+only as a local input with nothing derived from it published. Without per-cell elastic
+constants or seismogenic thickness the budget can only be a difference of standardised
+logarithms, and it is empty: inside the classes the three differences reach 0.4946, 0.4972
+and 0.4987 against a null of 0.5000 with spread 0.0070, the overdue term and the released
+moment reach 0.5158, and nothing passes the multiplicity cut of 2.48, while the predictor
+reaches 0.5859 and the smoothed isolated-M6 count 0.5552 on the same pairs. They are not
+relabellings of the class variable, correlating with it at -0.55 to -0.43; they are simply
+flat. An audit then found almost everything around that null weaker than I had written, and
+each finding was recomputed from primary data before being accepted. The gate advertised as
+the repair of the previous round's unfailable gate is itself unfailable: it asked whether the
+released moment changes when the cut moves a year either way, but every window holds 1,062 to
+2,376 driving events in a year, so it changes for any cut, and a released moment deliberately
+leaked thirty or a hundred and eighty days past the cut passes it 25 of 25 in both
+directions. That is an unfailable gate written twice in succession, and it leaves this round
+with no test of the causality it claims to gate. The quantity printed as a Spearman
+correlation uses ordinal ranks against a class variable with tie blocks of thousands of rows,
+against this project's standing midrank rule; recomputed properly the released moment sits at
++0.8237 rather than +0.7967, crossing the 0.8 line the declared reading uses. The release rate
+is not a separate candidate -- the elapsed years are one scalar per window, so its ordering is
+identical to the released moment's to fifteen decimals, and the rate the design described
+never enters any candidate. The overdue term's 0.3981 where neither cell has a precedent is a
+sentinel: no cell there has ever had an isolated M6, the time-since term is constant to the
+last bit, and the number is the strain-rate ordering already measured null. The equal
+weighting sits on a cancellation point, the weight sweep running 0.5082 to 0.4842, though the
+whole range stays inside the declared band. Three hundred draws do not resolve the test: with
+three thousand the spread is 0.00715 and the cut 2.414, and across ten independent
+three-hundred-draw nulls the overdue term's z runs 2.10 to 2.39 against cuts of 2.30 to 2.76,
+so it flips in one of them; the design also promised a leave-one-out standardisation the code
+does not contain. The standardisation is taken over a cell set selected using the scored
+labels, so "all causal" overstates it, and the printed conclusion that the next observable
+must come from outside the catalogue is contradicted by the same table, whose best single
+within-class field is a catalogue quantity. The null is about this construction -- no area,
+no seismogenic thickness, a one-degree cell mean as the loading proxy -- and not about moment
+budgets in general. The second round bounded what a map can do inside the classes at all.
+Restricting the pair-mass argument that proved the 0.8112 static ceiling to pairs of cells in
+the same class, and renormalising by that restricted mass of 0.2983, the best any single
+fixed number per cell can do inside the classes is 0.81106, against 0.94203 for a score
+re-estimated every window and 0.58592 for the predictor today; the same code without the
+restriction reproduces 0.811209, and a random static ordering gives 0.5055 with its negation
+at 0.4945, summing to one exactly. Read along the blend of the previous round, 0.81106
+corresponds to a total of about 0.779 and 0.94203 to 0.86882, so the distance to the goal
+separates into three measured pieces: a perfect static map inside the classes reaches about
+0.78, adding perfect window-to-window resolution inside the classes reaches 0.869, and the
+last 0.031 must come from placing the classes better, which is binding because the whole
+rearrangement family is bounded at 0.87777. The per-window cell oracle is 0.95017, so the
+room exists. A second defect of mine: that round's pass line was declared at 0.80 without
+noticing the requirement it was meant to test is 0.8427, so the branch fired mechanically and
+printed that the bound is at or above the requirement when it is below it; the condition, the
+numbers and the gates stand, the sentence does not. What follows is narrow: inside a
+precedent class there is still 0.225 of map between the predictor and what any static map
+could do, before any of the distance becomes a question about which window, so the next
+observable is a static field separating cells with identical earthquake histories, and three
+candidates were checked for reachability rather than assumed -- the GEM Global Active Faults
+database under CC-BY-SA-4.0, the Slab2 depth and dip grids whose licence file states United
+States public domain, and the Global CMT catalogue, which answers a keyless ranged request.
+No floor beyond a within-class permutation, nothing called real, the bounds read the scored
+labels by construction, and the next round will carry a gate that can actually fail
+(update 153).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
