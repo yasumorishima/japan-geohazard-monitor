@@ -991,6 +991,63 @@ No floor beyond a within-class permutation, nothing called real, the bounds read
 labels by construction, and the next round will carry a gate that can actually fail
 (update 153).
 
+The faults themselves were then tried, since two cells with the same earthquake count are not
+alike if one holds a long fast fault and the other does not. The GEM Global Active Faults
+database (CC-BY-SA-4.0) was taken as a local input only -- neither it nor any derived table
+is committed or published -- and eleven static per-cell fields were built from its 13,696
+traces by sampling every five kilometres onto the one-degree cells: length in the cell and
+smoothed, a fault moment rate as length times width times slip rate and its smoothing, the
+largest slip rate within 100 km, distance to the nearest trace and to the nearest fast one,
+and the share of nearby length by slip type. Coverage was measured first, because coverage
+ended the geodetic rounds: 1,545 of 2,280 cells contain a trace, 1,856 have one within
+100 km, 1,468 have a slip rate within 100 km, median distance 37 km. Two build gates failed
+and were repaired rather than loosened -- an earth radius of 6371.0088 against the 6371.0 the
+rest of the code uses, caught at 1.08e-04 km, and thirty records carrying a literal nan in
+the seismogenic depths, which float() accepts. Then the first measurement passed two fields
+and an audit found why it should not be believed: the neighbourhood kernels were written as
+exp(-0.5*(d/300)^2) with d from the arena's distance matrix, whose docstring says haversine
+DEGREES -- measured, 111.195 km per unit, maximum 180.000 -- so every "300 km" kernel was a
+300-degree one reaching all 2,280 cells instead of 50, five of the ten fields were global
+quantities with a faint gradient (the smoothed length spanned 196,482 to 203,569 km where the
+corrected field spans 0 to 6,549), and the floor I had rebuilt to be "spatially matched" was
+hemispheric as well, which is why its spread looked 70 per cent wider than white noise. Two
+earlier findings had been withdrawn on the strength of that floor, and both withdrawals are
+retracted: rebuilt with true kilometre kernels at 55, 110, 220, 300 and 900 km, four thousand
+draws and cuts from disjoint blocks, the subduction-velocity field survives inside the classes
+under every floor but one marginal case, and where neither cell has a precedent the predictor
+at 0.5808, the half-degree smoothed count at 0.5843 and the one-degree smoothing at 0.5883 all
+survive too. The general claim drawn from the bad floor was also too strong: at realistic
+scales a matched floor is barely wider than white noise (0.00730, 0.00742, 0.00796, 0.00847,
+0.00835, 0.00851 from white through 900 km), so the lesson is to gate a kernel on how many
+cells it reaches, not that white noise is generally too narrow; matching matters in the small
+no-precedent block, where the spread runs 0.0166 to 0.0218 at 300 km and 0.0308 at 900 km.
+The preparation was rebuilt in kilometres with gates that can fail: the cell assignment is now
+checked against an independent nearest-centre search rather than against the floor key that
+produced it -- an identity that passes on random points with no fault data at all -- the
+shuffle check now moves every gridded field rather than the four it happened to touch, and a
+new gate requires a kernel of stated radius to reach a plausible number of cells, reading 50.1
+per row now against 2,280 before. Against a floor built from the same 300 km kernel in the
+same units, with an eleven-candidate cut of 0.0231, every fault field lies inside the cut in
+the diagonal blocks, the largest being the reverse share at 0.5174, so the pre-registered null
+reading fires: this database, at one degree, against this target, does not order cells inside a
+precedent class. The negative control passed at 0.5034. But where it matters most the table
+says something else: in the block where neither cell has a precedent, cut 0.0587, six of the
+eleven clear it -- the normal share 0.5842, smoothed length 0.5766, reverse share 0.5731,
+distance to a fast fault 0.5712, and the unclassified share and moment rate the other way at
+0.4100 and 0.4275 -- and so do plate-boundary age 0.6146, trench density 0.6028 and the
+two-degree smoothed isolated-M6 count 0.5981, all surviving every kilometre-scaled floor. That
+is consistent with the earlier round that found geology at or below chance for cells without
+precedent, because it compared those cells' positives against every negative in the arena,
+where any score correlated with the class must lose. Caveats: a lower seismogenic depth parses
+in 3,291 of 13,696 features and a dip in 5,484, so the median feature uses both defaults and my
+description of the database overstated what it carries; five of the first version's gates could
+not fail by construction; three of the corrected run's gates print rather than assert. This is
+sizing -- no floor beyond the within-class permutation, nothing called real, all twenty-five
+windows seen. What it leaves points somewhere specific: faults do not separate cells that
+already have a history, but in the cells that have none, the fifteen per cent of positive mass
+a label map must bury, static geology and the widest catalogue smoothing both carry ordering
+that survives a floor matched to their own smoothness (update 154).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
