@@ -1048,6 +1048,48 @@ already have a history, but in the cells that have none, the fifteen per cent of
 a label map must bury, static geology and the widest catalogue smoothing both carry ordering
 that survives a floor matched to their own smoothness (update 154).
 
+A predictor was then built for that population alone: for each scored window, the cells with
+no isolated M6 before its feature cut, fitted on the same population in earlier windows only,
+with the seven static fields and a two-degree smoothed isolated-M6 count. Every gate is
+asserted rather than printed, including a leak check that can fail -- a deliberately leaked
+fit, the scored window added to its own training set, must beat the causal one, and does,
+0.6326 against 0.6154. In the block the causal predictor reaches 0.61538 against 0.58084 for
+the general predictor, and two floors declared beforehand both put it first of twenty-one:
+labels shuffled inside each training window's no-precedent population, worlds 0.4498 to
+0.5939, and the seven static fields shuffled across cells, worlds 0.5777 to 0.6009. Splicing
+it into the whole axis moves the twenty-five-window ACTIVE AUC from 0.62086 to 0.62257,
++0.00171. An audit then narrowed almost all of that, and its four consequential findings were
+recomputed from primary data before being accepted. The missing control: refitting the general
+predictor's own thirty catalogue features on the no-precedent population alone, with no new
+data, already reaches 0.60026, so of the +0.0345 over the general predictor, +0.0194 is
+population specialisation and +0.0151 is what the static fields add. The fields do not
+combine, which is what the round set out to test: dropping each in turn, five of seven make
+the model better by their absence (0.6215 without trench density, 0.6193 without fast-fault
+distance, 0.6188 without subduction velocity, 0.6172 without smoothed length, 0.6161 without
+the normal share), and the eight-feature model beats plate-boundary age fitted alone by
+0.0008, 0.6154 against 0.6146. The smoothed count alone is 0.5981, so the geological
+increment is about +0.017 and nearly all of it is that one field -- itself selected on these
+same twenty-five windows in the previous round, a selection neither floor prices, so the
+nominal one in twenty-one is not an operating error rate. The whole-axis number is not an
+ordering gain either: the ordering alone, the new ranking applied to the general predictor's
+own values, is worth +0.00380 while the levels alone are worth -0.00256, because the new
+model is miscalibrated here -- against an observed rate of 0.0769 the general predictor sits
+at 0.0761 and the new model at 0.0874. And the training rule advertised as stricter is not:
+requiring a training window to finish its scoring a horizon before the cut excludes nothing
+the old rule did not, in any of the twenty-five windows, and the assertion enforcing it takes
+its minimum over the set that condition defines, so it cannot fail. Three further limits: the
+scored population is itself chosen using information from inside the window, since a cell is
+eligible when it has a driven row there -- shared with the general predictor, so the
+comparison is fair, but "causal" applies to the model's inputs and not to the set it is
+scored on; the static tables are present-day compilations assembled from a record that
+includes the scored windows, a leak channel no gate here can see; and a one-in-twenty-one
+rank supports a one-sided p of 0.0476 at best. What survives: the ordering inside the
+no-precedent population is real against both floors, most of the gain is the unglamorous fact
+that fitting on that population alone beats fitting on everything, the geological part is one
+field selected on the same windows, and on the whole axis the ordering is worth +0.0038 with
+the model's own miscalibration giving back two thirds of it. None of it is in the operating
+forecast (update 155).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
