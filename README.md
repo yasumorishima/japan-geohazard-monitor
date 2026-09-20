@@ -854,6 +854,78 @@ concentrated in cells holding a single positive which neither the counts nor the
 static fields reach, and that the static family is nevertheless above the arm by +0.0212 and
 improving as the record lengthens (update 151).
 
+What that coverage is worth was then measured exactly, on the sudden axis itself. Every
+eligible cell of every scored window was put in one of four classes by the number of
+isolated M6 events it holds strictly before that window's feature cut -- none, one, two,
+three or more -- and the window ACTIVE AUC was decomposed over the sixteen blocks formed by
+the class of the positive cell and the class of the negative cell, which is exact because
+that AUC is a sum over cell pairs weighted by the two cells' row counts; the blocks sum back
+at 1.11e-16 and the arm reproduces its published 0.5785 at 3e-5. Fifteen per cent of the
+ACTIVE positive mass sits in cells with no precedent, a share that falls from 0.2665 in the
+first scored window to 0.1016 in the last. The blocks where the positive cell has the higher
+class carry 0.4432 of the pair mass at 0.8924, spread from 0.6983 to 0.9797; the four
+diagonal blocks carry 0.2983 at 0.5859; the blocks where the positive cell has the lower
+class carry 0.2585 at 0.1956. The four blocks whose positives have no precedent carry 0.1532
+at 0.2537, and the arithmetic ceilings -- 0.65860 if that mass scored a half, 0.73521 if it
+were perfect -- are oracle bounds that flattening cannot reach, which was measured rather
+than asserted: a constant added to every no-precedent cell lifts that mass to 0.4747 and
+drops the total to 0.60931, one constant for the whole class gives 0.59210, and removing the
+class separation entirely gives 0.57435. The class ordering is not the mistake either --
+observed firing rates by class are 0.0781, 0.1189, 0.1118, 0.1688 against mean predicted
+0.0771, 0.1109, 0.1295, 0.1701, and shrinking the between-class component of the predictor's
+logit loses, 0.57435 at zero against 0.62086 as fitted. What is left is the ordering of cells
+inside a class, and that lever now has a bound. Keeping the predictor's score values class by
+class, so each class keeps its exact multiset and therefore its level and its overlaps, and
+re-assigning them inside each class by the window's true positive-to-negative ratio reaches
+0.86882; a better key in the same family reaches 0.87568 and a swap polish 0.87581, so the
+ratio order is a lower bound and not the ceiling I first called it; and maximising all
+sixteen blocks separately, a relaxation and therefore valid, bounds the whole family at
+0.87777. That is the number that matters, because it is below the goal: with the predictor's
+class placement held fixed, no rearrangement of cells inside their classes reaches 0.90, and
+at least 0.0222 has to come from a better placement of the classes themselves. The
+unconstrained per-window cell oracle is 0.95017, so the room exists, but not inside this
+family. The within-class gain of +0.24796 also does not land where I said: 42.8 per cent of
+it appears in the diagonal blocks, 38.5 per cent in the blocks whose positives have the lower
+class and 18.7 per cent in the upper blocks, because a correctly ordered class puts its
+firing cells at the top of its own range where they overtake the negatives of higher classes.
+Stacking the classes strictly with the same oracle inside each reaches only 0.72425, which is
+a particular construction and not a ceiling, and it is low mechanically, since a strict stack
+sets the whole inverted mass to exactly zero. The requirement is therefore a number: blending
+the within-class ordering from the predictor towards the oracle, a total of 0.70 needs a
+within-class AUC of 0.6925, 0.75 needs 0.7669, 0.80 needs 0.8427 and 0.85 needs 0.9152,
+against 0.5859 today. Something does order cells inside a class, against a permutation floor
+that preserves every class level and destroys only the within-class ordering: the predictor
+reaches 0.5859 in the diagonal blocks where the null sits at 0.4993, spread 0.0071. But two
+of the strongest single fields are not fields -- the isolated-M6 count is the class variable
+uncapped, rank correlation 1.000 inside the top class, and the weighted count 0.968 -- so the
+half-degree smoothing at 0.5552 is the one of the four that also varies inside the lower
+classes, one tectonic field (subduction velocity within nine hundred kilometres) reaches
+0.5297, and in the top class the predictor's 0.6031 against the raw count's 0.5713 is the
+only non-trivial diagonal number. Where neither cell has a precedent, two-degree smoothing
+reaches 0.5981 -- not a sentinel, since the field is never zero there, median 2.3510, tied
+pair mass 0.0056, above a half in 24 of 25 windows -- which is z +5.69 against a conservative
+null that shares one cell relabelling across all windows, rather than the +6.69 an
+independent-window null gives. So within-class ordering exists at the size of hundredths
+while the requirement is tenths. A dozen defects are recorded rather than repaired in
+silence: a null built at the wrong level, so the run's closing decision line and its stored
+null spread are retracted; "about 0.83" for the remaining requirement, which mis-stated the
+upper range and assumed the upper blocks rise to one, when with them as measured it is
+0.9061; the claim that a within-class re-assignment leaves the cross-class structure
+untouched, which the three-way split above refutes; the claim that the ratio order is the
+exact ceiling, wrong by 0.0070; the claim that the class placement is not the bottleneck,
+refuted by the 0.87777 bound; a strict stack called a ceiling; six declared gates that cannot
+fail by construction, including a block identity that holds for a random partition the audit
+fed in, and a further gate that only checks transcription; a multiplicity correction that
+standardised each draw by a spread including that draw, moving the cuts from 3.02, 3.18 and
+3.24 to 3.31, 3.53 and 3.60 and dropping two passers; sixty draws carrying about nine per
+cent of error on every spread quoted; two scanned candidates that are identically zero in the
+class with no precedent; a share of zero in sixty draws that is a bound of one in sixty-one;
+a z of +5.78 that is +0.0045 of block AUC because its null spread is 0.0008; and a training
+window rule that omits the thirty-four day horizon, whose realised margin is nevertheless at
+least 299 days over all 475 selected pairs. There is no floor anywhere here, nothing is
+called real, all twenty-five windows had been seen, and the ceilings read the scored labels
+by construction (update 152).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
