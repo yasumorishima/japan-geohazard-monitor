@@ -1090,6 +1090,44 @@ field selected on the same windows, and on the whole axis the ordering is worth 
 the model's own miscalibration giving back two thirds of it. None of it is in the operating
 forecast (update 155).
 
+The calibration that ordering gain needed was then fitted, causally: the prediction for each
+training window comes from a model fitted only on windows earlier than it, and every label was
+complete at least 299 days before the scored window's feature cut. It recovers almost nothing.
+Isotonic calibration moves the twenty-five-window ACTIVE AUC from 0.622572 to 0.622675, or
++0.000103, and Platt to 0.623334, or +0.000760, against a line of 0.6240 declared before the run.
+An audit then refuted the reasoning behind that line. The 0.624663 called here the ceiling any
+monotone calibration can reach is not one: the construction fixes the multiset of values inside
+the block to the general predictor's own, while a monotone map may choose any non-decreasing
+values and so interleave that block differently with the cells it does not touch. It is a lower
+bound, and the proof was printed eleven lines above it in the same log -- a deliberately leaked
+isotonic calibration, which inverts no pair and is therefore monotone, reaches 0.626522, and one
+constant added to the raw scores reaches 0.624800. So the level cost is a calibration problem
+after all; what is true is that the two causal calibrators recover +0.0001 and +0.0008 of a gap
+worth at least +0.0040. One candidate cause is measured: the calibration rows come from earlier
+windows, where this population fires at 0.0977 against 0.0769 in the scored ones. Three of the
+five gates cannot fail -- the monotonicity gate passes when fed a constant map whose block AUC is
+exactly 0.5, the leak gate passes on a leak turned into a no-op, and the causality gate compares
+two quantities computed from the same array by the same formula and never touches the calibration
+path at all. The properties they were meant to guarantee do hold, checked directly, but by
+construction rather than by test. The selected field does survive its own split: plate-boundary
+age reaches 0.5665 in the no-precedent block on the eight early windows, cell-shuffle p 0.0050
+over two hundred worlds; pricing the choice of field among seven gives p 0.0398 in one draw and
+0.0149 in another, which is itself the finding that two hundred worlds do not settle this, and
+the shortlist survived twenty-seven and eleven candidates that nothing prices. The early windows
+are also a different population -- 576 eligible cells against 655, 0.2235 of the positive mass
+against 0.1532 -- and all seven fields are lower there, by 0.0399 on average, which says the
+population changed rather than that this field replicated. Finally, refitting the general
+predictor's own thirty features on that population raises the block from 0.58084 to 0.60026 while
+the whole axis falls by 0.00019, and an exact sixteen-block decomposition settles why. A splice
+moves only the seven blocks touching class 0, whose masses are 0.04171, 0.11150 where those cells
+are the positives and 0.22298 where they are the negatives. The refit is +0.000359, +0.002963 and
+-0.003517 across them; the static model is +0.001451, +0.009028 and -0.008668. The whole-axis gain
+of any splice is therefore essentially its own small block, because the cross-class movement it
+causes very nearly cancels, and the cancellation is structurally against it: class-0 cells carry
+exactly twice as much negative pair mass as positive, so a uniform lift loses by construction and
+only a lift landing on the cells that do fire can win. Solving that small block perfectly, with
+the cross terms where they were measured, would be worth +0.0175 (update 156).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
