@@ -1128,6 +1128,51 @@ exactly twice as much negative pair mass as positive, so a uniform lift loses by
 only a lift landing on the cells that do fire can win. Solving that small block perfectly, with
 the cross terms where they were measured, would be worth +0.0175 (update 156).
 
+The sentence that closed the previous paragraph went further than its own decomposition did,
+and this round withdraws it. For a set of precedent classes, consider every rule that leaves the
+cells outside them at the general predictor's values and may give the cells inside them any real
+values: that family contains every splice, every calibration, every new field and every model
+restricted to those classes, so the last three rounds live inside the family of the no-precedent
+class alone. Maximising a weighted AUC over a total order with one sub-sequence frozen is the
+sequencing problem with chains, whose optimum is the ratio rule once the frozen chain is
+compressed by pooling adjacent violators, so the maximum is exact rather than bounded. Against
+0.620864 for the general predictor and 0.950170 for the per-window cell oracle, the four single
+classes reach 0.732846, 0.741016, 0.720968 and 0.828781; the best pair is 0.897957; the triple
+omitting the class with three or more prior isolated events reaches 0.878723, while every triple
+containing it clears 0.93. So to exceed 0.90 inside this family the re-scored set must touch that
+class and at least two of the other three -- necessary, not sufficient, since nothing here bounds
+anything from below. The decomposition of the no-precedent optimum is what withdraws the sentence:
+of its +0.111982, the block where neither cell has a precedent supplies +0.015987, or 14.3 per
+cent, and the cross-class blocks supply +0.095995, or 85.7 per cent, the largest single term being
++0.051700 from pairs whose positive cell has no precedent and whose negative has three or more.
+The optimum does not even take a perfect within-class block: it settles for 0.96413 and spends the
+slack on the cross blocks, reaching 0.99912, 0.99836 and 0.99552, paying only -0.006905. The
+cancellation reported before is therefore a property of models that cannot tell which no-precedent
+cell will fire, whose lift is effectively uniform, and not of the family; a uniform lift does lose,
+at a ratio of 1.999725 rather than the exact two that was written, and those masses were misnamed
+-- the class holds 0.15321 of the positive pair mass and 0.26469 of the negative, while 0.111505
+and 0.222980 are the two cross-block masses. An audit attacked the optimality argument itself,
+since this round's own cross-check searched only orders consistent with the same rule and could
+have shared one mistake with what it checked. It held: 9,765 small instances solved by enumerating
+every order consistent with the frozen chain, including 1,499 whose frozen scores are the exact
+reverse of ratio order, with a largest discrepancy of zero in either direction; ties as values
+across 119,700 assignments gained nothing; 200,000 hill-climbing moves on real windows gained
+nothing; and for all 375 window and class-set pairs an explicit score vector realising the claimed
+arrangement, leaving the frozen cells in exactly the general predictor's order, measures the
+reported ceiling to zero. These are attained maxima, not relaxations. The gates are recorded as
+found: one assertion was true by construction; the gate freeing every class never exercises the
+pooling step, since the frozen chain is then empty; the gate freeing no class catches too little
+pooling but not a rule that pools everything, which passes four of six, and on that path the chain
+goes from 579 groups to 7 blocks, so the ordering is 98.4 per cent non-monotone in the ratio and
+the step was barely constrained; the check that does catch it covered 1.1 per cent of the
+evaluations where covering all costs about a minute; no gate bounded a ceiling from above, and a
+broken pooling step produced values of 1.32 while three gates passed; two reference values were
+typed rather than read; the monotonicity gate is an identity of the family; and the tie-aware
+accumulator names a path this data never takes, since no two cells share a score and no cell has
+zero negative weight. All fifteen numbers are per-window oracles reading the labels of the window
+they score, the whole-axis figure is a mean of per-window maxima, and every bound holds only while
+the untouched cells keep the general predictor's exact values (update 157).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
