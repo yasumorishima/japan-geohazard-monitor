@@ -1173,6 +1173,22 @@ zero negative weight. All fifteen numbers are per-window oracles reading the lab
 they score, the whole-axis figure is a mean of per-window maxima, and every bound holds only while
 the untouched cells keep the general predictor's exact values (update 157).
 
+With the order inside a class prescribed and only the levels chosen, the exact maximum is again a
+sequencing problem, now with two frozen chains. Keeping the general predictor's own order inside
+the no-precedent class and choosing only the levels reaches 0.636983 against 0.620864. The best
+order built in rounds 241 to 243 adds only +0.004696 on top, so that arc was losing on levels, not
+on order. The class with three or more prior isolated events offers +0.021012 from levels alone.
+An audit confirmed the maxima by enumeration over 5,618 instances and by an independent programme,
+both to zero. It also withdrew one reading: within-class AUC is not a sufficient statistic. An order
+correct only for the top 2 per cent of the no-precedent class reaches 0.6699 to 0.6710 on the
+whole axis at a within-class AUC of about 0.69, above what the blended curve gives at that AUC. So
+the reads of 0.6468 and 0.8857 belong to that curve alone. The audit also found that one gate,
+covering one order, was the only guard on the new inner pooling. Chosen causally, a constant level
+shift on that class gave -0.000029, shifts on all precedent classes +0.001504 (t 1.08), and a refit
+on row counts -0.000742, so none meets the declared gain. Even the best constant chosen with the
+labels takes only 19.8 per cent of the +0.021012. What remains lies in placing the few highest
+cells of a class high, which the next round targets (update 158).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
