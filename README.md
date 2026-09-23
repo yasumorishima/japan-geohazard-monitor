@@ -1225,6 +1225,13 @@ The general predictor's level room, +0.051 when levels are chosen per window by 
 almost all per-window: a level map fixed across windows takes 6% even with future windows
 (update 162).
 
+Combining the two forms -- crust and slab acting in the classes with one or two precedents inside
+the pooled fit, and the crust-and-slab model for the no-precedent class -- reaches 0.6257, +0.0049
+over the general predictor with a paired t of 2.03, above all 31 rotated-map floor worlds. That
+meets the declared rule for the first time in this arc, narrowly: the two-sided p is 0.053 and the
+bootstrap 2.5% point is +0.0002. The arm was designed after looking at the same 25 windows, so it
+is exploratory until tested on data it has not seen (update 163).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
