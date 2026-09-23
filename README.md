@@ -1232,6 +1232,11 @@ meets the declared rule for the first time in this arc, narrowly: the two-sided 
 bootstrap 2.5% point is +0.0002. The arm was designed after looking at the same 25 windows, so it
 is exploratory until tested on data it has not seen (update 163).
 
+Frozen and scored on the 213 days past the last scored window, which no round had looked at, the
+combined arm fell below the general predictor (0.6660 against 0.6726), mostly in the no-precedent
+class. One short window is a weak test and does not refute it, but the confirmation did not come,
+so the arm stays exploratory and unconfirmed (update 164).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
