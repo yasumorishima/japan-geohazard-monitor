@@ -1189,6 +1189,18 @@ on row counts -0.000742, so none meets the declared gain. Even the best constant
 labels takes only 19.8 per cent of the +0.021012. What remains lies in placing the few highest
 cells of a class high, which the next round targets (update 158).
 
+Measured instead as precision at the top of a class, lifting the true top 5 per cent of the
+no-precedent class at optimal levels reaches 0.7043 on the whole axis against 0.6209. A monotone
+slope-and-intercept map chosen with the labels takes only 37 to 43 per cent of the level room, so
+the order at the top has to change. The general predictor's own top precision there is 0.0814 at
+5 per cent and 0.1422 at 10 per cent. I first published 0.1086 and 0.3520, which broke ties in
+the true top by the predictor's own score, and I withdraw them. The reason is descriptive: in that
+class the positive rate is flat in the time since the last M5.5 (0.0070 to 0.0078), yet the
+predictor scores recent activity higher, so its top there is active cells that do not fire. The
+catalogue says little about which no-precedent cell fires. The first field from outside it,
+surface heat flow from the IHFC Global Heat Flow Database 2024 (CC BY 4.0), gave -0.000125
+(t -0.19) and beat 18 of 20 floor worlds, so it shows no gain (update 159).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
