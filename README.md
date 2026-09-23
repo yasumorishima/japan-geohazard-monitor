@@ -1201,6 +1201,15 @@ catalogue says little about which no-precedent cell fires. The first field from 
 surface heat flow from the IHFC Global Heat Flow Database 2024 (CC BY 4.0), gave -0.000125
 (t -0.19) and beat 18 of 20 floor worlds, so it shows no gain (update 159).
 
+Crustal structure from CRUST1.0 carries a signal where the catalogue does not. Inside the
+no-precedent class, crustal thickness alone orders cells at 0.584 against 0.579 for the general
+predictor (p 0.001 against 1,000 map permutations). The effect runs opposite ways in ocean and on
+land. That split was found after looking, so it was declared and tested on cells with one or two
+precedents, which had not been read. The ocean effect held (0.532, p 0.007) and the land effect did
+not. A causal arm that lets the crustal columns act only where precedents are few reached 0.6220,
++0.0012, above all 20 floor worlds, but with a paired t of 0.78 over windows, so by the declared
+rule it is no gain. CRUST1.0 states no licence and is used as a local input only (update 160).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
