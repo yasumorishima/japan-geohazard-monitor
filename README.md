@@ -1210,6 +1210,13 @@ not. A causal arm that lets the crustal columns act only where precedents are fe
 +0.0012, above all 20 floor worlds, but with a paired t of 0.78 over windows, so by the declared
 rule it is no gain. CRUST1.0 states no licence and is used as a local input only (update 160).
 
+Subduction geometry from Slab2 (Hayes 2018, USGS, public domain, doi 10.5066/F7PV6JNV) carries
+the same kind of signal. Declared before the run, slab coverage alone orders the cells with few
+precedents at 0.539 (p 0.001 against 1,000 map permutations), almost all of it in the
+no-precedent class (0.575). A causal arm that lets the slab columns act only where precedents are
+few reached 0.6235, +0.0026, above all 20 floor worlds, but with a paired t of 1.57 over windows,
+so by the declared rule it is no gain (update 161).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
