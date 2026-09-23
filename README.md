@@ -1217,6 +1217,14 @@ no-precedent class (0.575). A causal arm that lets the slab columns act only whe
 few reached 0.6235, +0.0026, above all 20 floor worlds, but with a paired t of 1.57 over windows,
 so by the declared rule it is no gain (update 161).
 
+A model of its own for the no-precedent class, fitted without any catalogue column on crust and
+slab alone, orders that class at 0.617 against 0.579 for the general predictor, and beats a floor
+that rotates the maps in longitude (31 of 31 worlds, p 0.031). On the whole axis it adds +0.0033
+(t 1.58), no gain by the declared rule. Separate fits for the classes with precedents hurt them.
+The general predictor's level room, +0.051 when levels are chosen per window by the labels, is
+almost all per-window: a level map fixed across windows takes 6% even with future windows
+(update 162).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
