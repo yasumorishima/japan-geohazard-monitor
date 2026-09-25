@@ -1243,6 +1243,12 @@ clock. Neither adds to the general predictor (-0.0001 and +0.0005); the clock's 
 cell's activity, which the predictor already has, so the next information has to come from outside
 the catalogue (update 165).
 
+Two sources from outside the general predictor were then tried for the order inside the
+well-precedented class: the surface load measured by GRACE, and the rate of earthquakes below M4.5
+from the ISC bulletin. Neither adds to the general predictor (-0.0004 and -0.0002). A hindsight
+check shows that the room inside that class lies in what changes from year to year, not in which
+cell it is (update 166).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
