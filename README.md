@@ -1237,6 +1237,12 @@ combined arm fell below the general predictor (0.6660 against 0.6726), mostly in
 class. One short window is a weak test and does not refute it, but the confirmation did not come,
 so the arm stays exploratory and unconfirmed (update 164).
 
+Two clocks from the catalogue were then tried for the order inside the classes: large shocks in
+the neighbouring cells over the last two years, and each well-precedented cell's own recurrence
+clock. Neither adds to the general predictor (-0.0001 and +0.0005); the clock's order is mostly the
+cell's activity, which the predictor already has, so the next information has to come from outside
+the catalogue (update 165).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
