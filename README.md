@@ -1249,6 +1249,12 @@ from the ISC bulletin. Neither adds to the general predictor (-0.0004 and -0.000
 check shows that the room inside that class lies in what changes from year to year, not in which
 cell it is (update 166).
 
+A gain of +0.010 inside the well-precedented class was then traced to the definition of the
+target (an isolated M6 cannot occur in the shadow of an earlier large shock), so every arm is now
+also scored with the label "any M6", and a gain that does not survive there is not counted. Marine
+gravity, ocean sediment thickness, geology transferred from the other classes, and static Coulomb
+stress from earlier large shocks all add nothing (update 167).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
