@@ -1255,6 +1255,11 @@ also scored with the label "any M6", and a gain that does not survive there is n
 gravity, ocean sediment thickness, geology transferred from the other classes, and static Coulomb
 stress from earlier large shocks all add nothing (update 167).
 
+Tidal triggering adds nothing either. A diagnostic shows why yearly sources keep failing inside the
+well-precedented class: its M6 firing has no slow year-to-year variation beyond a constant rate
+per cell, so what remains is short-term, and the next step is to refresh the forecast every 34
+days instead of once a year (update 168).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
