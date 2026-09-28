@@ -1260,6 +1260,11 @@ well-precedented class: its M6 firing has no slow year-to-year variation beyond 
 per cell, so what remains is short-term, and the next step is to refresh the forecast every 34
 days instead of once a year (update 168).
 
+Refreshing the forecast every 33 days first looked like a large gain, but it was a leak from
+choosing the scored cells with the future. On all cells, recent activity helps the any-M6 label
+but not isolated mainshocks, and in the encodings tried neither small-quake rates nor short-term
+b-value changes separate them (update 169).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
