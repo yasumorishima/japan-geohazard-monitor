@@ -1265,6 +1265,11 @@ choosing the scored cells with the future. On all cells, recent activity helps t
 but not isolated mainshocks, and in the encodings tried neither small-quake rates nor short-term
 b-value changes separate them (update 169).
 
+The b-value change was measured again on sequences with ISC's own mb, first from the preferred
+magnitudes (which removed larger events) and then from every event with all magnitudes and
+completeness set where b stops changing; it does not separate isolated mainshocks in either form
+(update 170).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
