@@ -9,5 +9,16 @@
   "brier": 0.0473,
   "info_gain_nats": 3.888,
   "prob_gain_vs_clim": 0.8
+ },
+ "2026-07": {
+  "window": [
+   "2026-07-29",
+   "2026-09-01"
+  ],
+  "n_cells_hit": 9,
+  "auc": 0.9559,
+  "brier": 0.0473,
+  "info_gain_nats": 1.839,
+  "prob_gain_vs_clim": 0.71
  }
 }
