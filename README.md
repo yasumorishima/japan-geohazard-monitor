@@ -1270,6 +1270,10 @@ magnitudes (which removed larger events) and then from every event with all magn
 completeness set where b stops changing; it does not separate isolated mainshocks in either form
 (update 170).
 
+A Japan arena was built on the JMA catalogue, where completeness is about magnitude 1.4, and a
+one-year b-value change on declustered seismicity gave no gain for isolated mainshocks, though it
+could be computed for only 17% of them (update 171).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
