@@ -1282,6 +1282,10 @@ Distance to the nearest volcano did not push down active places without isolated
 oracle map placed the remaining Japan-arena gap in which cell, not in the level of the active
 stratum (update 173).
 
+A low P-wave velocity at 10 to 30 km depth (NIED model of Matsubara et al. 2022) did not mark the
+places of isolated mainshocks on the Japan arena, and a Vp/Vs anomaly seen after the fact was
+borderline and is not claimed (update 174).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
