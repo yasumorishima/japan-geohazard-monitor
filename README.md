@@ -1289,6 +1289,9 @@ borderline and is not claimed (update 174).
 The Vp/Vs observation was not confirmed on data it had never seen (New Zealand 2006 to 2026 with
 the NZ-wide 2.3 model, and Japan 2026), in a pre-registered test of declared low power (update 175).
 
+Crustal magnetic roughness (EMAG2v3) separated isolated mainshocks on Japan but was not confirmed on
+New Zealand, and the Japan pattern traces to the arena edge and the data compilation (update 176).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
