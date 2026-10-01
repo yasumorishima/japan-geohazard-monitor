@@ -1278,6 +1278,10 @@ On the Japan arena a wider b-value change and J-SHIS active faults gave no gain 
 mainshocks, and the Slab2 finding replicated on unseen Japan as whether a cell sits over a slab,
 not its depth or shape, a small effect with activity held fixed (update 172).
 
+Distance to the nearest volcano did not push down active places without isolated mainshocks, and an
+oracle map placed the remaining Japan-arena gap in which cell, not in the level of the active
+stratum (update 173).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
