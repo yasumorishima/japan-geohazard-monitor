@@ -1286,6 +1286,9 @@ A low P-wave velocity at 10 to 30 km depth (NIED model of Matsubara et al. 2022)
 places of isolated mainshocks on the Japan arena, and a Vp/Vs anomaly seen after the fact was
 borderline and is not claimed (update 174).
 
+The Vp/Vs observation was not confirmed on data it had never seen (New Zealand 2006 to 2026 with
+the NZ-wide 2.3 model, and Japan 2026), in a pre-registered test of declared low power (update 175).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
