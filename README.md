@@ -1274,6 +1274,10 @@ A Japan arena was built on the JMA catalogue, where completeness is about magnit
 one-year b-value change on declustered seismicity gave no gain for isolated mainshocks, though it
 could be computed for only 17% of them (update 171).
 
+On the Japan arena a wider b-value change and J-SHIS active faults gave no gain for isolated
+mainshocks, and the Slab2 finding replicated on unseen Japan as whether a cell sits over a slab,
+not its depth or shape, a small effect with activity held fixed (update 172).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
