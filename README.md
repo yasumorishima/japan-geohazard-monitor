@@ -1298,6 +1298,9 @@ power there because nearly all positives fall in cells that are all on slab (upd
 The three catalogue-free fields that survived the global zero-precedent screen were not confirmed on
 Japan and New Zealand; what they order there is activity, not isolated events (update 178).
 
+Causal GNSS velocity changes and transients did not order isolated M5.5 events in cells without
+precedent on Japan and New Zealand (update 179).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
