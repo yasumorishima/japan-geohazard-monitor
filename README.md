@@ -1292,6 +1292,9 @@ the NZ-wide 2.3 model, and Japan 2026), in a pre-registered test of declared low
 Crustal magnetic roughness (EMAG2v3) separated isolated mainshocks on Japan but was not confirmed on
 New Zealand, and the Japan pattern traces to the arena edge and the data compilation (update 176).
 
+The Slab2 "on a slab or not" bit was not confirmed on New Zealand, but the test had almost no
+power there because nearly all positives fall in cells that are all on slab (update 177).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
