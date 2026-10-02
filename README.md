@@ -1295,6 +1295,9 @@ New Zealand, and the Japan pattern traces to the arena edge and the data compila
 The Slab2 "on a slab or not" bit was not confirmed on New Zealand, but the test had almost no
 power there because nearly all positives fall in cells that are all on slab (update 177).
 
+The three catalogue-free fields that survived the global zero-precedent screen were not confirmed on
+Japan and New Zealand; what they order there is activity, not isolated events (update 178).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
