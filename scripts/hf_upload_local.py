@@ -12,6 +12,7 @@ be redistributed, so raw/archive extensions are refused outright.
 """
 import argparse
 import os
+import re
 import sys
 
 REFUSED_SUFFIXES = (
@@ -76,6 +77,92 @@ def upload_dir(args) -> int:
     return 0
 
 
+def pull_dir(args, dest) -> int:
+    """src = "pull:<absolute local dir>": download the folder path_in_repo of the repo into a NEW local dir
+    under /home/yasu/raw/ (refuses anything else), then check every file's size against the remote."""
+    dest = os.path.abspath(dest)
+    if not dest.startswith("/home/yasu/raw/") or os.path.exists(dest):
+        print(f"refusing: destination must be a new directory under /home/yasu/raw/ ({dest})")
+        return 1
+    base = args.path
+    if not re.fullmatch(r"inputs/round\d+_[A-Za-z0-9_]+", base):
+        print("refusing: pull only accepts inputs/roundNNN_name exactly")
+        return 1
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        print("HF_TOKEN is not set in the environment")
+        return 2
+    from huggingface_hub import HfApi
+    api = HfApi(token=token)
+    remote = {}
+    for e in api.list_repo_tree(args.repo, path_in_repo=base, recursive=True, repo_type="dataset"):
+        if getattr(e, "size", None) is not None and not hasattr(e, "tree_id"):
+            remote[e.path] = e.size
+    if not remote:
+        print(f"nothing on remote under {base}")
+        return 1
+    print(f"pull  : {args.repo}:{base}/ ({len(remote)} files) -> {dest}")
+    if args.dry_run:
+        print("dry-run: nothing downloaded")
+        return 0
+    api.snapshot_download(repo_id=args.repo, repo_type="dataset", allow_patterns=[base + "/**"], local_dir=dest)
+    bad = [k for k, v in remote.items() if not os.path.isfile(os.path.join(dest, k)) or os.path.getsize(os.path.join(dest, k)) != v]
+    if bad:
+        print(f"{len(bad)} files missing or size mismatch locally, e.g. {bad[:5]}")
+        return 4
+    print(f"verified: all {len(remote)} files pulled with matching sizes")
+    return 0
+
+
+def delete_remote(args) -> int:
+    """src = "delete": remove the folder path_in_repo from the repo, or the whole repo when path_in_repo is
+    "__WHOLE_REPO__" (only allowed for a PRIVATE repo); then confirm it is gone."""
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        print("HF_TOKEN is not set in the environment")
+        return 2
+    from huggingface_hub import HfApi
+    api = HfApi(token=token)
+    info = api.repo_info(args.repo, repo_type="dataset")
+    if args.path == "__WHOLE_REPO__":
+        if not info.private:
+            print("refusing: whole-repo delete is only allowed for a private repo")
+            return 1
+        print(f"delete: whole private repo {args.repo}")
+        if args.dry_run:
+            print("dry-run: nothing deleted")
+            return 0
+        api.delete_repo(args.repo, repo_type="dataset")
+        if api.repo_exists(args.repo, repo_type="dataset"):
+            print("repo still exists")
+            return 4
+        print("verified: repo deleted")
+        return 0
+    base = args.path
+    if not re.fullmatch(r"inputs/round\d+_[A-Za-z0-9_]+", base):
+        print("refusing: folder delete only accepts inputs/roundNNN_name exactly")
+        return 1
+    before = set(api.list_repo_files(args.repo, repo_type="dataset"))
+    n = sum(1 for e in api.list_repo_tree(args.repo, path_in_repo=base, recursive=True, repo_type="dataset")
+            if not hasattr(e, "tree_id"))
+    print(f"delete: {args.repo}:{base}/ ({n} files)")
+    if args.dry_run or n == 0:
+        print("dry-run or empty: nothing deleted")
+        return 0 if args.dry_run else 1
+    api.delete_folder(path_in_repo=base, repo_id=args.repo, repo_type="dataset", commit_message=args.message)
+    after = set(api.list_repo_files(args.repo, repo_type="dataset"))
+    left = [e for e in after if e.startswith(base + "/")]
+    if left:
+        print(f"{len(left)} files still present")
+        return 4
+    outside = {e for e in before if not e.startswith(base + "/")}
+    if outside - after:
+        print(f"{len(outside - after)} files OUTSIDE the folder disappeared, e.g. {sorted(outside - after)[:5]}")
+        return 5
+    print("verified: folder deleted")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", required=True, help="local path on this host")
@@ -85,6 +172,10 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
+    if args.src.startswith("pull:"):
+        return pull_dir(args, args.src[5:])
+    if args.src == "delete":
+        return delete_remote(args)
     if os.path.isdir(args.src):
         return upload_dir(args)
     if not os.path.isfile(args.src):
