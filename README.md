@@ -1307,6 +1307,9 @@ precedent on Japan and New Zealand (update 180).
 Month-scale sea-surface temperature anomalies did not order isolated M5.5 events in cells without
 precedent on Japan and New Zealand (update 181).
 
+Month-scale ocean-colour (chlorophyll a) anomalies did not order isolated M5.5 events in cells without
+precedent on Japan and New Zealand (update 182).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
