@@ -1313,6 +1313,9 @@ precedent on Japan and New Zealand (update 182).
 Month-scale sea-surface-height anomalies did not order isolated M5.5 events in cells without
 precedent on Japan and New Zealand (update 183).
 
+Night-time magnetic-field fluctuations seen from orbit did not order isolated M5.5 events in
+cells without precedent on Japan and New Zealand (update 184).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
