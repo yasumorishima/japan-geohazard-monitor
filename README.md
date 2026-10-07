@@ -1316,6 +1316,9 @@ precedent on Japan and New Zealand (update 183).
 Night-time magnetic-field fluctuations seen from orbit did not order isolated M5.5 events in
 cells without precedent on Japan and New Zealand (update 184).
 
+Month-scale outgoing-longwave-radiation anomalies did not order isolated M5.5 events in cells
+without precedent on Japan and New Zealand (update 185).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
