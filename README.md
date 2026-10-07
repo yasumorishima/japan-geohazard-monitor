@@ -14,6 +14,17 @@ Real-time monitoring dashboard for Japan's geophysical activity — earthquakes,
 
 9 async collectors run continuously on a Raspberry Pi 5, pulling data from 10 public APIs and storing it in SQLite. A FastAPI server renders a Leaflet.js dashboard with togglable layers and a time-synchronized correlation panel for cross-domain anomaly detection. Mobile responsive.
 
+## Sudden-earthquake axis at a glance
+
+The main research question is whether isolated mainshocks (earthquakes with no foreshock sequence and no recent
+precedent in their cell) can be forecast with genuine skill. Details and every number are in
+[RESEARCH-LOG.md](RESEARCH-LOG.md); the figures are drawn by
+[research/sudden_axis/make_figs.py](research/sudden_axis/make_figs.py) from the pre-registered run logs.
+
+![Where the sudden axis stands](research/sudden_axis/fig1_where_we_stand.png)
+
+![Observation systems tested](research/sudden_axis/fig2_observation_systems.png)
+
 ## Live
 
 Raspberry Pi 5 + Docker（Tailscaleネットワーク内）
