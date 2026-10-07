@@ -1,0 +1,15 @@
+round,system,statistic,auc,floor_sd_max,max_floor_p,positives,verdict,log
+293,Land GNSS,velocity change,0.51355,0.02876,0.4875,108,NOT SUPPORTED,pre293.log
+293,Land GNSS,transient,0.53354,0.03063,0.2248,109,NOT SUPPORTED,pre293.log
+294,Ionospheric TEC,|anomaly|,0.46848,0.03376,0.9021,84,NOT SUPPORTED,pre294.log
+294,Ionospheric TEC,spread ratio,0.51815,0.03560,0.3347,84,NOT SUPPORTED,pre294.log
+295,Sea-surface temperature,anomaly,0.51636,0.02465,0.3277,164,NOT SUPPORTED,pre295_run.log
+295,Sea-surface temperature,spread ratio,0.51773,0.02405,0.2228,164,NOT SUPPORTED,pre295_run.log
+296,Ocean colour,anomaly,0.50336,0.02411,0.6044,165,NOT SUPPORTED,pre296_run.log
+296,Ocean colour,spread ratio,0.50149,0.02296,0.7053,165,NOT SUPPORTED,pre296_run.log
+297,Sea-surface height,|anomaly|,0.49595,0.02469,0.5894,168,NOT SUPPORTED,pre297_run.log
+297,Sea-surface height,spread ratio,0.48457,0.02399,0.7363,168,NOT SUPPORTED,pre297_run.log
+298,Satellite magnetic field,Stouffer z,0.47922,0.02704,0.8182,128,NOT SUPPORTED,pre298_run.log
+298,Satellite magnetic field,share > q90,0.49659,0.02615,0.5764,128,NOT SUPPORTED,pre298_run.log
+299,Outgoing longwave radiation,anomaly,0.51241,0.02553,0.3736,175,NOT SUPPORTED,pre299_run.log
+299,Outgoing longwave radiation,spread ratio,0.50967,0.02324,0.6843,175,NOT SUPPORTED,pre299_run.log

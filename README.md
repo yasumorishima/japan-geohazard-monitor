@@ -18,8 +18,9 @@ Real-time monitoring dashboard for Japan's geophysical activity — earthquakes,
 
 The main research question is whether isolated mainshocks (earthquakes with no foreshock sequence and no recent
 precedent in their cell) can be forecast with genuine skill. Details and every number are in
-[RESEARCH-LOG.md](RESEARCH-LOG.md); the figures are drawn by
-[research/sudden_axis/make_figs.py](research/sudden_axis/make_figs.py) from the pre-registered run logs.
+[RESEARCH-LOG.md](RESEARCH-LOG.md). The figures are redrawn automatically (GitHub Actions) whenever
+[research/sudden_axis/results.csv](research/sudden_axis/results.csv) changes; each row is appended from a
+pre-registered run log by [add_round.py](research/sudden_axis/add_round.py).
 
 ![Where the sudden axis stands](research/sudden_axis/fig1_where_we_stand.png)
 

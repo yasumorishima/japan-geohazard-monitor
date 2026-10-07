@@ -1,0 +1,56 @@
+name: Sudden-axis figures
+
+# Redraws the README figures of the sudden-earthquake axis whenever their input tables or the drawing script change,
+# and commits the PNGs.  Inputs: research/sudden_axis/{results.csv,stand.csv} (rows of results.csv are appended by
+# add_round.py from each pre-registered run log).  make_figs.py refuses malformed input, so a bad row fails this job
+# instead of publishing a wrong figure.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - research/sudden_axis/results.csv
+      - research/sudden_axis/stand.csv
+      - research/sudden_axis/make_figs.py
+  workflow_dispatch:
+    inputs:
+      memo:
+        description: 'What are you running and why?'
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sudden-axis-figures
+  cancel-in-progress: false
+
+jobs:
+  draw:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install matplotlib
+        run: pip install matplotlib==3.10.*
+
+      - name: Draw
+        run: python research/sudden_axis/make_figs.py
+
+      - name: Commit changed figures
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add research/sudden_axis/*.png
+          if git diff --cached --quiet; then
+            echo "figures unchanged"
+          else
+            git commit -m "Redraw sudden-axis figures (${GITHUB_SHA::7})"
+            git pull --rebase origin master
+            git push origin HEAD:master
+          fi
