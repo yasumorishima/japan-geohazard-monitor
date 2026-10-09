@@ -41,8 +41,10 @@ credited to the cell-linked token channel only if (a) the real run's DEEP-FULL r
 mean of real - mean(shuffles) is positive at t > 2.  Windows share one static geography, so t is not 25 independent
 draws; both are reported, neither alone is claimed.  Every run also writes per-window scores and within-precedent-
 group AUCs (group = min(precedents in the trailing 60, 3), as chk238) for the decomposition.
-GATE S1: in every shuffled window at least half of the cells receive token rows that differ from their own and at most
-1% of cells are fixed points of the permutation (else the link is not broken and the run stops).
+GATE S1: the shuffle is one random cycle through the window's cells (a derangement); in every shuffled window it must
+be a permutation with zero fixed points and at least half of the cells must receive token rows that differ from their
+own (else the link is not broken and the run stops).  (A first version used a plain permutation with a 1%-fixed-point
+bound; windows of ~90 cells failed on a single fixed point, run 37955700460, cancelled before any result was read.)
 """
 import argparse
 import hashlib
@@ -183,14 +185,18 @@ def train_eval(TK, jj, ev, W, args, log):
             X, M = TK.build(W[k]["cid"], W[k]["tcut"])
             if args.shuffle_tokens >= 0:
                 rng = np.random.default_rng(7919 * k + 104729 * args.shuffle_tokens + 1)
-                pm = rng.permutation(len(X))
+                # one random cycle through all cells: a derangement, so no cell keeps its own tokens
+                order = rng.permutation(len(X))
+                pm = np.empty(len(X), np.int64)
+                pm[order] = np.roll(order, -1)
                 Xp, Mp = X[pm], M[pm]
                 moved = np.any(Xp != X, axis=(1, 2)) | np.any(Mp != M, axis=1)
                 frac = float(moved.mean())
-                fixed = float((pm == np.arange(len(pm))).mean())
-                log("window %d shuffle %d: cells whose token rows changed %.3f, fixed points %.4f, empty rows %.3f"
+                fixed = int((pm == np.arange(len(pm))).sum())
+                assert np.array_equal(np.sort(pm), np.arange(len(pm))), "S1 FAIL: not a permutation"
+                log("window %d shuffle %d: cells whose token rows changed %.3f, fixed points %d, empty rows %.3f"
                     % (k, args.shuffle_tokens, frac, fixed, float((M.sum(1) == 0).mean())))
-                assert frac >= 0.5 and fixed <= 0.01, "S1 FAIL: the permutation does not break the cell-token link"
+                assert frac >= 0.5 and fixed == 0, "S1 FAIL: the permutation does not break the cell-token link"
                 X, M = Xp, Mp
             cache[k] = (X, M)
         return cache[k]
