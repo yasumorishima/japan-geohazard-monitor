@@ -222,7 +222,9 @@ def main():
     def log(s):
         print("[%6.0fs] %s" % (time.time() - t0, s), flush=True)
 
-    log("bundle md5 %s" % hashlib.md5(open(args.bundle, "rb").read()).hexdigest())
+    md5 = hashlib.md5(open(args.bundle, "rb").read()).hexdigest()
+    log("bundle md5 %s" % md5)
+    assert md5 == "3a6ebb64dde9f8ca5e57863f0dcd8fd7", "bundle is not v1 as exported"
     B, jj, ev, W = load(args.bundle)
     full = gate_full(jj, ev, W)
     log("R0 FULL refit 25-window mean %.6f (bundle export 0.620864)" % full.mean())
@@ -246,7 +248,8 @@ def main():
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
             f.write("| | shard ACTIVE mean |\n|---|---|\n| DEEP | %.5f |\n| FULL | %.5f |\n| arm map | %.5f |\n"
-                    "\nDEEP-FULL %+.5f (se %.5f), better in %d/25 windows. Exploratory: all 25 windows seen before.\n"
+                    "\nShard windows %s: DEEP-FULL %+.5f (se %.5f), better in %d/%d. Exploratory: all 25 windows "
+                    "seen before.\n"
                     % (deep.mean(), full.mean(), arm.mean(), ev, d.mean(), se, int((d > 0).sum()), len(d)))
 
 
