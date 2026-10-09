@@ -1331,6 +1331,10 @@ cells without precedent on Japan and New Zealand (update 184).
 Month-scale outgoing-longwave-radiation anomalies did not order isolated M5.5 events in cells
 without precedent on Japan and New Zealand (update 185).
 
+A neural network that reads each cell's surrounding catalogue events added nothing to the
+sudden axis beyond its 27 per-cell features (token-shuffle floor); the feature-only network
+is frozen and scored on unseen windows, first window +0.014 over FULL, no verdict before five (update 186).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
