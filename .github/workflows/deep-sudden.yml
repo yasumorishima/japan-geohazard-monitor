@@ -20,6 +20,12 @@ on:
         description: JSON list of token-shuffle replicates (-1 = real model; 0.. = shuffled floor)
         required: false
         default: "[-1]"
+      rep_flag:
+        description: What the matrix rep sets (shuffle-tokens or seed-offset)
+        required: false
+        default: shuffle-tokens
+        type: choice
+        options: [shuffle-tokens, seed-offset]
 
 permissions:
   contents: read
@@ -51,9 +57,12 @@ jobs:
       - name: Train and score
         env:
           EXTRA: ${{ inputs.args }}
+          REPFLAG: ${{ inputs.rep_flag }}
+          REP: ${{ matrix.rep }}
         run: |
+          case "$REPFLAG" in shuffle-tokens|seed-offset) ;; *) echo "bad rep_flag"; exit 1 ;; esac
           python research/deep_sudden/train.py --bundle derived/deep_sudden/sudden_bundle_v1.npz \
-            --shard ${{ matrix.shard }} --nshard 5 --threads 4 --shuffle-tokens ${{ matrix.rep }} $EXTRA \
+            --shard ${{ matrix.shard }} --nshard 5 --threads 4 "--$REPFLAG" "$REP" $EXTRA \
             --out result_${{ matrix.shard }}_${{ matrix.rep }}.json
           echo "RESULT_JSON_BEGIN"
           cat result_${{ matrix.shard }}_${{ matrix.rep }}.json

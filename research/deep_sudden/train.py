@@ -51,8 +51,11 @@ RIVAL ARM (--no-tokens), same network with the token encoder bypassed (pooled = 
 3. WHY THIS ROUND: if yes, the next lever is the learner on the per-cell features (frozen, then scored prospectively),
    not event tokens; if no, the shuffled token tensor itself was doing work (noise/regularisation) and that is what
    needs explaining before any freeze.
-Reading, fixed before the result: NOTOK-FULL at or above the shuffle range's minimum (+0.00564) = the learner carries
-the gain; below it = it does not, and the gap is reported.  One run, settings identical to the floor, no sweep.
+Reading, fixed before the result: the eight shuffles share one training RNG stream, so their range measures token
+content, not training noise; NOTOK is therefore run on eight RNG streams (--seed-offset 0..7, 3 seeds each, settings
+otherwise identical to the floor, no sweep).  The learner carries the gain if the mean NOTOK-FULL over the eight streams
+is at least +0.00564 (the shuffle minimum) AND positive at t > 2 over the 25 windows; otherwise it does not, and the
+gap to the shuffle mean +0.00637 is reported with the across-stream sd.
 
 GATE S1: the shuffle is one random cycle through the window's cells (a derangement); in every shuffled window it must
 be a permutation with zero fixed points and at least half of the cells must receive token rows that differ from their
@@ -181,12 +184,14 @@ class Net(nn.Module):
         self.enc = nn.TransformerEncoder(enc, layers)
         self.feat = nn.Sequential(nn.Linear(nfeat, d), nn.GELU())
         self.head = nn.Sequential(nn.Linear(2 * d + 1, d), nn.GELU(), nn.Dropout(0.1), nn.Linear(d, 1))
+        self.enc_calls = 0
 
     def forward(self, x, mask, f):
         if not bool(mask.any()):  # --no-tokens: skip the encoder (an all-padded attention row is NaN)
             pooled = torch.zeros(len(f), self.head[0].in_features // 2, dtype=f.dtype)
             empty = torch.ones(len(f), 1, dtype=f.dtype)
             return self.head(torch.cat([pooled, self.feat(f), empty], 1)).squeeze(1)
+        self.enc_calls += 1
         h = self.enc(self.tok(x), src_key_padding_mask=~mask)
         w = mask.float().unsqueeze(-1)
         pooled = (h * w).sum(1) / w.sum(1).clamp(min=1.0)
@@ -200,8 +205,8 @@ def train_eval(TK, jj, ev, W, args, log):
     def data(k):
         if k not in cache:
             X, M = TK.build(W[k]["cid"], W[k]["tcut"])
+            log("window %d empty token rows %.3f" % (k, float((M.sum(1) == 0).mean())))
             if args.no_tokens:
-                assert args.shuffle_tokens < 0, "--no-tokens and --shuffle-tokens are exclusive"
                 X, M = np.zeros_like(X), np.zeros_like(M)
             if args.shuffle_tokens >= 0:
                 rng = np.random.default_rng(7919 * k + 104729 * args.shuffle_tokens + 1)
@@ -231,7 +236,7 @@ def train_eval(TK, jj, ev, W, args, log):
         mu, sd = F.mean(0), F.std(0) + 1e-9
         preds = []
         for seed in range(args.seeds):
-            torch.manual_seed(1000 * j + seed)
+            torch.manual_seed(1000 * j + seed + 100000 * args.seed_offset)
             net = Net(F.shape[1], d=args.d, layers=args.layers)
             opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-2)
             pos = max(y.mean(), 1e-3)
@@ -252,6 +257,10 @@ def train_eval(TK, jj, ev, W, args, log):
             with torch.no_grad():
                 fj = torch.from_numpy(((W[j]["feat"] - mu) / sd).astype(np.float32))
                 preds.append(net(torch.from_numpy(Xj), torch.from_numpy(Mj), fj).numpy())
+            if args.no_tokens:
+                assert net.enc_calls == 0, "NOTOK gate: the token encoder was called"
+            else:
+                assert net.enc_calls > 0, "the token encoder was never called"
         s = np.mean(preds, 0)
         a = auc_pair(W[j]["pw"], W[j]["nw"], s)
         res.append(a)
@@ -293,8 +302,10 @@ def main():
     ap.add_argument("--nshard", type=int, default=1)
     ap.add_argument("--shuffle-tokens", type=int, default=-1)
     ap.add_argument("--no-tokens", action="store_true")
+    ap.add_argument("--seed-offset", type=int, default=0)
     ap.add_argument("--out", default="deep_sudden_result.json")
     args = ap.parse_args()
+    assert not (args.no_tokens and args.shuffle_tokens >= 0), "--no-tokens and --shuffle-tokens are exclusive"
     torch.set_num_threads(args.threads)
     t0 = time.time()
 
@@ -336,9 +347,10 @@ def main():
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
             f.write("| | shard ACTIVE mean |\n|---|---|\n| DEEP | %.5f |\n| FULL | %.5f |\n| arm map | %.5f |\n"
-                    "\nShard windows %s, shuffle %d: DEEP-FULL %+.5f (se %.5f), better in %d/%d. Exploratory: all "
+                    "\nShard windows %s, shuffle %d, no-tokens %s, seed offset %d: DEEP-FULL %+.5f (se %.5f), better in %d/%d. Exploratory: all "
                     "25 windows seen before.\n"
-                    % (deep.mean(), full.mean(), arm.mean(), ev, args.shuffle_tokens, d.mean(), se,
+                    % (deep.mean(), full.mean(), arm.mean(), ev, args.shuffle_tokens, args.no_tokens,
+                       args.seed_offset, d.mean(), se,
                        int((d > 0).sum()), len(d)))
 
 
