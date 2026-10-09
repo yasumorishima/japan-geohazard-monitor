@@ -41,6 +41,19 @@ credited to the cell-linked token channel only if (a) the real run's DEEP-FULL r
 mean of real - mean(shuffles) is positive at t > 2.  Windows share one static geography, so t is not 25 independent
 draws; both are reported, neither alone is claimed.  Every run also writes per-window scores and within-precedent-
 group AUCs (group = min(precedents in the trailing 60, 3), as chk238) for the decomposition.
+FLOOR RESULT (run 37960270592, commit 8c9c863): token channel NOT SUPPORTED -- real re-run 0.62724 ranks 5th of 9,
+real - mean(shuffles) +0.00001 (t 0.01); shuffles give DEEP-FULL +0.00564..+0.00735.
+
+RIVAL ARM (--no-tokens), same network with the token encoder bypassed (pooled = 0, empty flag = 1 for every row):
+1. SUDDEN NUMBER THIS MOVES: FULL 0.62086 -- does a nonlinear learner on FULL's own 27 features carry the +0.0064
+   (and the within-precedent-group-0 +0.025) that the floor took away from the tokens?
+2. DIMENSION AND ITS BOUND: WHERE, bound 0.9482.
+3. WHY THIS ROUND: if yes, the next lever is the learner on the per-cell features (frozen, then scored prospectively),
+   not event tokens; if no, the shuffled token tensor itself was doing work (noise/regularisation) and that is what
+   needs explaining before any freeze.
+Reading, fixed before the result: NOTOK-FULL at or above the shuffle range's minimum (+0.00564) = the learner carries
+the gain; below it = it does not, and the gap is reported.  One run, settings identical to the floor, no sweep.
+
 GATE S1: the shuffle is one random cycle through the window's cells (a derangement); in every shuffled window it must
 be a permutation with zero fixed points and at least half of the cells must receive token rows that differ from their
 own (else the link is not broken and the run stops).  (A first version used a plain permutation with a 1%-fixed-point
@@ -170,6 +183,10 @@ class Net(nn.Module):
         self.head = nn.Sequential(nn.Linear(2 * d + 1, d), nn.GELU(), nn.Dropout(0.1), nn.Linear(d, 1))
 
     def forward(self, x, mask, f):
+        if not bool(mask.any()):  # --no-tokens: skip the encoder (an all-padded attention row is NaN)
+            pooled = torch.zeros(len(f), self.head[0].in_features // 2, dtype=f.dtype)
+            empty = torch.ones(len(f), 1, dtype=f.dtype)
+            return self.head(torch.cat([pooled, self.feat(f), empty], 1)).squeeze(1)
         h = self.enc(self.tok(x), src_key_padding_mask=~mask)
         w = mask.float().unsqueeze(-1)
         pooled = (h * w).sum(1) / w.sum(1).clamp(min=1.0)
@@ -183,6 +200,9 @@ def train_eval(TK, jj, ev, W, args, log):
     def data(k):
         if k not in cache:
             X, M = TK.build(W[k]["cid"], W[k]["tcut"])
+            if args.no_tokens:
+                assert args.shuffle_tokens < 0, "--no-tokens and --shuffle-tokens are exclusive"
+                X, M = np.zeros_like(X), np.zeros_like(M)
             if args.shuffle_tokens >= 0:
                 rng = np.random.default_rng(7919 * k + 104729 * args.shuffle_tokens + 1)
                 # one random cycle through all cells: a derangement, so no cell keeps its own tokens
@@ -272,6 +292,7 @@ def main():
     ap.add_argument("--shard", type=int, default=0)
     ap.add_argument("--nshard", type=int, default=1)
     ap.add_argument("--shuffle-tokens", type=int, default=-1)
+    ap.add_argument("--no-tokens", action="store_true")
     ap.add_argument("--out", default="deep_sudden_result.json")
     args = ap.parse_args()
     torch.set_num_threads(args.threads)
