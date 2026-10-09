@@ -1,0 +1,53 @@
+name: Deep model on the sudden-earthquake axis
+
+# Exploratory training of a neighbourhood-event transformer on the global ACTIVE (isolated main shock) axis.
+# Free GitHub-hosted CPU (public repository); no GPU, no paid service.  Data: the public HF dataset
+# yasumorishima/japan-geohazard (USGS catalogue, public domain, and quantities derived from it).
+# The 25 evaluation windows are split across shards that run in parallel; each shard re-checks the bundle
+# (gate R0: FULL refit 0.620864) before training.
+
+on:
+  workflow_dispatch:
+    inputs:
+      memo:
+        description: Why this run
+        required: true
+      args:
+        description: Extra arguments for train.py (e.g. --epochs 6 --ntok 64 --rad 600)
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  shard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (CPU torch)
+        run: |
+          pip install --quiet numpy==2.1.3 scikit-learn==1.5.2 huggingface_hub==0.26.2
+          pip install --quiet torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+      - name: Fetch bundle
+        env:
+          MEMO: ${{ inputs.memo }}
+        run: |
+          echo "memo: $MEMO"
+          python -c "from huggingface_hub import hf_hub_download as d; print(d('yasumorishima/japan-geohazard', 'derived/deep_sudden/sudden_bundle_v1.npz', repo_type='dataset', local_dir='.'))"
+      - name: Train and score
+        env:
+          EXTRA: ${{ inputs.args }}
+        run: |
+          python research/deep_sudden/train.py --bundle derived/deep_sudden/sudden_bundle_v1.npz \
+            --shard ${{ matrix.shard }} --nshard 5 --threads 4 $EXTRA \
+            --out result_${{ matrix.shard }}.json
+          cat result_${{ matrix.shard }}.json
