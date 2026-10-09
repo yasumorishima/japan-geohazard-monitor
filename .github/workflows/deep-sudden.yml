@@ -16,6 +16,10 @@ on:
         description: Extra arguments for train.py (e.g. --epochs 6 --ntok 64 --rad 600)
         required: false
         default: ""
+      reps:
+        description: JSON list of token-shuffle replicates (-1 = real model; 0.. = shuffled floor)
+        required: false
+        default: "[-1]"
 
 permissions:
   contents: read
@@ -28,6 +32,7 @@ jobs:
       fail-fast: false
       matrix:
         shard: [0, 1, 2, 3, 4]
+        rep: ${{ fromJSON(inputs.reps) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -48,6 +53,9 @@ jobs:
           EXTRA: ${{ inputs.args }}
         run: |
           python research/deep_sudden/train.py --bundle derived/deep_sudden/sudden_bundle_v1.npz \
-            --shard ${{ matrix.shard }} --nshard 5 --threads 4 $EXTRA \
-            --out result_${{ matrix.shard }}.json
-          cat result_${{ matrix.shard }}.json
+            --shard ${{ matrix.shard }} --nshard 5 --threads 4 --shuffle-tokens ${{ matrix.rep }} $EXTRA \
+            --out result_${{ matrix.shard }}_${{ matrix.rep }}.json
+          echo "RESULT_JSON_BEGIN"
+          cat result_${{ matrix.shard }}_${{ matrix.rep }}.json
+          echo
+          echo "RESULT_JSON_END"

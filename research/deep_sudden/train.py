@@ -22,6 +22,24 @@ The 25 windows have all been seen by earlier rounds, so this is exploration: a p
 frozen contract on unseen windows before anything is claimed.
 
 GATE R0: refitting FULL from the bundle reproduces 0.620864 to 1e-4 (else stop: the bundle is not the frozen run's).
+
+FLOOR (--shuffle-tokens R >= 0), added after the first run gave DEEP 0.62724 vs FULL 0.62086 (+0.00637, se 0.00222,
+16/25 windows; run 37935272865, settings fixed before that run and NOT changed here):
+1. SUDDEN NUMBER THIS MOVES: none directly -- it decides whether the +0.00637 over FULL 0.62086 belongs to the
+   neighbourhood-event channel or to the network's nonlinear use of the 27 features that FULL already has.
+2. DIMENSION AND ITS BOUND: WHERE, bound 0.9482 (as above).
+3. WHY THIS ROUND: the deep model differs from FULL in two things at once (the event tokens and a nonlinear learner).
+   The control deletes exactly one: within every window (training and scored alike) the token rows are permuted
+   across that window's cells with a fixed seed, so the token distribution, the features, labels, weights, seeds and
+   settings are all unchanged and only the cell-to-neighbourhood link is broken.  Label permutation would test
+   against 0.5, which says nothing about the gain over FULL.
+Reading, fixed before any floor result: R = -1 is the real model re-run, R = 0..7 are eight shuffles.  The gain is
+credited to the token channel only if (a) the real run's DEEP-FULL ranks first among the nine and (b) the window-wise
+mean of real - mean(shuffles) is positive at t > 2.  Windows share one static geography, so t is not 25 independent
+draws; both are reported, neither alone is claimed.  Every run also writes per-window scores and within-precedent-
+group AUCs (group = min(precedents in the trailing 60, 3), as chk238) for the decomposition.
+GATE S1: in every shuffled window at least half of the cells receive token rows that differ from their own (else the
+permutation is not breaking the link and the run stops).
 """
 import argparse
 import hashlib
@@ -66,6 +84,7 @@ def load(path):
     for i, j in enumerate(jj):
         W[j] = dict(cid=B["cid_%d" % j], lab=B["lab_%d" % j], pw=B["pw_%d" % j].astype(np.float64),
                     nw=B["nw_%d" % j].astype(np.float64), arm=B["arm_%d" % j], feat=B["feat_%d" % j],
+                    grp=B["grp_%d" % j].astype(np.int64),
                     tcut=float(B["tcut"][i]), hiT=float(B["hiT"][i]))
     return B, jj, ev, W
 
@@ -159,10 +178,19 @@ def train_eval(TK, jj, ev, W, args, log):
     def data(k):
         if k not in cache:
             X, M = TK.build(W[k]["cid"], W[k]["tcut"])
+            if args.shuffle_tokens >= 0:
+                rng = np.random.default_rng(7919 * k + 104729 * args.shuffle_tokens + 1)
+                pm = rng.permutation(len(X))
+                Xp, Mp = X[pm], M[pm]
+                moved = np.any(Xp != X, axis=(1, 2)) | np.any(Mp != M, axis=1)
+                frac = float(moved.mean())
+                log("window %d shuffle %d: cells whose token rows changed %.3f" % (k, args.shuffle_tokens, frac))
+                assert frac >= 0.5, "S1 FAIL: the permutation does not break the cell-token link"
+                X, M = Xp, Mp
             cache[k] = (X, M)
         return cache[k]
 
-    res = []
+    res, scores = [], {}
     for j in ev:
         ks = strict_past(jj, W, j)
         Xs = np.concatenate([data(k)[0] for k in ks])
@@ -196,8 +224,26 @@ def train_eval(TK, jj, ev, W, args, log):
         s = np.mean(preds, 0)
         a = auc_pair(W[j]["pw"], W[j]["nw"], s)
         res.append(a)
+        scores[j] = s
         log("window %d  train windows %d  rows %d  DEEP %.5f" % (j, len(ks), n, a))
-    return np.array(res)
+    return np.array(res), scores
+
+
+def full_scores(jj, j, W):
+    ks = strict_past(jj, W, j)
+    X = np.vstack([W[k]["feat"] for k in ks])
+    y = np.concatenate([W[k]["lab"] for k in ks])
+    sc = StandardScaler().fit(X)
+    m = LogisticRegression(max_iter=2000, C=1.0).fit(sc.transform(X), y)
+    return m.predict_proba(sc.transform(W[j]["feat"]))[:, 1]
+
+
+def by_group(Wj, s):
+    out = []
+    for g in range(4):
+        sel = Wj["grp"] == g
+        out.append(auc_pair(Wj["pw"][sel], Wj["nw"][sel], np.asarray(s)[sel]) if sel.any() else float("nan"))
+    return out
 
 
 def main():
@@ -214,6 +260,7 @@ def main():
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--shard", type=int, default=0)
     ap.add_argument("--nshard", type=int, default=1)
+    ap.add_argument("--shuffle-tokens", type=int, default=-1)
     ap.add_argument("--out", default="deep_sudden_result.json")
     args = ap.parse_args()
     torch.set_num_threads(args.threads)
@@ -236,21 +283,30 @@ def main():
     full, arm = full[sel], arm[sel]
     log("shard %d/%d windows %s" % (args.shard, args.nshard, evs))
     TK = Tokens(B, args.ntok, args.rad)
-    deep = train_eval(TK, jj, evs, W, args, log)
+    deep, dsc = train_eval(TK, jj, evs, W, args, log)
     ev = evs
+    fsc = {j: full_scores(jj, j, W) for j in ev}
+    for i, j in enumerate(ev):
+        assert abs(auc_pair(W[j]["pw"], W[j]["nw"], fsc[j]) - full[i]) < 1e-12, "FULL scores do not match R0"
+    grp_deep = {j: by_group(W[j], dsc[j]) for j in ev}
+    grp_full = {j: by_group(W[j], fsc[j]) for j in ev}
     d = deep - full
     se = d.std(ddof=1) / np.sqrt(len(d))
     log("DEEP shard mean %.5f   FULL %.5f   DEEP-FULL %+.5f (se %.5f, windows better %d/%d)"
         % (deep.mean(), full.mean(), d.mean(), se, int((d > 0).sum()), len(d)))
     json.dump(dict(args=vars(args), windows=ev, deep=deep.tolist(), full=full.tolist(), arm=arm.tolist(),
                    deep_mean=float(deep.mean()), full_mean=float(full.mean()), arm_mean=float(arm.mean()),
-                   diff_mean=float(d.mean()), diff_se=float(se)), open(args.out, "w"), indent=1)
+                   diff_mean=float(d.mean()), diff_se=float(se), shuffle=args.shuffle_tokens,
+                   grp_deep={str(j): grp_deep[j] for j in ev}, grp_full={str(j): grp_full[j] for j in ev},
+                   score_deep={str(j): np.round(dsc[j], 7).tolist() for j in ev},
+                   score_full={str(j): np.round(fsc[j], 7).tolist() for j in ev}), open(args.out, "w"))
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
             f.write("| | shard ACTIVE mean |\n|---|---|\n| DEEP | %.5f |\n| FULL | %.5f |\n| arm map | %.5f |\n"
-                    "\nShard windows %s: DEEP-FULL %+.5f (se %.5f), better in %d/%d. Exploratory: all 25 windows "
-                    "seen before.\n"
-                    % (deep.mean(), full.mean(), arm.mean(), ev, d.mean(), se, int((d > 0).sum()), len(d)))
+                    "\nShard windows %s, shuffle %d: DEEP-FULL %+.5f (se %.5f), better in %d/%d. Exploratory: all "
+                    "25 windows seen before.\n"
+                    % (deep.mean(), full.mean(), arm.mean(), ev, args.shuffle_tokens, d.mean(), se,
+                       int((d > 0).sum()), len(d)))
 
 
 if __name__ == "__main__":
