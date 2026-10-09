@@ -1,0 +1,60 @@
+name: Frozen sudden-axis network on new windows
+
+# Scores the frozen feature-only network (research/deep_sudden/FREEZE_notok.md) on windows outside sudden_bundle_v1.
+# Free GitHub-hosted CPU (public repository).  Data: public HF dataset yasumorishima/japan-geohazard (USGS catalogue,
+# public domain, and quantities derived from it).  One job per RNG stream; nothing is tuned here.
+
+on:
+  workflow_dispatch:
+    inputs:
+      memo:
+        description: Why this run
+        required: true
+      bundle:
+        description: Bundle path in the HF dataset
+        required: true
+        default: derived/deep_sudden/sudden_bundle_v2.npz
+      md5:
+        description: Expected md5 of the bundle
+        required: true
+        default: bab9c9297953317d243dbc133cced60f
+
+permissions:
+  contents: read
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        stream: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (CPU torch)
+        run: |
+          pip install --quiet numpy==2.1.3 scikit-learn==1.5.2 huggingface_hub==0.26.2
+          pip install --quiet torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+      - name: Fetch bundle
+        env:
+          MEMO: ${{ inputs.memo }}
+          BUNDLE: ${{ inputs.bundle }}
+          MD5: ${{ inputs.md5 }}
+        run: |
+          echo "memo: $MEMO"
+          python -c "import os; from huggingface_hub import hf_hub_download as d; print(d('yasumorishima/japan-geohazard', os.environ['BUNDLE'], repo_type='dataset', local_dir='.'))"
+          echo "$MD5  $BUNDLE" | md5sum -c -
+      - name: Score
+        env:
+          BUNDLE: ${{ inputs.bundle }}
+        run: |
+          python research/deep_sudden/score_new.py --bundle "$BUNDLE" --seed-offset ${{ matrix.stream }} \
+            --out new_${{ matrix.stream }}.json
+          echo "RESULT_JSON_BEGIN"
+          cat new_${{ matrix.stream }}.json
+          echo
+          echo "RESULT_JSON_END"
