@@ -26,7 +26,10 @@ GATE R0: refitting FULL from the bundle reproduces 0.620864 to 1e-4 (else stop: 
 FLOOR (--shuffle-tokens R >= 0), added after the first run gave DEEP 0.62724 vs FULL 0.62086 (+0.00637, se 0.00222,
 16/25 windows; run 37935272865, settings fixed before that run and NOT changed here):
 1. SUDDEN NUMBER THIS MOVES: none directly -- it decides whether the +0.00637 over FULL 0.62086 belongs to the
-   neighbourhood-event channel or to the network's nonlinear use of the 27 features that FULL already has.
+   event-token channel or to the network's nonlinear use of the 27 features that FULL already has.  The tokens of a
+   cell include its OWN events (distance 0 <= RAD), so a pass licenses only "tokens linked to the cell" (own history
+   and neighbourhood together); credit to the neighbourhood alone needs the precedent-group-0 decomposition (cells
+   with no own precedent) and is not claimed from the floor.
 2. DIMENSION AND ITS BOUND: WHERE, bound 0.9482 (as above).
 3. WHY THIS ROUND: the deep model differs from FULL in two things at once (the event tokens and a nonlinear learner).
    The control deletes exactly one: within every window (training and scored alike) the token rows are permuted
@@ -34,12 +37,12 @@ FLOOR (--shuffle-tokens R >= 0), added after the first run gave DEEP 0.62724 vs 
    settings are all unchanged and only the cell-to-neighbourhood link is broken.  Label permutation would test
    against 0.5, which says nothing about the gain over FULL.
 Reading, fixed before any floor result: R = -1 is the real model re-run, R = 0..7 are eight shuffles.  The gain is
-credited to the token channel only if (a) the real run's DEEP-FULL ranks first among the nine and (b) the window-wise
+credited to the cell-linked token channel only if (a) the real run's DEEP-FULL ranks first among the nine and (b) the window-wise
 mean of real - mean(shuffles) is positive at t > 2.  Windows share one static geography, so t is not 25 independent
 draws; both are reported, neither alone is claimed.  Every run also writes per-window scores and within-precedent-
 group AUCs (group = min(precedents in the trailing 60, 3), as chk238) for the decomposition.
-GATE S1: in every shuffled window at least half of the cells receive token rows that differ from their own (else the
-permutation is not breaking the link and the run stops).
+GATE S1: in every shuffled window at least half of the cells receive token rows that differ from their own and at most
+1% of cells are fixed points of the permutation (else the link is not broken and the run stops).
 """
 import argparse
 import hashlib
@@ -184,8 +187,10 @@ def train_eval(TK, jj, ev, W, args, log):
                 Xp, Mp = X[pm], M[pm]
                 moved = np.any(Xp != X, axis=(1, 2)) | np.any(Mp != M, axis=1)
                 frac = float(moved.mean())
-                log("window %d shuffle %d: cells whose token rows changed %.3f" % (k, args.shuffle_tokens, frac))
-                assert frac >= 0.5, "S1 FAIL: the permutation does not break the cell-token link"
+                fixed = float((pm == np.arange(len(pm))).mean())
+                log("window %d shuffle %d: cells whose token rows changed %.3f, fixed points %.4f, empty rows %.3f"
+                    % (k, args.shuffle_tokens, frac, fixed, float((M.sum(1) == 0).mean())))
+                assert frac >= 0.5 and fixed <= 0.01, "S1 FAIL: the permutation does not break the cell-token link"
                 X, M = Xp, Mp
             cache[k] = (X, M)
         return cache[k]
@@ -283,11 +288,12 @@ def main():
     full, arm = full[sel], arm[sel]
     log("shard %d/%d windows %s" % (args.shard, args.nshard, evs))
     TK = Tokens(B, args.ntok, args.rad)
+    fsc = {j: full_scores(jj, j, W) for j in evs}  # before training, so a mismatch costs nothing
+    for i, j in enumerate(evs):
+        assert abs(auc_pair(W[j]["pw"], W[j]["nw"], fsc[j]) - full[i]) < 1e-9, "FULL scores do not match R0"
+        assert W[j]["grp"].min() >= 0 and W[j]["grp"].max() <= 3, "group index outside 0..3"
     deep, dsc = train_eval(TK, jj, evs, W, args, log)
     ev = evs
-    fsc = {j: full_scores(jj, j, W) for j in ev}
-    for i, j in enumerate(ev):
-        assert abs(auc_pair(W[j]["pw"], W[j]["nw"], fsc[j]) - full[i]) < 1e-12, "FULL scores do not match R0"
     grp_deep = {j: by_group(W[j], dsc[j]) for j in ev}
     grp_full = {j: by_group(W[j], fsc[j]) for j in ev}
     d = deep - full
@@ -299,7 +305,7 @@ def main():
                    diff_mean=float(d.mean()), diff_se=float(se), shuffle=args.shuffle_tokens,
                    grp_deep={str(j): grp_deep[j] for j in ev}, grp_full={str(j): grp_full[j] for j in ev},
                    score_deep={str(j): np.round(dsc[j], 7).tolist() for j in ev},
-                   score_full={str(j): np.round(fsc[j], 7).tolist() for j in ev}), open(args.out, "w"))
+                   score_full={str(j): np.round(fsc[j], 7).tolist() for j in ev}), open(args.out, "w"), indent=1)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
             f.write("| | shard ACTIVE mean |\n|---|---|\n| DEEP | %.5f |\n| FULL | %.5f |\n| arm map | %.5f |\n"
