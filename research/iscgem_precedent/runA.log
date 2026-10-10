@@ -1,0 +1,9 @@
+A0 freeze md5 ok; ISC-GEM csv md5 21616b179fe5849a187164113458c0be
+A1 PASS  group-0 units 4173 over 25 windows
+A2 PASS  (planted bad list raised)
+A3 PASS  61 worlds, fixed points <= 5% (max 0.0026); d = 0 failed as planted
+BASE group-0 AUC 0.60035  PLUS 0.61540  (FULL group-0 reference 0.57885, quoted)
+D real +0.015053  floor mean +0.000392 sd 0.003087 max +0.009813  rank 1 of 62  z 4.75
+raw P group-0 AUC 0.62745  floor mean 0.48715 sd 0.02933 max 0.54744
+VERDICT REAL
+done 1086 s

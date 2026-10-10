@@ -1335,6 +1335,10 @@ A neural network that reads each cell's surrounding catalogue events added nothi
 sudden axis beyond its 27 per-cell features (token-shuffle floor); the feature-only network
 is frozen and scored on unseen windows, first window +0.014 over FULL, no verdict before five (update 186).
 
+The 1918-1969 ISC-GEM record orders cells with no modern precedent beyond FULL's columns (inside that group
+0.600 to 0.615, first of 62 rotated worlds) but adds under 0.001 to the whole sudden axis; the window-36 score is
+reclassified as monitoring because each yearly window is now recorded once, 90 days after it closes (update 187).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:
