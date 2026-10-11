@@ -1,0 +1,74 @@
+origin from file 719163.0720601851 equal True
+ISC rows 12072
+my clock events ISC 1780 + 1970+ 2491 (printed 1780 + 2491)
+G1 G2 PASS  windows 36  rows 9993240  RSS 347 MB
+G1 G2 PASS  windows 36  rows 9993240  RSS 897 MB
+G1 G2 PASS  windows 36  rows 9993240  RSS 897 MB
+len jj 33 ev 25 (11..35)
+G0 PASS
+G1 G2 PASS  windows 36  rows 9993240  RSS 897 MB
+G1 G2 PASS  windows 36  rows 9993240  RSS 897 MB
+clock events: ISC-GEM 1780 + 1970+ 2491
+vs round302 columns: max|dX4| 0.000e+00 max|dCLK| 7.812e-13 elig mismatches 0
+j  nELIG lowclip hiclip  sdCLK(elig) sdCLK(all) fracELIG
+11  113    3    0    4.583    2.125 0.195
+12  122    6    0    5.373    2.575 0.209
+13  119    5    0    5.283    2.522 0.204
+14  107    3    0    4.859    2.135 0.175
+15  106    4    0    5.460    2.401 0.176
+16  133    6    0    4.940    2.298 0.200
+17  129    4    0    4.959    2.164 0.175
+18  130    7    0    5.157    2.273 0.178
+19  119    6    0    5.176    2.189 0.164
+20  121   14    0    7.012    3.099 0.169
+21  118    8    0    6.083    2.620 0.160
+22  112    9    0    6.339    2.805 0.174
+23   95    7    0    6.196    2.661 0.159
+24   99    7    0    6.108    2.564 0.153
+25  103    5    0    5.721    2.490 0.167
+26  104    3    0    4.556    1.886 0.156
+27   94    6    0    5.585    2.277 0.148
+28   99    5    0    5.734    2.341 0.149
+29  100    3    0    4.662    1.861 0.149
+30   97    2    0    4.190    1.665 0.149
+31   89    5    0    5.395    2.064 0.132
+32  107    6    0    5.823    2.416 0.155
+33   89    8    0    6.501    2.567 0.137
+34   96    4    0    5.376    2.163 0.149
+35   85    5    0    5.637    2.132 0.128
+scored: ELIG 2686 at low clip 141 ; all 33 windows: ELIG 3632 low clip 186
+FULL mine 0.62086354 vs printed 0.62086354 maxdiff/window 0.00e+00
+ISO mine BASE 0.622289 ARM 0.621981 gain -0.000308 t -1.535 up 12 | maxdiff BASE 0.00e+00 ARM 0.00e+00 | coef mean -0.0056 min -0.0313 max +0.0505 pos 3/25 | maxiter 56/59 convwarn 0/0
+ANY mine BASE 0.651420 ARM 0.651183 gain -0.000236 t -1.740 up 10 | maxdiff BASE 0.00e+00 ARM 0.00e+00 | coef mean -0.0113 min -0.0380 max +0.0045 pos 2/25 | maxiter 92/88 convwarn 0/0
+BASE-FULL mine +0.001426
+class 1 ISO mine BASE 0.53329 ARM 0.53123 diff -0.00207
+class 2 ISO mine BASE 0.54539 ARM 0.54599 diff +0.00060
+class 3 ISO mine BASE 0.60236 ARM 0.60213 diff -0.00023
+class 0 ISO mine BASE 0.57875 ARM 0.57863 diff -0.00012
+CLK AUC among ELIG (all) 0.52371
+CLK AUC among ELIG (unclipped) 0.51591
+perm 0 ISO -0.000242 ANY -0.000044 c1 -0.00124 c2 -0.00046
+perm 1 ISO -0.000176 ANY +0.000033 c1 -0.00018 c2 +0.00031
+perm 2 ISO -0.000476 ANY -0.000290 c1 -0.00011 c2 -0.00242
+perm 3 ISO -0.000138 ANY -0.000249 c1 +0.00024 c2 +0.00008
+perm 4 ISO -0.000177 ANY -0.000076 c1 -0.00024 c2 +0.00033
+perm 5 ISO -0.000455 ANY -0.000052 c1 -0.00253 c2 -0.00024
+perm 6 ISO -0.000218 ANY -0.000039 c1 -0.00167 c2 +0.00215
+perm 7 ISO -0.000173 ANY +0.000139 c1 -0.00070 c2 +0.00003
+perm 8 ISO -0.000121 ANY -0.000164 c1 +0.00006 c2 +0.00030
+perm 9 ISO -0.000548 ANY -0.000407 c1 -0.00355 c2 +0.00010
+perm 10 ISO -0.000474 ANY -0.000286 c1 -0.00244 c2 -0.00113
+perm 11 ISO -0.000027 ANY +0.000122 c1 -0.00051 c2 +0.00000
+perm 12 ISO -0.000458 ANY +0.000076 c1 -0.00159 c2 +0.00112
+perm 13 ISO -0.000614 ANY -0.000165 c1 -0.00224 c2 -0.00155
+perm 14 ISO -0.000798 ANY -0.000418 c1 +0.00464 c2 -0.00976
+perm 15 ISO -0.000463 ANY -0.000245 c1 +0.00129 c2 -0.00337
+perm 16 ISO -0.001024 ANY -0.000592 c1 -0.00405 c2 -0.00095
+perm 17 ISO -0.000328 ANY -0.000420 c1 -0.00045 c2 -0.00404
+perm 18 ISO -0.000253 ANY -0.000044 c1 -0.00144 c2 +0.00080
+perm 19 ISO -0.000553 ANY -0.000058 c1 -0.00157 c2 -0.00279
+ISO PERM mine mean -0.000386 sd 0.000249 max -0.000027 | maxdiff vs saved 0.00e+00
+ANY PERM mine mean -0.000159 sd 0.000200 max +0.000139 | maxdiff vs saved 1.04e-05
+class 1 PERM within diff mean -0.00091 sd 0.00185 min -0.00405 max +0.00464
+class 2 PERM within diff mean -0.00107 sd 0.00257 min -0.00976 max +0.00215
+DONE 1202 s

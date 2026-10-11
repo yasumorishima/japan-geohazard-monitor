@@ -1,0 +1,29 @@
+G0 PASS
+G1 G2 PASS  windows 36  rows 9993240  RSS 347 MB
+G1 G2 PASS  windows 36  rows 9993240  RSS 898 MB
+G1 G2 PASS  windows 36  rows 9993240  RSS 898 MB
+clock events: ISC-GEM 1780 + 1970+ 2491
+/home/yasu/claude-scratch/roundA2/round302.py:114: RuntimeWarning: divide by zero encountered in log1p
+  lpb = la - l0 + np.log1p(-np.exp(lb - la))
+G3 PASS (incl. G3b 60-digit check on 20 rows)
+G2 PASS (40 pairs; future event ignored, past event seen)
+class 1 ELIG rows 1055, positive rows 156
+class 2 ELIG rows 1631, positive rows 196
+G6 PASS  strata of size 1: 10 of 2686 ELIG rows
+G1 FULL 0.62086354
+G4 PASS
+G5 PASS  SHAD ANY gain -0.000166
+ALL GATES PASS 139 s
+/home/yasu/claude-scratch/roundA2/round302.py:114: RuntimeWarning: divide by zero encountered in log1p
+  lpb = la - l0 + np.log1p(-np.exp(lb - la))
+ISO BASE 0.622289 ARM 0.621981 gain -0.000308 t -1.53 up 12/25 | PERM mean -0.000386 sd 0.000249 max -0.000027 | coef -0.0056
+ANY BASE 0.651420 ARM 0.651183 gain -0.000236 t -1.74 up 10/25 | PERM mean -0.000158 sd 0.000201 max +0.000149 | coef -0.0113
+BASE - FULL (ISO) +0.001426
+class 1 ISO  BASE 0.53329  ARM 0.53123
+class 2 ISO  BASE 0.54539  ARM 0.54599
+class 3 ISO  BASE 0.60236  ARM 0.60213
+class 0 ISO  BASE 0.57875  ARM 0.57863
+descriptive: CLK AUC among ELIG rows (pair-weighted) 0.52371
+R2 False  R3 False
+VERDICT NULL
+DONE 1251 s

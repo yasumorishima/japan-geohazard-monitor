@@ -1339,6 +1339,10 @@ The 1918-1969 ISC-GEM record orders cells with no modern precedent beyond FULL's
 0.600 to 0.615, first of 62 rotated worlds) but adds under 0.001 to the whole sudden axis; the window-36 score is
 reclassified as monitoring because each yearly window is now recorded once, 90 days after it closes (update 187).
 
+A century-long elapsed-time clock (ISC-GEM 1918-1969 plus the modern record, Brownian passage time) for cells with
+one or two modern precedents stays inside a within-strata permutation floor on both isolated and any-M6 labels
+(gain -0.0003), so the pre-registered verdict is null and the axis does not move (update 188).
+
 
 
 Two methodological artifacts were responsible for all false positives found during the investigation:

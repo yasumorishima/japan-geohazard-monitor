@@ -1,0 +1,23 @@
+G1 G2 PASS  windows 36  rows 9993240  RSS 342 MB
+G1 G2 PASS  windows 36  rows 9993240  RSS 893 MB
+built 10 s
+cells with cnt==1 487, cnt>=2 505
+ORC1-A ISO FULL 0.620864 arm 0.654349 gain +0.033486 t   7.84  class3 0.60235 -> 0.62238
+ORC1-A ANY FULL 0.651289 arm 0.673133 gain +0.021844 t   7.43  class3 0.62031 -> 0.63219
+   class 0  ISO 0.57885 -> 0.73555
+   class 1  ISO 0.52956 -> 0.50179
+   class 2  ISO 0.54597 -> 0.55620
+   class 3  ISO 0.60235 -> 0.62238
+ORC2-A ISO FULL 0.620864 arm 0.705757 gain +0.084893 t  21.00  class3 0.60235 -> 0.68816
+ORC2-A ANY FULL 0.651289 arm 0.699794 gain +0.048505 t  16.27  class3 0.62031 -> 0.66314
+   class 0  ISO 0.57885 -> 0.68111
+   class 1  ISO 0.52956 -> 0.64994
+   class 2  ISO 0.54597 -> 0.70372
+   class 3  ISO 0.60235 -> 0.68816
+ORC-A  ISO FULL 0.620864 arm 0.730142 gain +0.109278 t  20.08  class3 0.60235 -> 0.68613
+ORC-A  ANY FULL 0.651289 arm 0.715016 gain +0.063727 t  17.74  class3 0.62031 -> 0.66207
+   class 0  ISO 0.57885 -> 0.83433
+   class 1  ISO 0.52956 -> 0.68080
+   class 2  ISO 0.54597 -> 0.71802
+   class 3  ISO 0.60235 -> 0.68613
+done 497 s

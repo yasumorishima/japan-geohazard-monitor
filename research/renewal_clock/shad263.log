@@ -1,0 +1,6 @@
+G1 G2 PASS  windows 36  rows 9993240  RSS 355 MB
+G1 G2 PASS  windows 36  rows 9993240  RSS 905 MB
+G1 G2 PASS  windows 36  rows 9993240  RSS 905 MB
+SHAD rebuilt 26 s
+FULL+SHAD per-window AUC vs out263.npz max diff 0.00e+00
+saved shad263.npz

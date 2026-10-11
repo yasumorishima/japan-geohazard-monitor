@@ -1,0 +1,16 @@
+G0 PASS
+G1 G2 PASS  windows 36  rows 9993240  RSS 349 MB
+G1 G2 PASS  windows 36  rows 9993240  RSS 899 MB
+G1 G2 PASS  windows 36  rows 9993240  RSS 899 MB
+clock events: ISC-GEM 1780 + 1970+ 2491
+/home/yasu/claude-scratch/roundA2/round302.py:114: RuntimeWarning: divide by zero encountered in log1p
+  lpb = la - l0 + np.log1p(-np.exp(lb - la))
+G3 PASS (incl. G3b 60-digit check on 20 rows)
+G2 PASS (40 pairs; future event ignored, past event seen)
+class 1 ELIG rows 1055, positive rows 156
+class 2 ELIG rows 1631, positive rows 196
+G6 PASS  strata of size 1: 10 of 2686 ELIG rows
+G1 FULL 0.62086354
+G4 PASS
+G5 PASS  SHAD ANY gain -0.000166
+ALL GATES PASS 147 s

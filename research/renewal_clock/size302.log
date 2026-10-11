@@ -1,0 +1,12 @@
+G1 G2 PASS  windows 36  rows 9993240  RSS 342 MB
+ISC-GEM rows 12072, last day -0.3 (global origin; must be < 0)
+ISC-GEM isolated M>=6.25 from ~1918: 2491, in arena cells 1782 (all M>=6.25 in arena 2373)
+
+
+
+
+G1 G2 PASS  windows 36  rows 9993240  RSS 893 MB
+class 0: rows 4173, positive rows 326 | eligible rows 383 (9.2%), positive eligible 53 (16.3%)
+class 1: rows 3178, positive rows 378 | eligible rows 1065 (33.5%), positive eligible 157 (41.5%)
+class 2: rows 2738, positive rows 306 | eligible rows 1658 (60.6%), positive eligible 198 (64.7%)
+class 3: rows 6287, positive rows 1061 | eligible rows 5739 (91.3%), positive eligible 979 (92.3%)
