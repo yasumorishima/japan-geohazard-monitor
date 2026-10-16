@@ -64,16 +64,25 @@ jobs:
           python pre305.py build305.npz /tmp/q305.npz rec305.npz --gates-only
       - name: Verdict path on the fake field with a test freeze (and a changed byte must stop it)
         run: |
-          rm -rf /tmp/v && mkdir -p /tmp/v && cp research/airs305/* /tmp/v/ && cp /tmp/q305.npz /tmp/v/q305.npz
+          rm -rf /tmp/v && mkdir -p /tmp/v && find research/airs305 -maxdepth 1 -type f -exec cp {} /tmp/v/ \;
+          cp /tmp/q305.npz /tmp/v/q305.npz
           cd /tmp/v
+          printf 'CALIBRATION co5 (test)\nCALIBRATION PASS\n' > cal305_combined.txt
           md5sum pre305.py prep.py cal305.py combine305.py build305.npz q305.npz rec305.npz issues305.txt fetch.py \
-            > FREEZE305.md5
+            cal305_combined.txt > FREEZE305.md5
           md5sum -c FREEZE305.md5
           python pre305.py build305.npz q305.npz rec305.npz --worlds 30
-          printf ' ' >> cal305.py
+          cp cal305.py /tmp/cal305.keep && printf ' ' >> cal305.py
           if python pre305.py build305.npz q305.npz rec305.npz --worlds 30 > /tmp/v.log 2>&1; then
             echo "CHANGED FILE SURVIVED"; exit 1; fi
           grep -m1 "AssertionError: G0 md5 cal305.py" /tmp/v.log
+          cp /tmp/cal305.keep cal305.py
+          printf 'CALIBRATION FAIL\n' > cal305_combined.txt
+          md5sum pre305.py prep.py cal305.py combine305.py build305.npz q305.npz rec305.npz issues305.txt fetch.py \
+            cal305_combined.txt > FREEZE305.md5
+          if python pre305.py build305.npz q305.npz rec305.npz --worlds 30 > /tmp/v2.log 2>&1; then
+            echo "FAILED CALIBRATION SURVIVED"; exit 1; fi
+          grep -m1 "AssertionError: G0 calibration did not pass" /tmp/v2.log
       - name: Calibration on the fake field (small) and the combiner
         run: |
           cd research/airs305
@@ -82,3 +91,21 @@ jobs:
           python combine305.py 4 /tmp/c0.log /tmp/c1.log || echo "(4 sets: the share check is not meaningful here)"
           if python combine305.py 4 /tmp/c0.log > /tmp/cm.log 2>&1; then echo "MISSING SET SURVIVED"; exit 1; fi
           grep -m1 "AssertionError: test" /tmp/cm.log
+          python - <<'EOF'
+          # planted miscalibration: floor T has p <= 0.05 in 20 of 100 sets -> combine305 must print FAIL
+          with open("/tmp/bad.log", "w") as f:
+              for s in range(100):
+                  for g in ("co5", "ch46", "co5_res", "ch46_res"):
+                      t = 0.01 if (g == "co5" and s < 20) else (0.03 if s % 20 == 0 else 0.5)
+                      f.write("SETP %d %s T=%.6f L=%.6f Y=%.6f A=%.6f\n" % (s, g, t, t, t, t))
+          EOF
+          if python combine305.py 100 /tmp/bad.log > /tmp/bad.out 2>&1; then echo "MISCALIBRATION SURVIVED"; exit 1; fi
+          grep -m1 "CALIBRATION FAIL" /tmp/bad.out
+          python - <<'EOF'
+          with open("/tmp/good.log", "w") as f:
+              for s in range(100):
+                  for g in ("co5", "ch46", "co5_res", "ch46_res"):
+                      t = 0.03 if s % 20 == 0 else 0.5
+                      f.write("SETP %d %s T=%.6f L=%.6f Y=%.6f A=%.6f\n" % (s, g, t, t, t, t))
+          EOF
+          python combine305.py 100 /tmp/good.log | grep -m1 "CALIBRATION PASS"

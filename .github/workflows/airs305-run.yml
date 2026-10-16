@@ -20,6 +20,10 @@ on:
         description: Expected md5 of q305.npz (steps gates / cal / run)
         required: false
         default: ""
+      freeze_sha:
+        description: Commit that added FREEZE305.md5 (step run; research/airs305 must be unchanged since)
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -30,6 +34,8 @@ jobs:
     timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -68,9 +74,15 @@ jobs:
         env:
           STEP: ${{ inputs.step }}
           MD5: ${{ inputs.q305_md5 }}
+          FSHA: ${{ inputs.freeze_sha }}
         run: |
           test -n "$MD5"
-          if [ "$STEP" = run ]; then test -f research/airs305/FREEZE305.txt; cat research/airs305/FREEZE305.txt; fi
+          if [ "$STEP" = run ]; then
+            test -n "$FSHA"
+            git cat-file -e "$FSHA^{commit}"
+            git diff --quiet "$FSHA" HEAD -- research/airs305 .github/workflows/airs305-run.yml
+            test -f research/airs305/FREEZE305.txt; cat research/airs305/FREEZE305.txt
+          fi
           python -c "from huggingface_hub import hf_hub_download as d; print(d('yasumorishima/japan-geohazard', 'derived/round305/q305.npz', repo_type='dataset', local_dir='.'))"
           echo "$MD5  derived/round305/q305.npz" | md5sum -c -
           cp derived/round305/q305.npz research/airs305/q305.npz

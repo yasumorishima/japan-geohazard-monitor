@@ -38,9 +38,13 @@ FLOORS (1,000 worlds each; in every world the real SA and the null SA are comput
      block at least 395 days from its target (no day shared between one block's 30-day window and the other's
      window or 365-day reference; opus code audit); the number of such shifts is printed.
   L  longitude rotation: the value is read from grid column (c + k) mod 360, same row, k uniform in [20, 340].
-  Y  season-keeping year derangement of the 19 windows with |source year - target year| >= 2 (no shared window or
-     reference day): a unit takes the value of the same cell in the block of the source year nearest in circular
-     day of year (gate G4: within 5 days).
+  Y  season-keeping year derangement of the 19 windows: a unit takes the value of the same cell in the block of
+     the source year nearest in circular day of year (gate G4: within 5 days); only derangements in which every
+     target block is at least 395 days from its source block are drawn (|source year - target year| >= 2 is not
+     enough: a 1-row Dec 31 block maps to the Jan 1-3 block of its source year; opus fix review).
+  T and Y share no window or reference day, but the deseasonalisation climatology of a later source year contains
+  the target year's raw values at weight about 1 / (number of earlier years): a small negative null-real
+  correlation, anti-conservative in direction; the calibration runs on this field and covers it (disclosed).
   A  covered values permuted within each stratum (anti-conservative alone; kept in the max).
 VERDICT per gas: SA > 0.5 and p_max = max over T, L, Y, A; Holm over the two gases (smaller p_max <= 0.025,
   the other <= 0.05).  SUPPORTED only if also
@@ -73,8 +77,10 @@ GATES (none reads the real labels together with a field): G0 the md5 of every fi
   are sanity checks that cannot fail); G2 SA equals a brute-force pair recount (u != v) on a 400-unit subsample of
   3 strata (1e-12), with synthetic row counts; G3 floors T, L, Y on a planted label (one positive row on the top
   10 % of TA_co5 in each stratum, one negative row elsewhere) have mean < 0.6 (the planted SA > 0.95 is built
-  from the field and cannot fail); G4 Y's nearest-day-of-year match is within 5 days for every block.  Every real
-  SA in a floor must be finite.
+  from the field and cannot fail); G4 Y's nearest-day-of-year match is within 5 days for every block, and every
+  drawn Y map keeps 395 days between source and target.  Every real SA in a floor must be finite.  The verdict run
+  also requires cal305_combined.txt (the combine305.py output on all shards) in the freeze, reading
+  "CALIBRATION PASS".
 NOT CLAIMED: nothing about any single earthquake; NOT SUPPORTED does not exclude an effect below the printed
   power, nor an effect confined to one region.
 Usage: python pre305.py BUNDLE Q305 REC305 [--worlds N] [--gates-only]
@@ -111,8 +117,10 @@ def check_freeze(paths):
     for p in paths:
         assert listed.get(os.path.basename(p)) == md5(p), "G0 input not frozen: %s" % p
     for f in ("pre305.py", "prep.py", "cal305.py", "combine305.py", "build305.npz", "q305.npz", "rec305.npz",
-              "issues305.txt", "fetch.py"):
+              "issues305.txt", "fetch.py", "cal305_combined.txt"):
         assert f in listed, "G0 %s missing from the freeze" % f
+    cal = open(os.path.join(base, "cal305_combined.txt"), encoding="utf-8").read().split("\n")
+    assert "CALIBRATION PASS" in [x.strip() for x in cal], "G0 calibration did not pass"
     print("G0 PASS freeze: %d files match FREEZE305.md5" % len(listed), flush=True)
 
 
@@ -145,7 +153,7 @@ class Arena:
             self.strat[m] = (int(j) * 10 + np.minimum((rk * 5 // s.size).astype(int), 4)).reshape(m.sum(), -1)
         # Y floor: nearest day-of-year block in each window
         self.doy = (self.tiss - np.array([self.year_start(j) for j in self.win]))
-        self.ymap = {}
+        self.ymap, self.ygap = {}, {}
         g4 = 0.0
         for j in self.wins:
             for k in self.wins:
@@ -156,6 +164,7 @@ class Arena:
                 g4 = max(g4, d.min(axis=1).max())
                 assert d.min(axis=1).max() <= 5, "G4 day-of-year match %d->%d" % (j, k)
                 self.ymap[(int(j), int(k))] = (bj, pick)
+                self.ygap[(int(j), int(k))] = float(np.min(np.abs(self.tiss[pick] - self.tiss[bj])))
         # T shifts allowed: every source block at least MIN_GAP days from its target
         b = np.arange(self.NB)
         self.tk = np.array([k for k in range(1, self.NB)
@@ -247,12 +256,16 @@ def residual(A, y, rivals):
     return out
 
 
-def derangement(rng, items):
-    """year map target -> source with |source - target| >= 2 (adjacent years share reference days)."""
-    while True:
+def derangement(rng, A):
+    """year map target -> source in which every target block is >= MIN_GAP days from its source block."""
+    items = A.wins
+    for _ in range(1000000):
         p = rng.permutation(items)
         if np.all(np.abs(p - items) >= 2):
-            return dict(zip(map(int, items), map(int, p)))
+            perm = dict(zip(map(int, items), map(int, p)))
+            if min(A.ygap[jk] for jk in perm.items()) >= MIN_GAP:
+                return perm
+    raise AssertionError("G4 no Y derangement found")
 
 
 def transform(A, grids, kind, k, rng):
@@ -286,7 +299,7 @@ def draw(kind, rng, A):
     if kind == "L":
         return int(rng.integers(20, 341))
     if kind == "Y":
-        return derangement(rng, A.wins)
+        return derangement(rng, A)
     return None
 
 

@@ -5,11 +5,13 @@ SUDDEN AXIS / DIMENSION / WHY: see pre305.py.  Run before the freeze; combine305
 SYNTHETIC LABELS (opus code audit: labels independent per unit cannot test what matters -- the arena paints a row
   positive when an event falls in the 34 days after it, so one event marks two consecutive blocks of one cell):
   events, at most one per unit, with probability c0 x R2 score x burst (R2 is fitted on past windows only; burst =
-  lognormal, sd 0.7 in log, mean 1, one value per 30 x 30-degree region and window: regional bursts of activity),
+  lognormal, mean 1, one value per 30 x 30-degree region and window, sd 0.7 in log, times one per region and
+  block, sd 0.5: regional bursts of activity at the year and the month scale),
   event time uniform inside the unit's block span; a row (block start + 3 days x i) is positive if an event of its
   cell falls in [row time, row time + 34 days); positive rows of a unit = its marked rows, negatives = the other
   rows of the block (block lengths in rows from rec305.npz, label-free).  c0 is set so that the expected number of
-  positive units equals the real one (the only label quantity used: one count).
+  positive units equals the real one (the only label quantity used: one count).  Not modelled (disclosed): the
+  arena also drops negative rows with any M>=5 in the 34 days after them.
 CALIBRATION: NSET sets; for each, p of TA_co5, TA_ch46 and of their t/q residuals under each floor (NWORLD worlds,
   shared-unit comparison exactly as in pre305) and p_max.  Required (combine305.py): share with p <= 0.05 in
   [0.01, 0.10] for floors T, L, Y and <= 0.10 for p_max; floor A is printed only (anti-conservative alone).
@@ -29,6 +31,7 @@ import pre305 as R
 H = 34.0
 STEP = 3.0
 BURST_SD = 0.7
+BLOCK_SD = 0.5
 
 
 class Synth:
@@ -54,7 +57,9 @@ class Synth:
     def draw(self, rng, tilt=None):
         A = self.A
         z = rng.standard_normal((len(A.wins), 72))
-        burst = np.exp(BURST_SD * z - 0.5 * BURST_SD ** 2)[self.wi][:, self.reg]
+        zb = rng.standard_normal((A.NB, 72))
+        burst = (np.exp(BURST_SD * z - 0.5 * BURST_SD ** 2)[self.wi]
+                 * np.exp(BLOCK_SD * zb - 0.5 * BLOCK_SD ** 2))[:, self.reg]
         pr = self.c0 * A.S * burst
         if tilt is not None:
             pr = pr * np.exp(np.nan_to_num(tilt))
@@ -86,14 +91,14 @@ def main():
             continue
         P, N = SY.draw(np.random.default_rng(30500 + s))
         for gi, (g, (real_u, make)) in enumerate(tests.items()):
-            fl = R.floor_p(A, make, P, N, nworld, 50000 + 100 * s + gi, real_u)
+            fl = R.floor_p(A, make, P, N, nworld, 50000 + 100000 * s + 10 * gi, real_u)   # floor f adds 1000 f
             print("SETP %d %s %s" % (s, g, " ".join("%s=%.6f" % (k, fl[k][0]) for k in R.FLOORS)), flush=True)
         print("set %d  positive units %d rows %d  %.0f s" % (s, (P > 0).sum(), P.sum(), time.time() - t0),
               flush=True)
     if shard != 0:
         print("DONE %.0f s" % (time.time() - t0), flush=True)
         return
-    rng = np.random.default_rng(30599)
+    rng = np.random.default_rng(990001)          # distinct from every set seed 30500 + s
     real_u, _ = tests["co5"]
     cov = np.isfinite(real_u)
     z = (real_u - np.nanmean(real_u)) / np.nanstd(real_u)
