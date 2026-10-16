@@ -16,10 +16,16 @@ Issue t (days since 1970-01-01): E = floor(t) - 3 (AIRS L3 days end at most 36 h
   Window = days E-29..E; reference = the 365 days before the window.  TA = (mean window - mean ref) / sd ref
   (ddof 0); TS = sd window / sd ref; needs >= 5 window days, >= 60 reference days, sd ref > 0.  Sums are taken
   directly over the days in float64 (never as differences of running sums).
+Grid orientation: AIRS3STD's XDim / YDim are the cell edges -180..179 and 90..-89 (read from a 2010-07-01
+  granule, research/airs305/orient305.py), so grid row r is centred on 89.5 - r and column c on c - 179.5.
 Gates (each can fail):
-  P0 the AIRS day axis has no duplicate day; every issue's reference starts on or after the first AIRS day.
-  P1 causality, 2 bands x 3 issues per field: raw days > E of both orbits set to 1e6 -> TA bit-identical; also
-     setting day E changes more than half of the finite TA values.
+  P0 the AIRS day axis has no duplicate day; the 24 yearly files 2002..2025 are all present; every issue's
+     reference starts on or after the first AIRS day.
+  P1 causality, 2 bands x 3 issues per field: raw days > E of both orbits set to 6e4 (finite in float16, so the
+     poison is a value and not a deletion; opus code audit) -> TA bit-identical; also setting day E changes more
+     than half of the finite TA values.
+  P3 orientation: July mean of t5 over rows 30..49 (40-60 N) exceeds rows 130..149 (40-60 S) by more than 5 K
+     in every year (a north-south flip fails it).
   P2 an independent loop-based recomputation of TA for 30 random (issue, grid point) pairs per field agrees to
      2e-5 relative (TA is stored as float32; measured, not inherited).
 Usage: python prep.py AIRS_DIR ISSUES OUT.npz
@@ -138,6 +144,7 @@ def slow_ta(VA, VD, yr, slot, e, rr, cc):
 def main():
     t0 = time.time()
     files = sorted(glob.glob(SRC + "/airs305_[0-9][0-9][0-9][0-9].npz"))
+    assert [f[-8:-4] for f in files] == [str(y) for y in range(2002, 2026)], "P0 yearly files"
     days = [dnum(s) for f in files for s in np.load(f)["days"]]
     assert len(set(days)) == len(days), "P0 duplicate day"
     d0, d1 = min(days), max(days)
@@ -151,10 +158,20 @@ def main():
     slot = np.minimum(np.array([x.timetuple().tm_yday - 1 for x in dates]) // 7, 51)
     print("files %d  days %d (%s .. %s, %d present)  issues %d" % (len(files), nd, dates[0], dates[-1], len(days),
                                                                   len(tiss)), flush=True)
+    VA = load(files, d0, nd, "t5_A")        # P3 first, before any other gate
+    jul = np.array([x.month == 7 for x in dates])
+    for y in range(2003, 2026):
+        m = jul & (yr == y)
+        with np.errstate(all="ignore"):
+            dn = np.nanmean(VA[m, 30:50].astype(np.float64)) - np.nanmean(VA[m, 130:150].astype(np.float64))
+        assert dn > 5.0, "P3 orientation %d %.2f K" % (y, dn)
+    print("P3 PASS north-south orientation (July 40-60 N minus 40-60 S > 5 K every year)", flush=True)
+    del VA
     out = {"tiss": tiss, "E": E + d0, "rows": np.arange(NROW)}
     rng = np.random.default_rng(305)
     for g in FIELDS:
         VA, VD = load(files, d0, nd, g + "_A"), load(files, d0, nd, g + "_D")
+        assert np.isinf(VA).sum() == 0 and np.isinf(VD).sum() == 0, "P0 infinite stored value %s" % g
         TA = np.full((len(tiss), NROW, 360), np.nan, np.float32)
         TS = np.full_like(TA, np.nan)
         for b in range(NROW // 10):
@@ -166,13 +183,13 @@ def main():
                 for i in rng.choice(len(E), 3, replace=False):
                     e = E[i]
                     PA, PD = VA[:, sl].copy(), VD[:, sl].copy()
-                    PA[e + 1:] = 1e6
-                    PD[e + 1:] = 1e6
+                    PA[e + 1:] = 6e4
+                    PD[e + 1:] = 6e4
                     same, _ = ta_ts(combine(anomaly(PA, yr, slot), anomaly(PD, yr, slot)), e)
                     assert np.array_equal(same, TA[i, sl].astype(np.float64).astype(same.dtype), equal_nan=True) \
                         or np.array_equal(same.astype(np.float32), TA[i, sl], equal_nan=True), "P1 future %s" % g
-                    PA[e] = 1e6
-                    PD[e] = 1e6
+                    PA[e] = 6e4
+                    PD[e] = 6e4
                     diff, _ = ta_ts(combine(anomaly(PA, yr, slot), anomaly(PD, yr, slot)), e)
                     fin = np.isfinite(TA[i, sl])
                     assert np.mean(diff.astype(np.float32)[fin] != TA[i, sl][fin]) > 0.5, "P1 day E %s" % g

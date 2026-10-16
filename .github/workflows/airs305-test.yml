@@ -1,0 +1,84 @@
+name: Round 305 pipeline test (fake AIRS)
+
+# Runs the whole round-305 pipeline on fake AIRS files (no information about any label) and checks that planted
+# defects stop it: prep's causality gate (window reaching day E+1), its orientation gate (north-south flip), the
+# freeze check (one changed byte) and the calibration combiner (a missing set).  No real AIRS file is read here.
+
+on:
+  push:
+    branches: [round305]
+    paths:
+      - "research/airs305/**"
+      - ".github/workflows/airs305-*.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install --quiet numpy==2.1.3 scipy==1.14.1 global-land-mask==1.0.0
+      - name: Fake AIRS files
+        run: |
+          mkdir -p /tmp/fake
+          python research/airs305/fakeairs305.py /tmp/fake
+          du -sh /tmp/fake; df -h . | tail -1
+      - name: Prep on fake files
+        run: python research/airs305/prep.py /tmp/fake research/airs305/issues305.txt /tmp/q305.npz
+      - name: Planted defect - window reaches day E+1 (P1 must stop it)
+        run: |
+          mkdir -p /tmp/m1 && cp research/airs305/prep.py /tmp/m1/prep.py
+          python - <<'EOF'
+          p = "/tmp/m1/prep.py"
+          s = open(p).read()
+          a = "    w = X[e - NWIN + 1:e + 1]"
+          assert s.count(a) == 1
+          open(p, "w").write(s.replace(a, "    w = X[e - NWIN + 2:e + 2]"))
+          EOF
+          if python /tmp/m1/prep.py /tmp/fake research/airs305/issues305.txt /tmp/m1.npz > /tmp/m1.log 2>&1; then
+            echo "MUTANT SURVIVED"; tail -5 /tmp/m1.log; exit 1; fi
+          grep -m1 "AssertionError: P1" /tmp/m1.log
+      - name: Planted defect - north-south flip (P3 must stop it)
+        run: |
+          mkdir -p /tmp/m2 && cp research/airs305/prep.py /tmp/m2/prep.py
+          python - <<'EOF'
+          p = "/tmp/m2/prep.py"
+          s = open(p).read()
+          a = "        V[ix] = Z[key][:, :NROW]"
+          assert s.count(a) == 1
+          open(p, "w").write(s.replace(a, "        V[ix] = Z[key][:, ::-1][:, :NROW]"))
+          EOF
+          if python /tmp/m2/prep.py /tmp/fake research/airs305/issues305.txt /tmp/m2.npz > /tmp/m2.log 2>&1; then
+            echo "MUTANT SURVIVED"; tail -5 /tmp/m2.log; exit 1; fi
+          grep -m1 "AssertionError: P3" /tmp/m2.log
+      - name: Gates on the fake field
+        run: |
+          cd research/airs305
+          python pre305.py build305.npz /tmp/q305.npz rec305.npz --gates-only
+      - name: Verdict path on the fake field with a test freeze (and a changed byte must stop it)
+        run: |
+          rm -rf /tmp/v && mkdir -p /tmp/v && cp research/airs305/* /tmp/v/ && cp /tmp/q305.npz /tmp/v/q305.npz
+          cd /tmp/v
+          md5sum pre305.py prep.py cal305.py combine305.py build305.npz q305.npz rec305.npz issues305.txt fetch.py \
+            > FREEZE305.md5
+          md5sum -c FREEZE305.md5
+          python pre305.py build305.npz q305.npz rec305.npz --worlds 30
+          printf ' ' >> cal305.py
+          if python pre305.py build305.npz q305.npz rec305.npz --worlds 30 > /tmp/v.log 2>&1; then
+            echo "CHANGED FILE SURVIVED"; exit 1; fi
+          grep -m1 "AssertionError: G0 md5 cal305.py" /tmp/v.log
+      - name: Calibration on the fake field (small) and the combiner
+        run: |
+          cd research/airs305
+          python cal305.py build305.npz /tmp/q305.npz rec305.npz 4 20 0 2 | tee /tmp/c0.log
+          python cal305.py build305.npz /tmp/q305.npz rec305.npz 4 20 1 2 | tee /tmp/c1.log
+          python combine305.py 4 /tmp/c0.log /tmp/c1.log || echo "(4 sets: the share check is not meaningful here)"
+          if python combine305.py 4 /tmp/c0.log > /tmp/cm.log 2>&1; then echo "MISSING SET SURVIVED"; exit 1; fi
+          grep -m1 "AssertionError: test" /tmp/cm.log

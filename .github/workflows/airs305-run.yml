@@ -3,8 +3,9 @@ name: Round 305 AIRS steps
 # Round 305 on free GitHub-hosted CPU (public repository).  step = prep builds the label-free quantities from the
 # yearly AIRS files on HF (inputs/round305_airs/) and publishes derived/round305/q305.npz; gates / cal run the
 # label-free checks and calibration of pre305.py / cal305.py; run is the frozen verdict (only after the freeze
-# file research/airs305/FREEZE305.txt is committed).  Labels come from research/airs305/build305.npz (USGS
-# catalogue, public domain, and quantities derived from it).
+# files research/airs305/FREEZE305.txt and FREEZE305.md5 are committed; md5sum -c checks every frozen file before
+# python starts, and pre305.py checks the freeze again).  Labels come from research/airs305/build305.npz and
+# rec305.npz (USGS catalogue, public domain, and quantities derived from it).
 
 on:
   workflow_dispatch:
@@ -72,11 +73,12 @@ jobs:
           if [ "$STEP" = run ]; then test -f research/airs305/FREEZE305.txt; cat research/airs305/FREEZE305.txt; fi
           python -c "from huggingface_hub import hf_hub_download as d; print(d('yasumorishima/japan-geohazard', 'derived/round305/q305.npz', repo_type='dataset', local_dir='.'))"
           echo "$MD5  derived/round305/q305.npz" | md5sum -c -
+          cp derived/round305/q305.npz research/airs305/q305.npz
           cd research/airs305
-          Q=../../derived/round305/q305.npz
+          if [ "$STEP" = run ]; then cat FREEZE305.md5; md5sum -c FREEZE305.md5; fi
           case "$STEP" in
-            gates) python pre305.py build305.npz $Q --gates-only ;;
-            run)   python pre305.py build305.npz $Q ;;
+            gates) python pre305.py build305.npz q305.npz rec305.npz --gates-only ;;
+            run)   python pre305.py build305.npz q305.npz rec305.npz ;;
             *) echo "unknown step"; exit 1 ;;
           esac
 
@@ -87,7 +89,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -105,4 +107,4 @@ jobs:
           python -c "from huggingface_hub import hf_hub_download as d; print(d('yasumorishima/japan-geohazard', 'derived/round305/q305.npz', repo_type='dataset', local_dir='.'))"
           echo "$MD5  derived/round305/q305.npz" | md5sum -c -
           cd research/airs305
-          python cal305.py build305.npz ../../derived/round305/q305.npz 100 100 ${{ matrix.shard }} 10
+          python cal305.py build305.npz ../../derived/round305/q305.npz rec305.npz 100 100 ${{ matrix.shard }} 20
