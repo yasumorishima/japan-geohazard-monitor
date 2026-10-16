@@ -2,7 +2,8 @@ name: Round 305 pipeline test (fake AIRS)
 
 # Runs the whole round-305 pipeline on fake AIRS files (no information about any label) and checks that planted
 # defects stop it: prep's causality gate (window reaching day E+1), its orientation gate (north-south flip), the
-# freeze check (one changed byte) and the calibration combiner (a missing set).  No real AIRS file is read here.
+# freeze check (one changed byte; a failed calibration; a calibration made on another q305) and the calibration
+# combiner (a missing set; a miscalibrated share; shards on different inputs).  No real AIRS file is read here.
 
 on:
   push:
@@ -67,7 +68,9 @@ jobs:
           rm -rf /tmp/v && mkdir -p /tmp/v && find research/airs305 -maxdepth 1 -type f -exec cp {} /tmp/v/ \;
           cp /tmp/q305.npz /tmp/v/q305.npz
           cd /tmp/v
-          printf 'CALIBRATION co5 (test)\nCALIBRATION PASS\n' > cal305_combined.txt
+          m() { md5sum "$1" | cut -d' ' -f1; }
+          CID="CALID bundle=$(m build305.npz) q305=$(m q305.npz) rec=$(m rec305.npz) cal305=$(m cal305.py) pre305=$(m pre305.py) nset=100 nworld=100 nshard=20"
+          printf '%s\nCALIBRATION co5 (test)\nCALIBRATION PASS\n' "$CID" > cal305_combined.txt
           md5sum pre305.py prep.py cal305.py combine305.py build305.npz q305.npz rec305.npz issues305.txt fetch.py \
             cal305_combined.txt > FREEZE305.md5
           md5sum -c FREEZE305.md5
@@ -77,23 +80,36 @@ jobs:
             echo "CHANGED FILE SURVIVED"; exit 1; fi
           grep -m1 "AssertionError: G0 md5 cal305.py" /tmp/v.log
           cp /tmp/cal305.keep cal305.py
-          printf 'CALIBRATION FAIL\n' > cal305_combined.txt
+          printf '%s\nCALIBRATION FAIL\n' "$CID" > cal305_combined.txt
           md5sum pre305.py prep.py cal305.py combine305.py build305.npz q305.npz rec305.npz issues305.txt fetch.py \
             cal305_combined.txt > FREEZE305.md5
           if python pre305.py build305.npz q305.npz rec305.npz --worlds 30 > /tmp/v2.log 2>&1; then
             echo "FAILED CALIBRATION SURVIVED"; exit 1; fi
           grep -m1 "AssertionError: G0 calibration did not pass" /tmp/v2.log
+          printf '%s\nCALIBRATION PASS\n' "$(echo "$CID" | sed 's/q305=[0-9a-f]*/q305=00000000000000000000000000000000/')" \
+            > cal305_combined.txt
+          md5sum pre305.py prep.py cal305.py combine305.py build305.npz q305.npz rec305.npz issues305.txt fetch.py \
+            cal305_combined.txt > FREEZE305.md5
+          if python pre305.py build305.npz q305.npz rec305.npz --worlds 30 > /tmp/v3.log 2>&1; then
+            echo "STALE CALIBRATION SURVIVED"; exit 1; fi
+          grep -m1 "AssertionError: G0 calibration made on another q305.npz" /tmp/v3.log
       - name: Calibration on the fake field (small) and the combiner
         run: |
+          set -o pipefail
           cd research/airs305
           python cal305.py build305.npz /tmp/q305.npz rec305.npz 4 20 0 2 | tee /tmp/c0.log
           python cal305.py build305.npz /tmp/q305.npz rec305.npz 4 20 1 2 | tee /tmp/c1.log
+          grep -q '^DONE' /tmp/c0.log && grep -q '^DONE' /tmp/c1.log
           python combine305.py 4 /tmp/c0.log /tmp/c1.log || echo "(4 sets: the share check is not meaningful here)"
+          sed 's/nworld=20/nworld=21/' /tmp/c1.log > /tmp/c1x.log
+          if python combine305.py 4 /tmp/c0.log /tmp/c1x.log > /tmp/cx.log 2>&1; then echo "MIXED SHARDS SURVIVED"; exit 1; fi
+          grep -m1 "AssertionError: shards ran on different inputs" /tmp/cx.log
           if python combine305.py 4 /tmp/c0.log > /tmp/cm.log 2>&1; then echo "MISSING SET SURVIVED"; exit 1; fi
           grep -m1 "AssertionError: test" /tmp/cm.log
           python - <<'EOF'
           # planted miscalibration: floor T has p <= 0.05 in 20 of 100 sets -> combine305 must print FAIL
           with open("/tmp/bad.log", "w") as f:
+              f.write("CALID id=test nset=100\n")
               for s in range(100):
                   for g in ("co5", "ch46", "co5_res", "ch46_res"):
                       t = 0.01 if (g == "co5" and s < 20) else (0.03 if s % 20 == 0 else 0.5)
@@ -103,6 +119,7 @@ jobs:
           grep -m1 "CALIBRATION FAIL" /tmp/bad.out
           python - <<'EOF'
           with open("/tmp/good.log", "w") as f:
+              f.write("CALID id=test nset=100\n")
               for s in range(100):
                   for g in ("co5", "ch46", "co5_res", "ch46_res"):
                       t = 0.03 if s % 20 == 0 else 0.5

@@ -80,6 +80,10 @@ def main():
     bundle, q305, rec = sys.argv[1], sys.argv[2], sys.argv[3]
     nset, nworld, shard, nshard = (int(x) for x in sys.argv[4:8])
     t0 = time.time()
+    # identity of this calibration: combine305 requires one value over all shards, check_freeze matches it
+    print("CALID bundle=%s q305=%s rec=%s cal305=%s pre305=%s nset=%d nworld=%d nshard=%d"
+          % (R.md5(bundle), R.md5(q305), R.md5(rec), R.md5(__file__), R.md5(R.__file__), nset, nworld, nshard),
+          flush=True)
     A = R.Arena(bundle, q305)
     SY = Synth(A, np.load(rec)["nrow"])
     tests = {}

@@ -80,6 +80,8 @@ jobs:
           if [ "$STEP" = run ]; then
             test -n "$FSHA"
             git cat-file -e "$FSHA^{commit}"
+            git merge-base --is-ancestor "$FSHA" HEAD
+            test "$(git log --diff-filter=A --format=%H -- research/airs305/FREEZE305.md5 | tail -1)" = "$(git rev-parse "$FSHA")"
             git diff --quiet "$FSHA" HEAD -- research/airs305 .github/workflows/airs305-run.yml
             test -f research/airs305/FREEZE305.txt; cat research/airs305/FREEZE305.txt
           fi

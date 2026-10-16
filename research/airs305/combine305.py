@@ -2,7 +2,8 @@
 """Combine the SETP lines of all cal305.py shards (read from log files) into the calibration verdict.
 Required (pre305 docstring): share of label sets with p <= 0.05 in [0.01, 0.10] for floors T, L, Y and <= 0.10
 for p_max, for every test (co5, ch46 and their residuals); floor A is printed only (anti-conservative alone).
-Every set 0..NSET-1 must be present exactly once per test.
+Every set 0..NSET-1 must be present exactly once per test, and every log must carry the same CALID line (md5 of
+the inputs and scripts, nset, nworld, nshard), which is printed so that pre305's freeze check can match it.
 Usage: python combine305.py NSET LOG [LOG ...]"""
 import sys
 
@@ -10,14 +11,24 @@ import numpy as np
 
 NSET = int(sys.argv[1])
 P = {}
+ids = []
 for f in sys.argv[2:]:
+    own = set()
     for ln in open(f, encoding="utf-8", errors="replace"):
+        if "CALID " in ln:
+            own.add(ln[ln.index("CALID "):].strip())
         if "SETP " not in ln:
             continue
         t = ln[ln.index("SETP "):].split()
         key = (int(t[1]), t[2])
         assert key not in P, "duplicate %s" % (key,)
         P[key] = {kv.split("=")[0]: float(kv.split("=")[1]) for kv in t[3:]}
+    assert len(own) == 1, "log %s: %d CALID lines" % (f, len(own))
+    ids.append(own.pop())
+assert len(set(ids)) == 1, "shards ran on different inputs / settings"
+calid = ids[0]
+assert dict(kv.split("=") for kv in calid.split()[1:])["nset"] == str(NSET), "nset differs from NSET"
+print(calid)
 tests = sorted({k[1] for k in P})
 assert tests == ["ch46", "ch46_res", "co5", "co5_res"], tests
 ok = True

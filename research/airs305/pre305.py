@@ -41,7 +41,10 @@ FLOORS (1,000 worlds each; in every world the real SA and the null SA are comput
   Y  season-keeping year derangement of the 19 windows: a unit takes the value of the same cell in the block of
      the source year nearest in circular day of year (gate G4: within 5 days); only derangements in which every
      target block is at least 395 days from its source block are drawn (|source year - target year| >= 2 is not
-     enough: a 1-row Dec 31 block maps to the Jan 1-3 block of its source year; opus fix review).
+     enough: a 1-row Dec 31 block maps to the Jan 1-3 block of its source year, and a Jan 1 block to a leap-year
+     Dec 31 block; opus fix review).  A T or Y source 395-760 days away has its 365-day reference over the
+     target's label period: a co- or post-seismic gas response would lower the null (anti-conservative); floor L,
+     taken at the same days, does not have this and enters the max (disclosed).
   T and Y share no window or reference day, but the deseasonalisation climatology of a later source year contains
   the target year's raw values at weight about 1 / (number of earlier years): a small negative null-real
   correlation, anti-conservative in direction; the calibration runs on this field and covers it (disclosed).
@@ -80,7 +83,8 @@ GATES (none reads the real labels together with a field): G0 the md5 of every fi
   from the field and cannot fail); G4 Y's nearest-day-of-year match is within 5 days for every block, and every
   drawn Y map keeps 395 days between source and target.  Every real SA in a floor must be finite.  The verdict run
   also requires cal305_combined.txt (the combine305.py output on all shards) in the freeze, reading
-  "CALIBRATION PASS".
+  "CALIBRATION PASS", whose CALID line names the frozen build305.npz, q305.npz, rec305.npz, cal305.py and
+  pre305.py by md5, with nset 100 and nworld 100.
 NOT CLAIMED: nothing about any single earthquake; NOT SUPPORTED does not exclude an effect below the printed
   power, nor an effect confined to one region.
 Usage: python pre305.py BUNDLE Q305 REC305 [--worlds N] [--gates-only]
@@ -119,8 +123,15 @@ def check_freeze(paths):
     for f in ("pre305.py", "prep.py", "cal305.py", "combine305.py", "build305.npz", "q305.npz", "rec305.npz",
               "issues305.txt", "fetch.py", "cal305_combined.txt"):
         assert f in listed, "G0 %s missing from the freeze" % f
-    cal = open(os.path.join(base, "cal305_combined.txt"), encoding="utf-8").read().split("\n")
-    assert "CALIBRATION PASS" in [x.strip() for x in cal], "G0 calibration did not pass"
+    cal = [x.strip() for x in open(os.path.join(base, "cal305_combined.txt"), encoding="utf-8").read().split("\n")]
+    assert "CALIBRATION PASS" in cal, "G0 calibration did not pass"
+    cid = [x for x in cal if x.startswith("CALID ")]
+    assert len(cid) == 1, "G0 calibration identity missing"
+    cid = dict(kv.split("=") for kv in cid[0].split()[1:])
+    for key, f in (("bundle", "build305.npz"), ("q305", "q305.npz"), ("rec", "rec305.npz"), ("cal305", "cal305.py"),
+                   ("pre305", "pre305.py")):
+        assert cid[key] == listed[f], "G0 calibration made on another %s" % f
+    assert cid["nset"] == "100" and cid["nworld"] == "100", "G0 calibration size %s" % cid
     print("G0 PASS freeze: %d files match FREEZE305.md5" % len(listed), flush=True)
 
 
@@ -192,6 +203,8 @@ class Arena:
         out = np.full_like(V, np.nan)
         for j, k in perm.items():
             bj, pick = self.ymap[(j, k)]
+            if j != k:   # recomputed from the issue times, independent of the rejection rule in derangement()
+                assert np.min(np.abs(self.tiss[pick] - self.tiss[bj])) >= MIN_GAP, "G4 Y gap %d->%d" % (j, k)
             out[bj] = V[pick]
         return out
 
