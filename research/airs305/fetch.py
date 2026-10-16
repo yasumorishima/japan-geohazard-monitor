@@ -29,6 +29,7 @@ import json
 import os
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -45,10 +46,19 @@ FIELDS = (("co5", "CO_VMR", 5, 1e9, 0.0), ("ch46", "CH4_VMR", 6, 1e9, 1800.0),
 ORB = (("A", "ascending"), ("D", "descending"))
 
 
-def get(url, timeout=180):
-    req = urllib.request.Request(url, headers={"Authorization": "Bearer " + TOK})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read()
+def get(url, timeout=180, tries=1):
+    for att in range(tries):
+        req = urllib.request.Request(url, headers={"Authorization": "Bearer " + TOK})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read()
+        except urllib.error.HTTPError as e:
+            body = e.read()[:400]
+            title = body.split(b"<title>")[1].split(b"</title>")[0] if b"<title>" in body else body[:120]
+            print("HTTP %d attempt %d: %s" % (e.code, att + 1, title.decode("utf-8", "replace")), flush=True)
+            if att == tries - 1:
+                raise
+            time.sleep(20 * (att + 1))
 
 
 def granules(year):
@@ -99,7 +109,7 @@ def main():
     print("gate C PASS (%d granules, time_end <= date + 36 h)" % len(days), flush=True)
     tmp = OUT + ".part.nc4"
     # gate L on the first granule
-    open(tmp, "wb").write(get(url_for(gl[days[0]][0], "/StdPressureLev_ascending;/H2OPressureLev_ascending")))
+    open(tmp, "wb").write(get(url_for(gl[days[0]][0], "/StdPressureLev_ascending;/H2OPressureLev_ascending"), tries=4))
     ds = netCDF4.Dataset(tmp)
     sp = np.asarray(ds.variables["StdPressureLev_ascending"][:], float)
     hp = np.asarray(ds.variables["H2OPressureLev_ascending"][:], float)
