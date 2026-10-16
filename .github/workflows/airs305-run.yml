@@ -1,0 +1,108 @@
+name: Round 305 AIRS steps
+
+# Round 305 on free GitHub-hosted CPU (public repository).  step = prep builds the label-free quantities from the
+# yearly AIRS files on HF (inputs/round305_airs/) and publishes derived/round305/q305.npz; gates / cal run the
+# label-free checks and calibration of pre305.py / cal305.py; run is the frozen verdict (only after the freeze
+# file research/airs305/FREEZE305.txt is committed).  Labels come from research/airs305/build305.npz (USGS
+# catalogue, public domain, and quantities derived from it).
+
+on:
+  workflow_dispatch:
+    inputs:
+      memo:
+        description: Why this run
+        required: true
+      step:
+        description: prep | gates | cal | run
+        required: true
+      q305_md5:
+        description: Expected md5 of q305.npz (steps gates / cal / run)
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  step:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install --quiet numpy==2.1.3 scipy==1.14.1 huggingface_hub==0.26.2 global-land-mask==1.0.0
+      - name: Memo
+        env:
+          MEMO: ${{ inputs.memo }}
+          STEP: ${{ inputs.step }}
+        run: |
+          echo "memo: $MEMO"
+          echo "step: $STEP"
+          df -h . | tail -1
+      - name: Prep
+        if: inputs.step == 'prep'
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python -c "from huggingface_hub import snapshot_download as s; s('yasumorishima/japan-geohazard', repo_type='dataset', allow_patterns=['inputs/round305_airs/*.npz'], local_dir='hf')"
+          ls -la hf/inputs/round305_airs | tail -3
+          python research/airs305/prep.py hf/inputs/round305_airs research/airs305/issues305.txt q305.npz
+          rm -rf hf
+          python - <<'EOF'
+          import hashlib, os
+          from huggingface_hub import HfApi
+          api = HfApi(token=os.environ["HF_TOKEN"])
+          dst = "derived/round305/q305.npz"
+          api.upload_file(path_or_fileobj="q305.npz", path_in_repo=dst, repo_id="yasumorishima/japan-geohazard",
+                          repo_type="dataset", commit_message="round 305 quantities (label-free)")
+          info = api.get_paths_info("yasumorishima/japan-geohazard", [dst], repo_type="dataset")[0]
+          assert info.size == os.path.getsize("q305.npz"), (info.size, os.path.getsize("q305.npz"))
+          print("published %s %d bytes md5 %s" % (dst, info.size, hashlib.md5(open("q305.npz", "rb").read()).hexdigest()))
+          EOF
+      - name: Gates / run
+        if: inputs.step == 'gates' || inputs.step == 'run'
+        env:
+          STEP: ${{ inputs.step }}
+          MD5: ${{ inputs.q305_md5 }}
+        run: |
+          test -n "$MD5"
+          if [ "$STEP" = run ]; then test -f research/airs305/FREEZE305.txt; cat research/airs305/FREEZE305.txt; fi
+          python -c "from huggingface_hub import hf_hub_download as d; print(d('yasumorishima/japan-geohazard', 'derived/round305/q305.npz', repo_type='dataset', local_dir='.'))"
+          echo "$MD5  derived/round305/q305.npz" | md5sum -c -
+          cd research/airs305
+          Q=../../derived/round305/q305.npz
+          case "$STEP" in
+            gates) python pre305.py build305.npz $Q --gates-only ;;
+            run)   python pre305.py build305.npz $Q ;;
+            *) echo "unknown step"; exit 1 ;;
+          esac
+
+  cal:
+    if: inputs.step == 'cal'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install --quiet numpy==2.1.3 scipy==1.14.1 huggingface_hub==0.26.2 global-land-mask==1.0.0
+      - name: Calibration shard
+        env:
+          MEMO: ${{ inputs.memo }}
+          MD5: ${{ inputs.q305_md5 }}
+        run: |
+          echo "memo: $MEMO"
+          test -n "$MD5"
+          python -c "from huggingface_hub import hf_hub_download as d; print(d('yasumorishima/japan-geohazard', 'derived/round305/q305.npz', repo_type='dataset', local_dir='.'))"
+          echo "$MD5  derived/round305/q305.npz" | md5sum -c -
+          cd research/airs305
+          python cal305.py build305.npz ../../derived/round305/q305.npz 100 100 ${{ matrix.shard }} 10
