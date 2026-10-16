@@ -3,8 +3,8 @@ name: Round 305 AIRS L3 fetch
 # Fetches AIRS L3 v7 daily CO / CH4 / temperature / water vapour (research/airs305/fetch.py) one calendar year per
 # job on free GitHub-hosted CPU (public repository) and publishes each year to the public HF dataset
 # yasumorishima/japan-geohazard under inputs/round305_airs/.  NASA Earth science data are CC0 unless marked
-# (Earthdata data use guidance).  The Earthdata token is minted from the account secrets and masked; it is never
-# written to the repository or the dataset.  No earthquake data is read here.
+# (Earthdata data use guidance).  The Earthdata bearer token comes from the EARTHDATA_TOKEN secret (the URS basic-auth token API is
+# deprecated); it is never written to the repository or the dataset.  No earthquake data is read here.
 
 on:
   workflow_dispatch:
@@ -40,21 +40,14 @@ jobs:
           python-version: "3.12"
       - name: Install
         run: pip install --quiet numpy==2.1.3 netCDF4==1.7.2 huggingface_hub==0.26.2
-      - name: Earthdata token
+      - name: Memo
         env:
-          EDU: ${{ secrets.EARTHDATA_USERNAME }}
-          EDP: ${{ secrets.EARTHDATA_PASSWORD }}
           MEMO: ${{ inputs.memo }}
-        run: |
-          echo "memo: $MEMO"
-          tok=$(curl -sf -u "$EDU:$EDP" -X POST https://urs.earthdata.nasa.gov/api/users/find_or_create_token \
-                | python -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
-          test -n "$tok"
-          echo "::add-mask::$tok"
-          echo "EDL_TOKEN=$tok" >> "$GITHUB_ENV"
+        run: echo "memo: $MEMO"
       - name: Fetch
         env:
           LIMIT: ${{ inputs.limit }}
+          EDL_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
         run: python research/airs305/fetch.py ${{ matrix.year }} airs305_${{ matrix.year }}.npz
       - name: Publish and verify
         if: inputs.limit == '0'
