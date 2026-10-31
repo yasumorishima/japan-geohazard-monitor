@@ -20,5 +20,27 @@
   "brier": 0.0473,
   "info_gain_nats": 1.839,
   "prob_gain_vs_clim": 0.71
+ },
+ "2026-08": {
+  "window": [
+   "2026-08-31",
+   "2026-10-04"
+  ],
+  "n_cells_hit": 6,
+  "auc": 0.9268,
+  "brier": 0.046,
+  "info_gain_nats": -6.563,
+  "prob_gain_vs_clim": 0.58
+ },
+ "2026-09": {
+  "window": [
+   "2026-09-27",
+   "2026-10-31"
+  ],
+  "n_cells_hit": 5,
+  "auc": 0.9345,
+  "brier": 0.0275,
+  "info_gain_nats": 3.695,
+  "prob_gain_vs_clim": 0.73
  }
 }
