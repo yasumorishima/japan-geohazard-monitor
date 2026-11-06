@@ -237,7 +237,7 @@ jobs:
               : > "$stderr_file"
               result=$(timeout 30 gh api \
                 "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
-                --jq "[.artifacts[] | select(.name | startswith(\"${prefix}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" \
+                --jq "[.artifacts[] | select(.name | startswith(\"${prefix}\")) | select(.expired == false) | select(.workflow_run.head_repository_id == .workflow_run.repository_id)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" \
                 2>"$stderr_file")
               rc=$?
               if [ -s "$stderr_file" ]; then
@@ -645,7 +645,7 @@ jobs:
               : > "$stderr_file"
               result=$(timeout 30 gh api \
                 "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
-                --jq "[.artifacts[] | select(.name | startswith(\"${prefix}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" \
+                --jq "[.artifacts[] | select(.name | startswith(\"${prefix}\")) | select(.expired == false) | select(.workflow_run.head_repository_id == .workflow_run.repository_id)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" \
                 2>"$stderr_file")
               rc=$?
               if [ -s "$stderr_file" ]; then
@@ -1072,7 +1072,7 @@ jobs:
               : > "$stderr_file"
               result=$(timeout 30 gh api \
                 "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
-                --jq "[.artifacts[] | select(.name | startswith(\"${prefix}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" \
+                --jq "[.artifacts[] | select(.name | startswith(\"${prefix}\")) | select(.expired == false) | select(.workflow_run.head_repository_id == .workflow_run.repository_id)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" \
                 2>"$stderr_file")
               rc=$?
               if [ -s "$stderr_file" ]; then
@@ -1514,7 +1514,7 @@ jobs:
               : > "$stderr_file"
               result=$(timeout 30 gh api \
                 "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
-                --jq "[.artifacts[] | select(.name | startswith(\"${prefix}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" \
+                --jq "[.artifacts[] | select(.name | startswith(\"${prefix}\")) | select(.expired == false) | select(.workflow_run.head_repository_id == .workflow_run.repository_id)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" \
                 2>"$stderr_file")
               rc=$?
               if [ -s "$stderr_file" ]; then
@@ -1976,7 +1976,7 @@ jobs:
               : > "$stderr_file"
               result=$(timeout 30 gh api \
                 "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
-                --jq "[.artifacts[] | select(.name | startswith(\"${prefix}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" \
+                --jq "[.artifacts[] | select(.name | startswith(\"${prefix}\")) | select(.expired == false) | select(.workflow_run.head_repository_id == .workflow_run.repository_id)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" \
                 2>"$stderr_file")
               rc=$?
               if [ -s "$stderr_file" ]; then
@@ -2441,7 +2441,7 @@ jobs:
               : > "$stderr_file"
               result=$(timeout 30 gh api \
                 "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
-                --jq "[.artifacts[] | select(.name | startswith(\"${prefix}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" \
+                --jq "[.artifacts[] | select(.name | startswith(\"${prefix}\")) | select(.expired == false) | select(.workflow_run.head_repository_id == .workflow_run.repository_id)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" \
                 2>"$stderr_file")
               rc=$?
               if [ -s "$stderr_file" ]; then
@@ -3180,7 +3180,7 @@ jobs:
               : > "$stderr_file"
               result=$(timeout 30 gh api \
                 "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
-                --jq "[.artifacts[] | select(.name | startswith(\"${prefix}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" \
+                --jq "[.artifacts[] | select(.name | startswith(\"${prefix}\")) | select(.expired == false) | select(.workflow_run.head_repository_id == .workflow_run.repository_id)] | sort_by(.created_at) | reverse | .[0:${MAX_TRIES}] | .[].workflow_run.id" \
                 2>"$stderr_file")
               rc=$?
               if [ -s "$stderr_file" ]; then

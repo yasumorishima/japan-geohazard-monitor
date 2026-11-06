@@ -61,7 +61,7 @@ jobs:
         run: |
           mkdir -p data
           PREV_RUN=$(gh api repos/${{ github.repository }}/actions/artifacts \
-            --jq '[.artifacts[] | select(.name | startswith("database-checkpoint-")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0].workflow_run.id // empty' 2>/dev/null)
+            --jq '[.artifacts[] | select(.name | startswith("database-checkpoint-")) | select(.expired == false) | select(.workflow_run.head_repository_id == .workflow_run.repository_id)] | sort_by(.created_at) | reverse | .[0].workflow_run.id // empty' 2>/dev/null)
           if [ -n "$PREV_RUN" ] && [ "$PREV_RUN" != "${{ github.run_id }}" ]; then
             echo "Downloading DB checkpoint from run $PREV_RUN..."
             gh run download "$PREV_RUN" --repo ${{ github.repository }} \
@@ -447,7 +447,7 @@ jobs:
         run: |
           # Find most recent successful artifact with validation data
           PREV_RUN=$(gh api repos/${{ github.repository }}/actions/artifacts \
-            --jq '[.artifacts[] | select(.name | startswith("database-checkpoint-")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0].workflow_run.id // empty' 2>/dev/null)
+            --jq '[.artifacts[] | select(.name | startswith("database-checkpoint-")) | select(.expired == false) | select(.workflow_run.head_repository_id == .workflow_run.repository_id)] | sort_by(.created_at) | reverse | .[0].workflow_run.id // empty' 2>/dev/null)
           if [ -n "$PREV_RUN" ] && [ "$PREV_RUN" != "${{ github.run_id }}" ]; then
             gh run download "$PREV_RUN" --repo ${{ github.repository }} \
               --name "database-checkpoint-$PREV_RUN" \
@@ -897,7 +897,7 @@ jobs:
         run: |
           set +e
           mkdir -p data
-          BF_RUN=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100"             --jq '[.artifacts[] | select(.name | startswith("backfill-checkpoint-")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0].workflow_run.id // empty')
+          BF_RUN=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100"             --jq '[.artifacts[] | select(.name | startswith("backfill-checkpoint-")) | select(.expired == false) | select(.workflow_run.head_repository_id == .workflow_run.repository_id)] | sort_by(.created_at) | reverse | .[0].workflow_run.id // empty')
           if [ -z "$BF_RUN" ]; then
             echo "::error::No backfill-checkpoint artifact found -- cannot restore complete DB"
             exit 1
