@@ -44,7 +44,7 @@ jobs:
           PREV_RUN=""
           for P in "backfill-checkpoint-" "database-checkpoint-"; do
             R=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
-              --jq "[.artifacts[] | select(.name | startswith(\"${P}\")) | select(.expired == false)] | sort_by(.created_at) | reverse | .[0].workflow_run.id")
+              --jq "[.artifacts[] | select(.name | startswith(\"${P}\")) | select(.expired == false) | select(.workflow_run.head_repository_id == .workflow_run.repository_id)] | sort_by(.created_at) | reverse | .[0].workflow_run.id")
             if [ -n "$R" ] && [ "$R" != "null" ]; then
               PREFIX="$P"
               PREV_RUN="$R"
