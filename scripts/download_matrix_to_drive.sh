@@ -18,7 +18,10 @@ TEMP_DIR="/tmp/geohazard_matrix"
 echo "$(date): Checking latest analysis run..."
 
 # Get latest successful run
-RUN_ID=$(gh run list --repo "$REPO" --workflow "analysis.yml" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+# Only runs started from this repository (manual or scheduled). A fork pull
+# request that edits analysis.yml would also appear in this list.
+RUN_ID=$(gh run list --repo "$REPO" --workflow "analysis.yml" --status success --limit 50 --json databaseId,event \
+  --jq '[.[] | select(.event == "workflow_dispatch" or .event == "schedule")][0].databaseId // empty')
 
 if [ -z "$RUN_ID" ]; then
     echo "No successful runs found"

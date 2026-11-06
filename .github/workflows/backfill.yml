@@ -3876,7 +3876,7 @@ jobs:
           set -euo pipefail
           LIST="${RUNNER_TEMP}/artifacts.json"
           gh api "repos/${REPO}/actions/artifacts?per_page=100" --paginate --slurp > "$LIST"
-          LIVE='[.[].artifacts[] | select(.expired == false and (.name | startswith($p)))]'
+          LIVE='[.[].artifacts[] | select(.expired == false and (.name | startswith($p))) | select(.workflow_run.head_repository_id == .workflow_run.repository_id)]'
           prune() {
             PREFIX="$1"
             KEEP="$2"
