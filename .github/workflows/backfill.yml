@@ -3994,7 +3994,7 @@ jobs:
               'description': body[:4000],
               'footer': {'text': run_url},
           }]}).encode()
-          req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+          req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json', 'User-Agent': 'geohazard-backfill-notify/1.0'})
           urllib.request.urlopen(req)
           "
             exit 0
@@ -4139,7 +4139,7 @@ jobs:
               'description': report[:4000],
               'footer': {'text': run_url},
           }]}).encode()
-          req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+          req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json', 'User-Agent': 'geohazard-backfill-notify/1.0'})
           urllib.request.urlopen(req)
           "
 
