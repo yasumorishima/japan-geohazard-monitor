@@ -61,6 +61,10 @@ STATIONS = {
 
 NMDB_API = "https://www.nmdb.eu/nest/draw_graph.php"
 MAX_RETRIES = 3
+# Stop the run after this many months in a row fail to connect: when NMDB is
+# unreachable every month costs ~100 s of retries, and the step's timeout
+# used to cancel the run before any station got past its oldest gap months.
+MAX_CONSECUTIVE_CONN_FAILURES = 5
 TIMEOUT = aiohttp.ClientTimeout(total=120, connect=30)
 
 
@@ -126,7 +130,11 @@ def parse_nmdb_ascii(text: str) -> list[tuple]:
 
 async def fetch_station_month(session: aiohttp.ClientSession,
                                station: str, year: int, month: int) -> list[tuple]:
-    """Fetch one month of daily data for a station from NMDB."""
+    """Fetch one month of daily data for a station from NMDB.
+
+    Returns None when the server could not be reached (connection errors on
+    every retry), [] when it answered without data.
+    """
     start_day = 1
     if month == 12:
         end_year, end_month = year + 1, 1
@@ -178,7 +186,7 @@ async def fetch_station_month(session: aiohttp.ClientSession,
             if attempt == MAX_RETRIES:
                 logger.warning("  %s %d-%02d: %s after %d retries",
                                station, year, month, type(e).__name__, MAX_RETRIES)
-                return []
+                return None
             await asyncio.sleep(2 ** attempt)
 
     return []
@@ -214,9 +222,13 @@ async def main():
             if year == today.year and month > today.month:
                 break
             months_to_fetch.append((year, month))
+    # Newest first: the current months matter most, and old gap months that
+    # NMDB never fills should not hold them back.
+    months_to_fetch.reverse()
 
     total_records = 0
     total_fetched = 0
+    conn_failures = 0
 
     async with aiohttp.ClientSession() as session:
         for station in STATIONS:
@@ -231,6 +243,15 @@ async def main():
                     continue
 
                 rows = await fetch_station_month(session, station, year, month)
+                if rows is None:
+                    conn_failures += 1
+                    if conn_failures >= MAX_CONSECUTIVE_CONN_FAILURES:
+                        logger.warning("NMDB unreachable: %d months in a row failed to "
+                                       "connect; stopping (%d new records saved)",
+                                       conn_failures, total_records + station_records)
+                        return
+                else:
+                    conn_failures = 0
                 if rows:
                     new_rows = [(s, d, c) for s, d, c in rows
                                 if (s, d) not in existing_keys]
