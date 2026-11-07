@@ -61,7 +61,9 @@ NAGOYA_BASE = "https://stdb2.isee.nagoya-u.ac.jp/GPS/shinbori"
 JAPAN_BBOX = {"min_lat": 25.0, "max_lat": 46.0, "min_lon": 125.0, "max_lon": 150.0}
 
 MAX_RETRIES = 3
-TIMEOUT = aiohttp.ClientTimeout(total=120, connect=30)
+# connect / sock_read bound a stalled server; total stays above a normal
+# download of one hourly netCDF grid.
+TIMEOUT = aiohttp.ClientTimeout(total=90, connect=20, sock_read=45)
 
 # Hours to fetch per day (UT). 03 UT = 12 JST (daytime), 12 UT = 21 JST (nighttime)
 # Fetch both for day/night comparison
@@ -72,6 +74,10 @@ MAX_RETRIES_BEFORE_SKIP = 3
 FAILED_DATES_RETRY_AFTER_DAYS = 30
 PARALLEL_DATES = int(_os.environ.get("GNSS_TEC_PARALLEL_DATES", "4"))
 RATE_LIMIT_SLEEP = float(_os.environ.get("GNSS_TEC_RATE_LIMIT_SLEEP", "0.5"))
+# Stop starting new dates after this many finished dates in a row were
+# transient failures (run 42371128905: 90 transient dates used 110 of the
+# step's 120 minutes and inserted nothing). Rows already stored are kept.
+MAX_TRANSIENT_STREAK = int(_os.environ.get("GNSS_TEC_MAX_TRANSIENT_STREAK", "8"))
 
 
 class _TransientFailure:
@@ -463,9 +469,12 @@ async def main():
     )
 
     sem = asyncio.Semaphore(PARALLEL_DATES)
+    state = {"streak": 0, "stop": False}
 
     async def fetch_one(session: aiohttp.ClientSession, date: datetime):
         async with sem:
+            if state["stop"]:
+                return date, "skipped"
             rows = await fetch_date(session, date)
             # Per-date rate-limit sleep stays inside semaphore so concurrent
             # workers each pace at RATE_LIMIT_SLEEP rather than burst-and-stop.
@@ -476,6 +485,7 @@ async def main():
     inserted_dates = 0
     failed_dates_count = 0
     transient_skipped = 0
+    not_started = 0
 
     async with aiohttp.ClientSession() as session:
         tasks = [fetch_one(session, d) for d in target_dates]
@@ -484,6 +494,20 @@ async def main():
         for coro in asyncio.as_completed(tasks):
             date, rows = await coro
             date_str = date.strftime("%Y-%m-%d")
+            if isinstance(rows, str):
+                not_started += 1
+                continue
+            if rows is TRANSIENT_FAILURE:
+                state["streak"] += 1
+                if state["streak"] >= MAX_TRANSIENT_STREAK and not state["stop"]:
+                    state["stop"] = True
+                    logger.warning(
+                        "GNSS-TEC: %d dates in a row failed transiently; "
+                        "not starting the remaining dates (server not answering)",
+                        state["streak"],
+                    )
+            else:
+                state["streak"] = 0
             if rows is TRANSIENT_FAILURE:
                 # Don't advance retry_count — next cron retries cleanly.
                 transient_skipped += 1
@@ -515,8 +539,10 @@ async def main():
 
     logger.info(
         "GNSS-TEC fetch complete: %d records / %d dates inserted, "
-        "%d dates failed (definitive), %d dates transient-skipped",
+        "%d dates failed (definitive), %d dates transient-skipped, "
+        "%d dates not started (early stop)",
         total_records, inserted_dates, failed_dates_count, transient_skipped,
+        not_started,
     )
 
 

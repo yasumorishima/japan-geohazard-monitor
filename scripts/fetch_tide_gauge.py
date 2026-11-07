@@ -62,8 +62,20 @@ JAPAN_LON_MAX = 156.0
 # Fetch 90 days per request to keep response size manageable
 CHUNK_DAYS = 90
 
-MAX_RETRIES = 5
-TIMEOUT = aiohttp.ClientTimeout(total=900, connect=120)
+MAX_RETRIES = 3
+# Short connect / read timeouts: when UHSLC does not answer, a request fails in
+# about a minute instead of hanging until the step's 15-minute limit (run
+# 42361613415 spent 10.5 min in discovery and then hung in the CSV fallback).
+DISCOVERY_TIMEOUT = aiohttp.ClientTimeout(total=120, connect=30, sock_read=60)
+TIMEOUT = aiohttp.ClientTimeout(total=600, connect=30, sock_read=60)
+
+# Stop the whole fetch after this many stations in a row could not be reached
+# (connection error or timeout after all retries); rows already stored stay.
+MAX_CONSECUTIVE_UNREACHABLE = 3
+
+
+class Unreachable(Exception):
+    """UHSLC did not answer (connection error or timeout after all retries)."""
 
 START_YEAR = 2011
 
@@ -129,7 +141,7 @@ async def discover_japan_stations(session: aiohttp.ClientSession) -> list[dict]:
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            async with session.get(url, timeout=TIMEOUT) as resp:
+            async with session.get(url, timeout=DISCOVERY_TIMEOUT) as resp:
                 if resp.status == 200:
                     text = await resp.text()
                     return _parse_station_csv(text)
@@ -194,7 +206,8 @@ async def fetch_station_data(session: aiohttp.ClientSession,
                         logger.debug("UHSLC %d: HTTP %d", uhslc_id, resp.status)
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             if attempt == MAX_RETRIES:
-                logger.debug("UHSLC %d: %s", uhslc_id, type(e).__name__)
+                logger.warning("UHSLC %d: %s", uhslc_id, type(e).__name__)
+                raise Unreachable(type(e).__name__) from e
             await asyncio.sleep(2 ** attempt)
 
     return []
@@ -258,7 +271,8 @@ async def fetch_station_csv(session: aiohttp.ClientSession,
                         logger.debug("UHSLC CSV %d: HTTP %d", uhslc_id, resp.status)
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             if attempt == MAX_RETRIES:
-                logger.debug("UHSLC CSV %d: %s", uhslc_id, type(e).__name__)
+                logger.warning("UHSLC CSV %d: %s", uhslc_id, type(e).__name__)
+                raise Unreachable(type(e).__name__) from e
             await asyncio.sleep(2 ** attempt)
     return []
 
@@ -320,8 +334,16 @@ async def main():
         logger.info("Found %d UHSLC stations via ERDDAP", len(stations))
 
     total_records = 0
+    unreachable_streak = 0
+    stopped_early = False
     async with aiohttp.ClientSession() as session:
         for station in stations:
+            if unreachable_streak >= MAX_CONSECUTIVE_UNREACHABLE:
+                logger.warning(
+                    "UHSLC unreachable for %d stations in a row; stopping "
+                    "(rows already fetched are kept)", unreachable_streak)
+                stopped_early = True
+                break
             station_key = str(station["uhslc_id"])
             name = station["name"]
 
@@ -345,12 +367,17 @@ async def main():
                         " [CSV fallback]" if use_csv_fallback else "")
 
             station_total = 0
+            reached = True
 
             if use_csv_fallback:
                 # Direct CSV: download entire file, filter by start year
-                rows = await fetch_station_csv(
-                    session, station["uhslc_id"], start_dt.year
-                )
+                try:
+                    rows = await fetch_station_csv(
+                        session, station["uhslc_id"], start_dt.year
+                    )
+                except Unreachable:
+                    rows = []
+                    reached = False
                 # Filter out already-existing records
                 if station_key in existing_summary:
                     last_obs = existing_summary[station_key][1]
@@ -376,9 +403,13 @@ async def main():
                     time_start = current.strftime("%Y-%m-%dT00:00:00Z")
                     time_end = chunk_end.strftime("%Y-%m-%dT23:59:59Z")
 
-                    rows = await fetch_station_data(
-                        session, station["uhslc_id"], time_start, time_end
-                    )
+                    try:
+                        rows = await fetch_station_data(
+                            session, station["uhslc_id"], time_start, time_end
+                        )
+                    except Unreachable:
+                        reached = False
+                        break
 
                     if rows:
                         async with safe_connect() as db:
@@ -396,6 +427,8 @@ async def main():
                     current = chunk_end + timedelta(days=1)
                     await asyncio.sleep(0.5)
 
+            unreachable_streak = 0 if reached else unreachable_streak + 1
+
             if station_total > 0:
                 total_records += station_total
                 logger.info("  %s: %d records", name, station_total)
@@ -403,8 +436,9 @@ async def main():
             if use_csv_fallback:
                 await asyncio.sleep(0.5)  # Rate limit for direct CSV
 
-    logger.info("Tide gauge fetch complete: %d total records from %d stations",
-                total_records, len(stations))
+    logger.info("Tide gauge fetch complete: %d total records from %d stations%s",
+                total_records, len(stations),
+                " (stopped early: UHSLC unreachable)" if stopped_early else "")
 
 
 if __name__ == "__main__":
