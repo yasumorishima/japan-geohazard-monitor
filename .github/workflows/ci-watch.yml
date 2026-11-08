@@ -1,0 +1,99 @@
+name: CI watch
+
+# Daily health check of the backfill pipeline (replaces the Claude routine
+# "geohazard-ci-watch"). Posts to Discord only when something needs a human:
+#   - the Hugging Face canonical DB (yasumorishima/japan-geohazard) has not
+#     been updated for more than MAX_STALE_HOURS (backfill uploads it once a
+#     day, at the UTC 00:00 run), or
+#   - the latest completed Backfill Data run failed, or
+#   - no Backfill Data run has succeeded in the last MAX_NO_SUCCESS_HOURS.
+# Read-only: it changes nothing.
+
+on:
+  schedule:
+    - cron: '17 12 * * *'   # 21:17 JST
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check backfill and canonical freshness
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          MAX_STALE_HOURS: '50'
+          MAX_NO_SUCCESS_HOURS: '24'
+        run: |
+          python3 - <<'EOF'
+          import json, os, urllib.request
+          from datetime import datetime, timezone
+
+          now = datetime.now(timezone.utc)
+          UA = {'User-Agent': 'geohazard-ci-watch/1.0'}
+
+          def get(url, headers=None):
+              h = dict(UA, **(headers or {}))
+              with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=60) as r:
+                  return json.load(r)
+
+          def ts(s):
+              return datetime.fromisoformat(s.replace('Z', '+00:00'))
+
+          problems, lines = [], []
+
+          # 1. Canonical DB freshness on Hugging Face.
+          try:
+              commits = get('https://huggingface.co/api/datasets/yasumorishima/japan-geohazard/commits/main?limit=1')
+              last = ts(commits[0]['date'])
+              age = (now - last).total_seconds() / 3600
+              lines.append(f'正本 (Hugging Face) の最終更新: {last:%Y-%m-%d %H:%M} UTC ({age:.0f} 時間前)')
+              if age > float(os.environ['MAX_STALE_HOURS']):
+                  problems.append(f'正本が {age:.0f} 時間更新されていません')
+          except Exception as e:
+              problems.append(f'正本の更新日を取れませんでした: {type(e).__name__}')
+
+          # 2. Backfill runs.
+          try:
+              gh = {'Accept': 'application/vnd.github+json'}
+              if os.environ.get('GH_TOKEN'):
+                  gh['Authorization'] = 'Bearer ' + os.environ['GH_TOKEN']
+              runs = get(f"https://api.github.com/repos/{os.environ['REPO']}/actions/workflows/backfill.yml/runs?branch=master&per_page=20", gh)['workflow_runs']
+              done = [r for r in runs if r['status'] == 'completed' and r['conclusion'] != 'cancelled']
+              if done:
+                  r = done[0]
+                  lines.append(f"直近の backfill: run {r['id']} ({r['created_at']}) {r['conclusion']}")
+                  if r['conclusion'] != 'success':
+                      problems.append(f"直近の backfill が {r['conclusion']} です: {r['html_url']}")
+              ok = [r for r in done if r['conclusion'] == 'success']
+              if not ok:
+                  problems.append('直近 20 件に成功した backfill がありません')
+              else:
+                  age = (now - ts(ok[0]['updated_at'])).total_seconds() / 3600
+                  if age > float(os.environ['MAX_NO_SUCCESS_HOURS']):
+                      problems.append(f'backfill が {age:.0f} 時間成功していません')
+          except Exception as e:
+              problems.append(f'backfill の状態を取れませんでした: {type(e).__name__}')
+
+          print('\n'.join(lines))
+          print('PROBLEMS:', problems or 'none')
+          if not problems:
+              raise SystemExit(0)
+
+          url = os.environ.get('DISCORD_WEBHOOK_URL', '')
+          if not url:
+              print('DISCORD_WEBHOOK_URL not set; not notifying')
+              raise SystemExit(1)
+          body = '**geohazard CI watch: 要確認**\n' + '\n'.join('- ' + p for p in problems) + '\n\n' + '\n'.join(lines)
+          payload = json.dumps({'content': body[:1900]}).encode()
+          req = urllib.request.Request(url, data=payload,
+                                       headers=dict(UA, **{'Content-Type': 'application/json'}))
+          urllib.request.urlopen(req, timeout=60)
+          print('notified Discord')
+          EOF
