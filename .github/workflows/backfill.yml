@@ -176,13 +176,28 @@ jobs:
       # and was the only fetch job to survive. Mirror that mitigation here.
       - name: Free disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/share/swift /usr/local/.ghcup /usr/local/share/boost 2>/dev/null || true
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift /usr/local/.ghcup /usr/local/share/boost 2>/dev/null || true
+          # Keep Python 3.12 in the toolcache so setup-python needs no download
+          # (run 42470058630: the python-versions download answered 504 three times).
+          sudo find /opt/hostedtoolcache -mindepth 1 -maxdepth 1 ! -name Python -exec rm -rf {} + 2>/dev/null || true
+          sudo find /opt/hostedtoolcache/Python -mindepth 1 -maxdepth 1 ! -name '3.12*' -exec rm -rf {} + 2>/dev/null || true
           sudo docker image prune -af 2>/dev/null || true
           df -h
 
       - uses: actions/checkout@v4
 
+      # Retried once after 90 s: a 504 from the python-versions download
+      # failed four jobs of run 42470058630 before any fetch started.
       - uses: actions/setup-python@v5
+        id: setup_python_1
+        continue-on-error: true
+        with:
+          python-version: '3.12'
+      - name: Wait before retrying setup-python
+        if: steps.setup_python_1.outcome == 'failure'
+        run: sleep 90
+      - uses: actions/setup-python@v5
+        if: steps.setup_python_1.outcome == 'failure'
         with:
           python-version: '3.12'
 
@@ -584,13 +599,28 @@ jobs:
       # and was the only fetch job to survive. Mirror that mitigation here.
       - name: Free disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/share/swift /usr/local/.ghcup /usr/local/share/boost 2>/dev/null || true
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift /usr/local/.ghcup /usr/local/share/boost 2>/dev/null || true
+          # Keep Python 3.12 in the toolcache so setup-python needs no download
+          # (run 42470058630: the python-versions download answered 504 three times).
+          sudo find /opt/hostedtoolcache -mindepth 1 -maxdepth 1 ! -name Python -exec rm -rf {} + 2>/dev/null || true
+          sudo find /opt/hostedtoolcache/Python -mindepth 1 -maxdepth 1 ! -name '3.12*' -exec rm -rf {} + 2>/dev/null || true
           sudo docker image prune -af 2>/dev/null || true
           df -h
 
       - uses: actions/checkout@v4
 
+      # Retried once after 90 s: a 504 from the python-versions download
+      # failed four jobs of run 42470058630 before any fetch started.
       - uses: actions/setup-python@v5
+        id: setup_python_2
+        continue-on-error: true
+        with:
+          python-version: '3.12'
+      - name: Wait before retrying setup-python
+        if: steps.setup_python_2.outcome == 'failure'
+        run: sleep 90
+      - uses: actions/setup-python@v5
+        if: steps.setup_python_2.outcome == 'failure'
         with:
           python-version: '3.12'
 
@@ -1010,13 +1040,28 @@ jobs:
       # and was the only fetch job to survive. Mirror that mitigation here.
       - name: Free disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/share/swift /usr/local/.ghcup /usr/local/share/boost 2>/dev/null || true
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift /usr/local/.ghcup /usr/local/share/boost 2>/dev/null || true
+          # Keep Python 3.12 in the toolcache so setup-python needs no download
+          # (run 42470058630: the python-versions download answered 504 three times).
+          sudo find /opt/hostedtoolcache -mindepth 1 -maxdepth 1 ! -name Python -exec rm -rf {} + 2>/dev/null || true
+          sudo find /opt/hostedtoolcache/Python -mindepth 1 -maxdepth 1 ! -name '3.12*' -exec rm -rf {} + 2>/dev/null || true
           sudo docker image prune -af 2>/dev/null || true
           df -h
 
       - uses: actions/checkout@v4
 
+      # Retried once after 90 s: a 504 from the python-versions download
+      # failed four jobs of run 42470058630 before any fetch started.
       - uses: actions/setup-python@v5
+        id: setup_python_3
+        continue-on-error: true
+        with:
+          python-version: '3.12'
+      - name: Wait before retrying setup-python
+        if: steps.setup_python_3.outcome == 'failure'
+        run: sleep 90
+      - uses: actions/setup-python@v5
+        if: steps.setup_python_3.outcome == 'failure'
         with:
           python-version: '3.12'
 
@@ -1453,13 +1498,28 @@ jobs:
       # and was the only fetch job to survive. Mirror that mitigation here.
       - name: Free disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/share/swift /usr/local/.ghcup /usr/local/share/boost 2>/dev/null || true
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift /usr/local/.ghcup /usr/local/share/boost 2>/dev/null || true
+          # Keep Python 3.12 in the toolcache so setup-python needs no download
+          # (run 42470058630: the python-versions download answered 504 three times).
+          sudo find /opt/hostedtoolcache -mindepth 1 -maxdepth 1 ! -name Python -exec rm -rf {} + 2>/dev/null || true
+          sudo find /opt/hostedtoolcache/Python -mindepth 1 -maxdepth 1 ! -name '3.12*' -exec rm -rf {} + 2>/dev/null || true
           sudo docker image prune -af 2>/dev/null || true
           df -h
 
       - uses: actions/checkout@v4
 
+      # Retried once after 90 s: a 504 from the python-versions download
+      # failed four jobs of run 42470058630 before any fetch started.
       - uses: actions/setup-python@v5
+        id: setup_python_4
+        continue-on-error: true
+        with:
+          python-version: '3.12'
+      - name: Wait before retrying setup-python
+        if: steps.setup_python_4.outcome == 'failure'
+        run: sleep 90
+      - uses: actions/setup-python@v5
+        if: steps.setup_python_4.outcome == 'failure'
         with:
           python-version: '3.12'
 
@@ -1919,12 +1979,27 @@ jobs:
       # and was the only fetch job to survive. Mirror that mitigation here.
       - name: Free disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/share/swift /usr/local/.ghcup /usr/local/share/boost 2>/dev/null || true
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift /usr/local/.ghcup /usr/local/share/boost 2>/dev/null || true
+          # Keep Python 3.12 in the toolcache so setup-python needs no download
+          # (run 42470058630: the python-versions download answered 504 three times).
+          sudo find /opt/hostedtoolcache -mindepth 1 -maxdepth 1 ! -name Python -exec rm -rf {} + 2>/dev/null || true
+          sudo find /opt/hostedtoolcache/Python -mindepth 1 -maxdepth 1 ! -name '3.12*' -exec rm -rf {} + 2>/dev/null || true
           sudo docker image prune -af 2>/dev/null || true
           df -h
 
       - uses: actions/checkout@v4
+      # Retried once after 90 s: a 504 from the python-versions download
+      # failed four jobs of run 42470058630 before any fetch started.
       - uses: actions/setup-python@v5
+        id: setup_python_5
+        continue-on-error: true
+        with:
+          python-version: '3.12'
+      - name: Wait before retrying setup-python
+        if: steps.setup_python_5.outcome == 'failure'
+        run: sleep 90
+      - uses: actions/setup-python@v5
+        if: steps.setup_python_5.outcome == 'failure'
         with:
           python-version: '3.12'
       - name: Install dependencies
@@ -2380,13 +2455,28 @@ jobs:
       # of them.
       - name: Free disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/share/swift /usr/local/.ghcup /usr/local/share/boost 2>/dev/null || true
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift /usr/local/.ghcup /usr/local/share/boost 2>/dev/null || true
+          # Keep Python 3.12 in the toolcache so setup-python needs no download
+          # (run 42470058630: the python-versions download answered 504 three times).
+          sudo find /opt/hostedtoolcache -mindepth 1 -maxdepth 1 ! -name Python -exec rm -rf {} + 2>/dev/null || true
+          sudo find /opt/hostedtoolcache/Python -mindepth 1 -maxdepth 1 ! -name '3.12*' -exec rm -rf {} + 2>/dev/null || true
           sudo docker image prune -af 2>/dev/null || true
           df -h
 
       - uses: actions/checkout@v4
 
+      # Retried once after 90 s: a 504 from the python-versions download
+      # failed four jobs of run 42470058630 before any fetch started.
       - uses: actions/setup-python@v5
+        id: setup_python_6
+        continue-on-error: true
+        with:
+          python-version: '3.12'
+      - name: Wait before retrying setup-python
+        if: steps.setup_python_6.outcome == 'failure'
+        run: sleep 90
+      - uses: actions/setup-python@v5
+        if: steps.setup_python_6.outcome == 'failure'
         with:
           python-version: '3.12'
 
@@ -3119,13 +3209,28 @@ jobs:
       # and was the only fetch job to survive. Mirror that mitigation here.
       - name: Free disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/share/swift /usr/local/.ghcup /usr/local/share/boost 2>/dev/null || true
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift /usr/local/.ghcup /usr/local/share/boost 2>/dev/null || true
+          # Keep Python 3.12 in the toolcache so setup-python needs no download
+          # (run 42470058630: the python-versions download answered 504 three times).
+          sudo find /opt/hostedtoolcache -mindepth 1 -maxdepth 1 ! -name Python -exec rm -rf {} + 2>/dev/null || true
+          sudo find /opt/hostedtoolcache/Python -mindepth 1 -maxdepth 1 ! -name '3.12*' -exec rm -rf {} + 2>/dev/null || true
           sudo docker image prune -af 2>/dev/null || true
           df -h
 
       - uses: actions/checkout@v4
 
+      # Retried once after 90 s: a 504 from the python-versions download
+      # failed four jobs of run 42470058630 before any fetch started.
       - uses: actions/setup-python@v5
+        id: setup_python_7
+        continue-on-error: true
+        with:
+          python-version: '3.12'
+      - name: Wait before retrying setup-python
+        if: steps.setup_python_7.outcome == 'failure'
+        run: sleep 90
+      - uses: actions/setup-python@v5
+        if: steps.setup_python_7.outcome == 'failure'
         with:
           python-version: '3.12'
 
@@ -3567,7 +3672,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Retried once after 90 s: a 504 from the python-versions download
+      # failed four jobs of run 42470058630 before any fetch started.
       - uses: actions/setup-python@v5
+        id: setup_python_8
+        continue-on-error: true
+        with:
+          python-version: '3.12'
+      - name: Wait before retrying setup-python
+        if: steps.setup_python_8.outcome == 'failure'
+        run: sleep 90
+      - uses: actions/setup-python@v5
+        if: steps.setup_python_8.outcome == 'failure'
         with:
           python-version: '3.12'
 
@@ -4400,7 +4516,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Retried once after 90 s: a 504 from the python-versions download
+      # failed four jobs of run 42470058630 before any fetch started.
       - uses: actions/setup-python@v5
+        id: setup_python_9
+        continue-on-error: true
+        with:
+          python-version: '3.12'
+      - name: Wait before retrying setup-python
+        if: steps.setup_python_9.outcome == 'failure'
+        run: sleep 90
+      - uses: actions/setup-python@v5
+        if: steps.setup_python_9.outcome == 'failure'
         with:
           python-version: '3.12'
 
