@@ -563,7 +563,7 @@ jobs:
           python3 scripts/extract_overlay.py \
             --src data/geohazard.db \
             --dst data/geohazard_overlay.db \
-            --tables modis_lst \
+            --tables modis_lst,modis_lst_fetch_log \
             && mv data/geohazard_overlay.db data/geohazard.db
 
       - name: Upload modis.db artifact
@@ -3807,7 +3807,7 @@ jobs:
           # checkpoint (would zero out every light-owned table on the next run).
           python3 scripts/merge_checkpoints.py \
             --base /mnt/merge/light/geohazard.db \
-            --overlay /mnt/merge/modis/geohazard.db:modis_lst \
+            --overlay /mnt/merge/modis/geohazard.db:modis_lst,modis_lst_fetch_log \
             --overlay /mnt/merge/so2/geohazard.db:so2_column \
             --overlay /mnt/merge/gnss/geohazard.db:gnss_tec \
             --overlay /mnt/merge/cloud/geohazard.db:cloud_fraction \
