@@ -15,13 +15,23 @@ Data strategy:
     2. Random control locations (same lat/lon distribution, shifted ±60-180 days)
     3. Extended ±14 days to get robust seasonal baseline for anomaly detection
     4. Rate limit: 1 req/sec (ORNL fair usage)
+    5. Incremental: every completed point request is written to
+       modis_lst_fetch_log and skipped on later runs.  Before 2026-11-10
+       each run re-requested all ~635 land events (~70 min, nearly all
+       duplicates), so a slow API pushed the step past its 120-min limit
+       (run 42803471572).  Windows ending less than SETTLE_DAYS ago are not
+       marked done, so they are retried until the composites are published.
+       A time budget (MODIS_TIME_BUDGET_MIN, default 95) stops starting new
+       requests well before the step timeout; the log keeps the progress.
 """
 
 import asyncio
 import json
 import logging
 import math
+import os
 import random
+import time
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -40,6 +50,8 @@ logger = logging.getLogger(__name__)
 ORNL_API_BASE = "https://modis.ornl.gov/rst/api/v1"
 TIMEOUT = aiohttp.ClientTimeout(total=60, connect=30)
 MAX_RETRIES = 3
+SETTLE_DAYS = 60  # MOD11A2 8-day composites appear with a lag; retry until then
+TIME_BUDGET_S = float(os.environ.get("MODIS_TIME_BUDGET_MIN", "95")) * 60
 
 # Japan land areas (rough polygon to skip ocean epicenters)
 # MODIS LST is NaN over ocean, so only land epicenters are useful
@@ -77,6 +89,19 @@ async def init_lst_table():
             )
         """)
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS modis_lst_fetch_log (
+                latitude REAL NOT NULL,
+                longitude REAL NOT NULL,
+                start_date TEXT NOT NULL,
+                end_date TEXT NOT NULL,
+                product TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                n_records INTEGER NOT NULL,
+                fetched_at TEXT NOT NULL,
+                PRIMARY KEY (latitude, longitude, start_date, end_date, product)
+            )
+        """)
+        await db.execute("""
             CREATE INDEX IF NOT EXISTS idx_modis_lst_date
             ON modis_lst(observed_date)
         """)
@@ -94,8 +119,12 @@ def date_to_modis(dt: datetime) -> str:
 
 async def fetch_lst_point(session: aiohttp.ClientSession,
                           product: str, lat: float, lon: float,
-                          start_date: datetime, end_date: datetime) -> list[dict]:
-    """Fetch LST for a single point from ORNL DAAC API."""
+                          start_date: datetime, end_date: datetime) -> tuple[list[dict], bool]:
+    """Fetch LST for a single point from ORNL DAAC API.
+
+    Returns (results, ok): ok is True when the API gave a definitive answer
+    (200, or 404 = no data for this point), False on errors / retries spent.
+    """
     url = f"{ORNL_API_BASE}/{product}/subset"
     params = {
         "latitude": lat,
@@ -131,18 +160,38 @@ async def fetch_lst_point(session: aiohttp.ClientSession,
                                             "band": band,
                                             "lst_kelvin": round(lst_k, 2),
                                         })
-                    return results
+                    return results, True
                 elif resp.status == 404:
-                    return []
+                    return [], True
                 else:
                     text = await resp.text()
                     logger.warning("HTTP %d for (%.2f, %.2f): %s", resp.status, lat, lon, text[:100])
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             if attempt == MAX_RETRIES:
                 logger.warning("Failed (%.2f, %.2f): %s", lat, lon, e)
-                return []
+                return [], False
             await asyncio.sleep(2 ** attempt)
-    return []
+    return [], False
+
+
+def log_key(lat: float, lon: float, start: datetime, end: datetime, product: str) -> tuple:
+    return (round(lat, 4), round(lon, 4), start.strftime("%Y-%m-%d"),
+            end.strftime("%Y-%m-%d"), product)
+
+
+async def mark_done(key: tuple, kind: str, n: int, now: str):
+    async with safe_connect() as db:
+        await db.execute(
+            """INSERT OR REPLACE INTO modis_lst_fetch_log
+               (latitude, longitude, start_date, end_date, product, kind,
+                n_records, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (*key, kind, n, now),
+        )
+        await db.commit()
+
+
+def settled(end: datetime) -> bool:
+    return end < datetime.now(timezone.utc) - timedelta(days=SETTLE_DAYS)
 
 
 async def store_results(results: list[dict], lat: float, lon: float,
@@ -163,6 +212,7 @@ async def store_results(results: list[dict], lat: float, lon: float,
 
 
 async def main():
+    t0 = time.monotonic()
     await init_db()
     await init_lst_table()
     now = datetime.now(timezone.utc).isoformat()
@@ -201,6 +251,13 @@ async def main():
             "SELECT DISTINCT latitude, longitude, observed_date FROM modis_lst "
             "WHERE lst_kelvin > 0"
         )
+        done_rows = await db.execute_fetchall(
+            "SELECT latitude, longitude, start_date, end_date, product "
+            "FROM modis_lst_fetch_log"
+        )
+
+    done_set = set(tuple(r) for r in done_rows)
+    budget_hit = False
 
     existing_set = set((round(r[0], 2), round(r[1], 2), r[2]) for r in existing)
 
@@ -214,8 +271,9 @@ async def main():
         else:
             ocean_skip += 1
 
-    logger.info("M5.5+ total: %d, On land: %d, Ocean (skipped): %d, Existing LST: %d",
-                len(eq_rows), len(land_eqs), ocean_skip, len(existing_set))
+    logger.info("M5.5+ total: %d, On land: %d, Ocean (skipped): %d, Existing LST: %d, "
+                "Completed requests in log: %d",
+                len(eq_rows), len(land_eqs), ocean_skip, len(existing_set), len(done_set))
 
     # Fetch LST for earthquake epicenters
     eq_records = 0
@@ -235,9 +293,17 @@ async def main():
             check_date = eq_time.strftime("%Y-%m-%d")
             if (round(lat, 2), round(lon, 2), check_date) in existing_set:
                 continue
+            key = log_key(lat, lon, start, end, product)
+            if key in done_set:
+                continue
+            if time.monotonic() - t0 > TIME_BUDGET_S:
+                budget_hit = True
+                break
 
-            results = await fetch_lst_point(session, product, lat, lon, start, end)
+            results, ok = await fetch_lst_point(session, product, lat, lon, start, end)
             n = await store_results(results, lat, lon, product, now)
+            if ok and settled(end):
+                await mark_done(key, "eq", n, now)
             eq_records += n
             eq_fetched += 1
 
@@ -290,9 +356,17 @@ async def main():
 
             start = ctrl_time - timedelta(days=14)
             end = ctrl_time + timedelta(days=14)
+            key = log_key(lat, lon, start, end, product)
+            if key in done_set:
+                continue
+            if budget_hit or time.monotonic() - t0 > TIME_BUDGET_S:
+                budget_hit = True
+                break
 
-            results = await fetch_lst_point(session, product, lat, lon, start, end)
+            results, ok = await fetch_lst_point(session, product, lat, lon, start, end)
             n = await store_results(results, lat, lon, product, now)
+            if ok and settled(end):
+                await mark_done(key, "ctrl", n, now)
             ctrl_records += n
             ctrl_fetched += 1
 
@@ -309,6 +383,9 @@ async def main():
     logger.info("Control LST complete: %d records from %d fetches", ctrl_records, ctrl_fetched)
     logger.info("TOTAL: %d earthquake + %d control = %d LST records",
                 eq_records, ctrl_records, eq_records + ctrl_records)
+    if budget_hit:
+        logger.warning("Time budget (%.0f min) reached; remaining requests run next time "
+                       "(progress kept in modis_lst_fetch_log)", TIME_BUDGET_S / 60)
 
 
 if __name__ == "__main__":
