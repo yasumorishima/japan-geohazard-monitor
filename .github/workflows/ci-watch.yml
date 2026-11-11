@@ -5,7 +5,7 @@ name: CI watch
 #   - the Hugging Face canonical DB (yasumorishima/japan-geohazard) has not
 #     been updated for more than MAX_STALE_HOURS (backfill uploads it once a
 #     day, at the UTC 00:00 run), or
-#   - the latest completed Backfill Data run failed, or
+#   - the latest two completed Backfill Data runs both failed, or
 #   - no Backfill Data run has succeeded in the last MAX_NO_SUCCESS_HOURS.
 # Read-only: it changes nothing.
 
@@ -78,8 +78,12 @@ jobs:
               if done:
                   r = done[0]
                   lines.append(f"直近の backfill: run {r['id']} ({r['created_at']}) {r['conclusion']}")
-                  if r['conclusion'] != 'success':
-                      problems.append(f"直近の backfill が {r['conclusion']} です: {r['html_url']}")
+                  # One failed run followed by a success is a transient (GitHub
+                  # artifact service, runner DNS); alert only when the latest
+                  # two completed runs both failed.
+                  last2 = done[:2]
+                  if len(last2) == 2 and all(x['conclusion'] != 'success' for x in last2):
+                      problems.append(f"backfill が 2 回続けて失敗しています: {last2[0]['html_url']} , {last2[1]['html_url']}")
               ok = [r for r in done if r['conclusion'] == 'success']
               if not ok:
                   problems.append('直近 20 件に成功した backfill がありません')
