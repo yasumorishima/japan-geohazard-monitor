@@ -103,7 +103,7 @@ on:
 permissions:
   contents: read
   issues: write
-  actions: write  # needed for auto-rerun of failed jobs
+  actions: write
 
 # Serialise backfill runs so parallel schedule+dispatch instances don't
 # race on the artifact API (2026-04-23: observed fetch-modis / fetch-cloud /
@@ -204,7 +204,14 @@ jobs:
       - name: Install dependencies
         run: |
           pip install aiohttp aiosqlite numpy scipy netCDF4 google-cloud-bigquery pyarrow scikit-learn h5py
-          sudo apt-get install -y ncompress
+          # apt retries: run 43027362931 lost all 7 fetch jobs when the runner
+          # could not resolve the Ubuntu mirrors for ~1.5 min.
+          for i in 1 2 3; do
+            sudo apt-get install -y -o Acquire::Retries=3 ncompress && break
+            if [ "$i" = 3 ]; then echo '::error::apt-get install failed 3 times'; exit 1; fi
+            echo "apt-get install failed (attempt $i), retrying in 60 s"; sleep 60
+            sudo apt-get update || true
+          done
 
       - name: Restore previous database checkpoint
         id: restore
@@ -627,7 +634,14 @@ jobs:
       - name: Install dependencies
         run: |
           pip install aiohttp aiosqlite numpy scipy netCDF4 google-cloud-bigquery pyarrow scikit-learn h5py
-          sudo apt-get install -y ncompress
+          # apt retries: run 43027362931 lost all 7 fetch jobs when the runner
+          # could not resolve the Ubuntu mirrors for ~1.5 min.
+          for i in 1 2 3; do
+            sudo apt-get install -y -o Acquire::Retries=3 ncompress && break
+            if [ "$i" = 3 ]; then echo '::error::apt-get install failed 3 times'; exit 1; fi
+            echo "apt-get install failed (attempt $i), retrying in 60 s"; sleep 60
+            sudo apt-get update || true
+          done
 
       - name: Restore previous database checkpoint
         id: restore
@@ -1067,8 +1081,15 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ncompress libhdf4-dev
+          sudo apt-get update || true
+          # apt retries: run 43027362931 lost all 7 fetch jobs when the runner
+          # could not resolve the Ubuntu mirrors for ~1.5 min.
+          for i in 1 2 3; do
+            sudo apt-get install -y -o Acquire::Retries=3 ncompress libhdf4-dev && break
+            if [ "$i" = 3 ]; then echo '::error::apt-get install failed 3 times'; exit 1; fi
+            echo "apt-get install failed (attempt $i), retrying in 60 s"; sleep 60
+            sudo apt-get update || true
+          done
           pip install aiohttp aiosqlite numpy scipy netCDF4 google-cloud-bigquery pyarrow scikit-learn h5py pyhdf earthaccess
 
       - name: Restore previous database checkpoint
@@ -1526,7 +1547,14 @@ jobs:
       - name: Install dependencies
         run: |
           pip install aiohttp aiosqlite numpy scipy netCDF4 google-cloud-bigquery pyarrow scikit-learn h5py
-          sudo apt-get install -y ncompress
+          # apt retries: run 43027362931 lost all 7 fetch jobs when the runner
+          # could not resolve the Ubuntu mirrors for ~1.5 min.
+          for i in 1 2 3; do
+            sudo apt-get install -y -o Acquire::Retries=3 ncompress && break
+            if [ "$i" = 3 ]; then echo '::error::apt-get install failed 3 times'; exit 1; fi
+            echo "apt-get install failed (attempt $i), retrying in 60 s"; sleep 60
+            sudo apt-get update || true
+          done
 
       - name: Restore previous database checkpoint
         id: restore
@@ -2005,7 +2033,14 @@ jobs:
       - name: Install dependencies
         run: |
           pip install aiohttp aiosqlite numpy scipy netCDF4 google-cloud-bigquery pyarrow scikit-learn h5py
-          sudo apt-get install -y ncompress
+          # apt retries: run 43027362931 lost all 7 fetch jobs when the runner
+          # could not resolve the Ubuntu mirrors for ~1.5 min.
+          for i in 1 2 3; do
+            sudo apt-get install -y -o Acquire::Retries=3 ncompress && break
+            if [ "$i" = 3 ]; then echo '::error::apt-get install failed 3 times'; exit 1; fi
+            echo "apt-get install failed (attempt $i), retrying in 60 s"; sleep 60
+            sudo apt-get update || true
+          done
       - name: Restore previous database checkpoint
         id: restore
         continue-on-error: true
@@ -2483,7 +2518,14 @@ jobs:
       - name: Install dependencies
         run: |
           pip install aiohttp aiosqlite numpy scipy netCDF4 google-cloud-bigquery pyarrow scikit-learn h5py viresclient
-          sudo apt-get install -y ncompress
+          # apt retries: run 43027362931 lost all 7 fetch jobs when the runner
+          # could not resolve the Ubuntu mirrors for ~1.5 min.
+          for i in 1 2 3; do
+            sudo apt-get install -y -o Acquire::Retries=3 ncompress && break
+            if [ "$i" = 3 ]; then echo '::error::apt-get install failed 3 times'; exit 1; fi
+            echo "apt-get install failed (attempt $i), retrying in 60 s"; sleep 60
+            sudo apt-get update || true
+          done
 
       - name: Restore previous database checkpoint
         id: restore
@@ -3237,7 +3279,14 @@ jobs:
       - name: Install dependencies
         run: |
           pip install aiohttp aiosqlite numpy scipy netCDF4 google-cloud-bigquery pyarrow scikit-learn h5py
-          sudo apt-get install -y ncompress
+          # apt retries: run 43027362931 lost all 7 fetch jobs when the runner
+          # could not resolve the Ubuntu mirrors for ~1.5 min.
+          for i in 1 2 3; do
+            sudo apt-get install -y -o Acquire::Retries=3 ncompress && break
+            if [ "$i" = 3 ]; then echo '::error::apt-get install failed 3 times'; exit 1; fi
+            echo "apt-get install failed (attempt $i), retrying in 60 s"; sleep 60
+            sudo apt-get update || true
+          done
 
       - name: Restore previous database checkpoint
         id: restore
@@ -4259,49 +4308,10 @@ jobs:
           urllib.request.urlopen(req)
           "
 
-      # Auto-rerun failed fetch jobs at most ONCE (run_attempt==1 guard prevents
-      # infinite loops). Only for scheduled runs -- manual dispatch stays manual.
-      # Does not re-run on cancellations (concurrency-cancelled runs shouldn't
-      # auto-revive; they'll be covered by the next schedule tick).
-      - name: Auto-rerun failed fetch jobs (max 1 attempt)
-        if: >-
-          always()
-          && github.event_name == 'schedule'
-          && github.run_attempt == 1
-          && (
-            needs.fetch-modis.result == 'failure'
-            || needs.fetch-so2.result == 'failure'
-            || needs.fetch-cloud.result == 'failure'
-            || needs.fetch-snet.result == 'failure'
-            || needs.fetch-hinet.result == 'failure'
-            || needs.fetch-gnss.result == 'failure'
-            || needs.light.result == 'failure'
-          )
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash {0}
-        run: |
-          set +e
-          echo "Auto-rerunning failed fetch jobs (run_id=${{ github.run_id }}, attempt=${{ github.run_attempt }})"
-          echo "  fetch-modis result: ${{ needs.fetch-modis.result }}"
-          echo "  fetch-so2 result:   ${{ needs.fetch-so2.result }}"
-          echo "  fetch-cloud result: ${{ needs.fetch-cloud.result }}"
-          echo "  fetch-snet result:  ${{ needs.fetch-snet.result }}"
-          echo "  fetch-hinet result: ${{ needs.fetch-hinet.result }}"
-          echo "  fetch-gnss result:  ${{ needs.fetch-gnss.result }}"
-          echo "  light result:       ${{ needs.light.result }}"
-          OUT=$(timeout 30 gh api -X POST \
-            "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/rerun-failed-jobs" \
-            2>&1)
-          rc=$?
-          echo "API response: ${OUT}"
-          if [ $rc -eq 0 ]; then
-            echo "Rerun dispatched successfully"
-          elif [ $rc -eq 124 ]; then
-            echo "::warning::Auto-rerun API call TIMEOUT (rc=124, 30s exceeded)"
-          else
-            echo "::warning::Auto-rerun API call failed (rc=${rc})"
-          fi
+      # The auto-rerun of failed fetch jobs lives in backfill-rerun.yml
+      # (workflow_run trigger): called from inside this still-running run,
+      # the rerun API answers 403 'This workflow is already running'
+      # (run 43027362931), so it never took effect from here.
 
       # Skip issue creation on schedule run_attempt == 1 because auto-rerun
       # will kick in -- but that holds only for the failures auto-rerun
