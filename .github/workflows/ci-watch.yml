@@ -21,7 +21,7 @@ permissions:
 jobs:
   watch:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Check backfill and canonical freshness
         env:
@@ -32,16 +32,25 @@ jobs:
           MAX_NO_SUCCESS_HOURS: '24'
         run: |
           python3 - <<'EOF'
-          import json, os, urllib.request
+          import json, os, time, urllib.request
           from datetime import datetime, timezone
 
           now = datetime.now(timezone.utc)
           UA = {'User-Agent': 'geohazard-ci-watch/1.0'}
 
-          def get(url, headers=None):
+          def get(url, headers=None, tries=3, wait=30):
+              # Retry transient errors (run on 2026-11-11 got one HTTPError from
+              # Hugging Face); only a failure on every attempt is reported.
               h = dict(UA, **(headers or {}))
-              with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=60) as r:
-                  return json.load(r)
+              for i in range(tries):
+                  try:
+                      with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=30) as r:
+                          return json.load(r)
+                  except Exception as e:
+                      print(f'{url}: attempt {i + 1} failed ({type(e).__name__})')
+                      if i == tries - 1:
+                          raise
+                      time.sleep(wait)
 
           def ts(s):
               return datetime.fromisoformat(s.replace('Z', '+00:00'))
