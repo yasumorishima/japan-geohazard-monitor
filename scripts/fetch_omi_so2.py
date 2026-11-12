@@ -48,12 +48,21 @@ from earthdata_auth import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# GES DISC OPeNDAP for OMSO2G (OMI Level 2G daily gridded, 0.25° grid)
+# OMSO2G (OMI Level 2G daily gridded, 0.25 deg grid, 2004-present)
 # OMSO2e was removed from GES DISC; OMSO2G is the replacement (2004-present)
 # V003 archive froze ~2025-06; V004 is the live continuation to present
-# (identical 0.25-deg 720x1440 grid + ColumnAmountSO2 variable, verified via OPeNDAP .dds)
-# Note: GES DISC requires URS redirect + Basic Auth (Bearer returns 401)
-GESDISC_OPENDAP = "https://acdisc.gesdisc.eosdis.nasa.gov/opendap/HDF-EOS5/Aura_OMI_Level2G/OMSO2G.004"
+# (identical 0.25-deg 720x1440 grid + ColumnAmountSO2 variable)
+#
+# GES DISC retired its on-premises OPeNDAP (acdisc.gesdisc.eosdis.nasa.gov/opendap/
+# answers HTTP 410 "Service Permanently Retired", seen 2026-11-13). The same granules
+# are served by Earthdata Cloud OPeNDAP, which accepts the Bearer token. Granule URLs
+# are not guessable (the file name carries a reprocessing timestamp), so they are
+# looked up in CMR (public, no auth): RelatedUrls Type "USE SERVICE API",
+# Subtype "OPENDAP DATA".
+CMR_GRANULES = "https://cmr.earthdata.nasa.gov/search/granules.umm_json"
+OMSO2G_COLLECTION = "C3685693295-GES_DISC"  # OMSO2G.004 (GES_DISC, cloud)
+# Cloud OPeNDAP keeps the HDF-EOS5 group path; the on-prem server flattened it.
+SO2_VAR = "/HDFEOS/GRIDS/OMI_Total_Column_Amount_SO2/Data_Fields/ColumnAmountSO2_PBL"
 
 # Japan bbox in grid indices (0.25° resolution)
 # Lat: -89.875 to 89.875 (720 cells), Lon: -179.875 to 179.875 (1440 cells)
@@ -90,84 +99,87 @@ async def init_so2_table():
         await db.commit()
 
 
-# Year-level cache for contents.html (same year = same listing)
-_contents_cache: dict[int, str] = {}
+# Year-level cache: date "YYYY-MM-DD" -> cloud OPeNDAP granule URL
+_granule_cache: dict[int, dict[str, str]] = {}
+_GRANULE_DATE = re.compile(r"OMSO2G_(\d{4})m(\d{2})(\d{2})_")
 
 
-async def _get_contents_html(year: int) -> str | None:
-    """Fetch and cache contents.html for a given year (public, no auth)."""
-    if year in _contents_cache:
-        return _contents_cache[year]
+async def _get_year_granules(year: int) -> dict[str, str] | None:
+    """Look up one year of OMSO2G granules in CMR (public, no auth) and cache them."""
+    if year in _granule_cache:
+        return _granule_cache[year] or None
 
-    contents_url = f"{GESDISC_OPENDAP}/{year}/contents.html"
+    params = {
+        "collection_concept_id": OMSO2G_COLLECTION,
+        "temporal": f"{year}-01-01T00:00:00Z,{year}-12-31T23:59:59Z",
+        "page_size": "2000",
+    }
+    found: dict[str, tuple[str, str]] = {}  # date -> (GranuleUR, url)
+    headers: dict[str, str] = {}
     try:
         async with aiohttp.ClientSession() as plain_session:
-            async with plain_session.get(contents_url, timeout=TIMEOUT) as resp:
-                if resp.status != 200:
-                    logger.info("SO2 contents %d: HTTP %d (expected 200)", year, resp.status)
-                    _contents_cache[year] = ""
-                    return None
-                text = await resp.text()
-        if not text:
-            logger.info("SO2 contents %d: empty response", year)
-            _contents_cache[year] = ""
-            return None
-        _contents_cache[year] = text
-        logger.info("SO2 contents %d: cached (%d bytes)", year, len(text))
-        return text
+            while True:
+                async with plain_session.get(
+                    CMR_GRANULES, params=params, headers=headers, timeout=TIMEOUT,
+                ) as resp:
+                    if resp.status != 200:
+                        logger.info("SO2 CMR %d: HTTP %d (expected 200)", year, resp.status)
+                        return None  # not cached: a transient CMR error is retried next date
+                    data = await resp.json(content_type=None)
+                    search_after = resp.headers.get("CMR-Search-After")
+                items = data.get("items") or []
+                for item in items:
+                    umm = item.get("umm", {})
+                    ur = umm.get("GranuleUR", "")
+                    m = _GRANULE_DATE.search(ur)
+                    if not m:
+                        continue
+                    url = next(
+                        (r.get("URL") for r in umm.get("RelatedUrls", [])
+                         if r.get("Type") == "USE SERVICE API"
+                         and r.get("Subtype") == "OPENDAP DATA"
+                         and str(r.get("URL", "")).startswith("https://opendap.earthdata.nasa.gov/")),
+                        None,
+                    )
+                    if not url:
+                        continue
+                    d = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+                    # Several revisions of one day: keep the latest (UR sorts by revision stamp)
+                    if d not in found or ur > found[d][0]:
+                        found[d] = (ur, url)
+                if not search_after or len(items) < int(params["page_size"]):
+                    break
+                headers = {"CMR-Search-After": search_after}
     except Exception as e:
-        logger.info("SO2 contents %d: %s: %s", year, type(e).__name__, e)
+        logger.info("SO2 CMR %d: %s: %s", year, type(e).__name__, e)
         return None
 
-
-async def _resolve_so2_filename(session: aiohttp.ClientSession, year: int, date_str: str) -> str | None:
-    """Resolve OMSO2G filename from OPeNDAP contents listing.
-
-    OMSO2G files are stored directly under year/ (no DOY subdirectory).
-    Filename: OMI-Aura_L2G-OMSO2G_{YYYY}m{MMDD}_v004-{revision}.he5
-    """
-
-    mmdd = date_str[5:7] + date_str[8:10]  # "2024-01-15" -> "0115"
-    pattern_str = f"OMI-Aura_L2G-OMSO2G_{year}m{mmdd}"
-
-    text = await _get_contents_html(year)
-    if not text:
-        return None
-    match = re.search(rf'({re.escape(pattern_str)}[^"<\s]*\.he5)', text)
-    if match:
-        return match.group(1)
-
-    # Diagnostic — when the regex misses, dump enough info to see why.
-    # Emitted at most once per year to keep logs reasonable.
-    flag = f"_diag_resolve_{year}"
-    if not getattr(_resolve_so2_filename, flag, False):
-        setattr(_resolve_so2_filename, flag, True)
-        he5_count = text.count(".he5")
-        # Find any OMSO2G file in this year to see the actual naming convention
-        any_match = re.search(r'(OMI-Aura_L2G-OMSO2G_\d+m\d+[^"<\s]*\.he5)', text)
-        sample = any_match.group(1) if any_match else "(none)"
-        # Find a prefix match (same year + month) to see if only the day mismatches
-        mm = date_str[5:7]
-        month_match = re.search(
-            rf'(OMI-Aura_L2G-OMSO2G_{year}m{mm}\d+[^"<\s]*\.he5)', text,
-        )
-        month_sample = month_match.group(1) if month_match else "(none)"
-        logger.warning(
-            "SO2 %s: no match for pattern=%s. contents.html has %d .he5 files. "
-            "any OMSO2G sample=%s. same-year-month sample=%s. len(text)=%d",
-            date_str, pattern_str, he5_count, sample, month_sample, len(text),
-        )
+    _granule_cache[year] = {d: v[1] for d, v in found.items()}
+    if found:
+        logger.info("SO2 CMR %d: %d granules with cloud OPeNDAP URLs", year, len(found))
     else:
-        logger.info("SO2 %s: no filename match for pattern %s", date_str, pattern_str)
-    return None
+        logger.warning("SO2 CMR %d: 0 granules with cloud OPeNDAP URLs in %s "
+                       "(collection retired or moved?)", year, OMSO2G_COLLECTION)
+    return _granule_cache[year] or None
+
+
+async def _resolve_so2_url(year: int, date_str: str) -> str | None:
+    """Return the cloud OPeNDAP URL of the OMSO2G granule for date_str, or None."""
+    granules = await _get_year_granules(year)
+    if not granules:
+        return None
+    url = granules.get(date_str)
+    if not url:
+        logger.info("SO2 %s: no OMSO2G granule in CMR", date_str)
+    return url
 
 
 async def fetch_so2_day(session: aiohttp.ClientSession, date: datetime) -> list[dict]:
-    """Fetch SO2 column data for one day via GES DISC OPeNDAP.
+    """Fetch SO2 column data for one day via Earthdata Cloud OPeNDAP.
 
     Uses OMSO2G (Level 2G gridded, 0.25° grid, nCandidate=15).
     nCandidate[0] = best pixel per grid cell.
-    GES DISC requires URS Basic Auth redirect (Bearer returns 401).
+    Cloud OPeNDAP accepts the Bearer token (earthdata_fetch tries it first).
     """
     has_auth = (EARTHDATA_USERNAME and EARTHDATA_PASSWORD) or EARTHDATA_TOKEN
     if not has_auth:
@@ -177,16 +189,16 @@ async def fetch_so2_day(session: aiohttp.ClientSession, date: datetime) -> list[
     date_str = date.strftime("%Y-%m-%d")
     year = date.year
 
-    # Resolve filename (contains variable revision timestamp)
-    exact_filename = await _resolve_so2_filename(session, year, date_str)
-    if not exact_filename:
+    # Resolve the granule URL (file name carries a reprocessing timestamp)
+    granule_url = await _resolve_so2_url(year, date_str)
+    if not granule_url:
         return []
 
     # OPeNDAP ASCII: fetch best pixel (nCandidate=0) for Japan bbox
     # OMSO2G is 3D: [nCandidate=15][YDim=720][XDim=1440]
     url = (
-        f"{GESDISC_OPENDAP}/{year}/{exact_filename}.ascii"
-        f"?ColumnAmountSO2_PBL"
+        f"{granule_url}.ascii"
+        f"?{SO2_VAR}"
         f"[0:0][{LAT_START}:{LAT_END}][{LON_START}:{LON_END}]"
     )
 
@@ -201,6 +213,7 @@ async def fetch_so2_day(session: aiohttp.ClientSession, date: datetime) -> list[
                         logger.info("SO2 %s: got HTML instead of ASCII (len=%d, preview=%s)",
                                     date_str, len(text) if text else 0, repr((text or "")[:100]))
                     return []
+                fetch_so2_day.auth_failures = 0
                 rows = _parse_opendap_ascii(text, date_str)
                 if not rows and not hasattr(fetch_so2_day, '_empty_warned'):
                     fetch_so2_day._empty_warned = True
@@ -208,6 +221,9 @@ async def fetch_so2_day(session: aiohttp.ClientSession, date: datetime) -> list[
                                 date_str, len(text), repr(text[:200]))
                 return rows
             elif status in (401, 403):
+                # Cloud OPeNDAP needs a working Bearer token: the Basic-auth
+                # fallback ends in 401 there (measured 2026-11-13).
+                fetch_so2_day.auth_failures = getattr(fetch_so2_day, "auth_failures", 0) + 1
                 if not hasattr(fetch_so2_day, '_auth_warned'):
                     fetch_so2_day._auth_warned = True
                     logger.info("SO2 %s: auth failed (HTTP %d) — credentials may be invalid for GES DISC",
@@ -376,6 +392,15 @@ async def main():
     try:
         for i, date in enumerate(dates_to_fetch):
             rows = await fetch_so2_day(session, date)
+            if getattr(fetch_so2_day, "auth_failures", 0) >= 3:
+                logger.warning(
+                    "SO2: stopping after 3 consecutive auth failures (HTTP 401/403; a "
+                    "Bearer timeout also ends here, via the Basic fallback). "
+                    "Earthdata Cloud OPeNDAP needs a working EARTHDATA_TOKEN; if the "
+                    "test-earthdata-auth run shows the token is live, this was slowness "
+                    "and the next run continues. Renew at https://urs.earthdata.nasa.gov/profile"
+                )
+                break
             if rows:
                 async with safe_connect() as db:
                     await db.executemany(
@@ -399,7 +424,7 @@ async def main():
         logger.info(
             "SO2 fetch complete: 0 records from %d dates. "
             "Likely cause: no OMI OMSO2G archive files exist for these dates "
-            "(if persistent, check Earthdata auth or the OMSO2G.004 listing for these dates). "
+            "(if persistent, check Earthdata auth or the OMSO2G.004 granules in CMR for these dates). "
             "If auth failed, 'auth failed (HTTP 401/403)' entries appear in the INFO logs above.",
             len(dates_to_fetch),
         )
