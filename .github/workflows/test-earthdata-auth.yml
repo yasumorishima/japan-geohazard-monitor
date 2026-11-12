@@ -52,11 +52,10 @@ jobs:
               session = await get_earthdata_session()
               try:
                   # Step 1: Raw fetch to see actual data format
+                  # Earthdata Cloud OPeNDAP (the on-prem GES DISC OPeNDAP answers 410 since 2026-11)
                   url = (
-                      'https://acdisc.gesdisc.eosdis.nasa.gov/opendap/HDF-EOS5/'
-                      'Aura_OMI_Level2G/OMSO2G.004/2024/'
-                      'OMI-Aura_L2G-OMSO2G_2024m0101_v004-2025m0904t091514.he5.ascii'
-                      '?ColumnAmountSO2_PBL[0:0][455:543][1207:1319]'
+                      'https://opendap.earthdata.nasa.gov/collections/C3685693295-GES_DISC/granules/OMSO2G.004%3AOMI-Aura_L2G-OMSO2G_2024m0101_v004-2025m0904t091514.he5.ascii'
+                      '?/HDFEOS/GRIDS/OMI_Total_Column_Amount_SO2/Data_Fields/ColumnAmountSO2_PBL[0:0][455:543][1207:1319]'
                   )
                   status, text = await earthdata_fetch(session, url, timeout=aiohttp.ClientTimeout(total=60))
                   print(f'Raw fetch: HTTP {status}, len={len(text)}')
@@ -135,10 +134,8 @@ jobs:
           async def test():
               session = await get_earthdata_session()
               url = (
-                  'https://acdisc.gesdisc.eosdis.nasa.gov/opendap/HDF-EOS5/'
-                  'Aura_OMI_Level2G/OMSO2G.004/2024/'
-                  'OMI-Aura_L2G-OMSO2G_2024m0101_v004-2025m0904t091514.he5.ascii'
-                  '?ColumnAmountSO2_PBL[0:0][500:500][1250:1250]'
+                  'https://opendap.earthdata.nasa.gov/collections/C3685693295-GES_DISC/granules/OMSO2G.004%3AOMI-Aura_L2G-OMSO2G_2024m0101_v004-2025m0904t091514.he5.ascii'
+                  '?/HDFEOS/GRIDS/OMI_Total_Column_Amount_SO2/Data_Fields/ColumnAmountSO2_PBL[0:0][500:500][1250:1250]'
               )
               try:
                   results = []

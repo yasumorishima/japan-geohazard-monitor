@@ -1,9 +1,10 @@
 """Quick Earthdata credential validation test.
 
 Tests actual data access flows (not just API endpoints):
-1. LAADS DAAC file download with Bearer token (VIIRS/MODIS style)
-2. OPeNDAP redirect flow with Basic Auth (GES DISC SO2 style)
-3. CMR search API (no auth, just connectivity)
+1. LAADS DAAC content listing (connectivity only: this listing is public, it does not test auth)
+2. Earthdata Cloud OPeNDAP data subset with the Bearer token (SO2; rejects a missing/expired token)
+3. URS token list with Basic auth (tests the password; checks EARTHDATA_TOKEN is a live token)
+4. CMR search API (no auth, just connectivity)
 
 Run: python3 scripts/test_earthdata_auth.py
 Env: EARTHDATA_USERNAME, EARTHDATA_PASSWORD, EARTHDATA_TOKEN (optional)
@@ -38,7 +39,7 @@ async def main():
 
         # Test 1: LAADS DAAC with Bearer token
         # This is the actual flow used by VIIRS/MODIS cloud fraction fetchers
-        print("\n--- Test 1: LAADS DAAC Bearer Token ---")
+        print("\n--- Test 1: LAADS DAAC listing (public; connectivity only) ---")
         if token:
             try:
                 # Small MODIS file listing (not download)
@@ -73,117 +74,59 @@ async def main():
         else:
             print("SKIP: EARTHDATA_TOKEN not set")
 
-        # Test 2: GES DISC OPeNDAP actual data download (not catalog)
-        # Must test a real .ascii data URL, not contents.html (which is public)
-        print("\n--- Test 2: GES DISC OPeNDAP Data Download ---")
-        try:
-            # Actual SO2 data subset (single cell, tiny response)
-            test_url = (
-                "https://acdisc.gesdisc.eosdis.nasa.gov/opendap/HDF-EOS5/"
-                "Aura_OMI_Level2G/OMSO2G.003/2024/"
-                "OMI-Aura_L2G-OMSO2G_2024m0101_v003-2024m0103t164059.he5.ascii"
-                "?ColumnAmountSO2_PBL[0:0][500:500][1250:1250]"
-            )
-            # Try with Bearer first (expect redirect to URS)
-            headers_t2 = {"Authorization": f"Bearer {token}"} if token else {}
-            async with session.get(test_url, headers=headers_t2, allow_redirects=False, timeout=timeout) as resp:
-                print(f"Initial: HTTP {resp.status}")
-                if resp.status in (301, 302, 303, 307, 308):
-                    redirect_url = str(resp.headers.get("Location", ""))
-                    is_urs = "urs.earthdata" in redirect_url
-                    print(f"Redirect to URS: {is_urs}")
-                    if is_urs:
-                        # Use fresh session for Basic Auth (matches production flow)
-                        jar2 = aiohttp.CookieJar(unsafe=True)
-                        async with aiohttp.ClientSession(cookie_jar=jar2) as auth_session:
-                            async with auth_session.get(
-                                redirect_url, auth=auth,
-                                allow_redirects=True, timeout=timeout,
-                            ) as auth_resp:
-                                ct = auth_resp.headers.get("Content-Type", "")
-                                body = (await auth_resp.text())[:500]
-                                print(f"After auth: HTTP {auth_resp.status} CT={ct[:50]}")
-                                if auth_resp.status == 200:
-                                    if "<html" in body[:200].lower():
-                                        print("FAIL: Got HTML instead of data (EULA/access issue?)")
-                                        print(f"Preview: {body[:200]}")
-                                        ok = False
-                                    else:
-                                        print("PASS: Got ASCII data via OPeNDAP")
-                                        print(f"Preview: {body[:150]}")
-                                else:
-                                    print(f"FAIL: HTTP {auth_resp.status}")
-                                    print(f"Body: {body[:300]}")
-                                    ok = False
-                    else:
-                        print(f"Non-URS redirect: {redirect_url[:100]}")
-                elif resp.status == 200:
+        # Test 2: Earthdata Cloud OPeNDAP actual data download (not catalog)
+        # GES DISC retired its on-premises OPeNDAP (HTTP 410, seen 2026-11-13).
+        # Cloud OPeNDAP answers 403 for a bad/expired Bearer token and 302 with none,
+        # so a 200 with ASCII data proves the token works for SO2.
+        print("\n--- Test 2: Cloud OPeNDAP Data Download (Bearer) ---")
+        if token:
+            try:
+                test_url = (
+                    "https://opendap.earthdata.nasa.gov/collections/C3685693295-GES_DISC/granules/OMSO2G.004%3AOMI-Aura_L2G-OMSO2G_2024m0101_v004-2025m0904t091514.he5.ascii"
+                    "?/HDFEOS/GRIDS/OMI_Total_Column_Amount_SO2/Data_Fields/ColumnAmountSO2_PBL[0:0][500:500][1250:1250]"
+                )
+                headers_t2 = {"Authorization": f"Bearer {token}"}
+                async with session.get(test_url, headers=headers_t2, allow_redirects=False, timeout=timeout) as resp:
                     body = (await resp.text())[:500]
-                    if "<html" in body[:200].lower():
-                        print("FAIL: Got HTML instead of data (auth not applied?)")
-                        ok = False
-                    else:
-                        print("PASS: Direct access returned data")
+                    print(f"HTTP {resp.status}")
+                    if resp.status == 200 and body.startswith("Dataset:") and "ColumnAmountSO2_PBL" in body:
+                        print("PASS: Got ASCII data via cloud OPeNDAP")
                         print(f"Preview: {body[:150]}")
-                elif resp.status in (401, 403):
-                    print(f"FAIL: Auth rejected (HTTP {resp.status})")
-                    # Fall through to Basic Auth test below
-                    if username and password:
-                        print("Trying direct Basic Auth fallback...")
-                        jar3 = aiohttp.CookieJar(unsafe=True)
-                        async with aiohttp.ClientSession(cookie_jar=jar3) as fb_session:
-                            async with fb_session.get(test_url, timeout=timeout, allow_redirects=False) as fb_resp:
-                                if fb_resp.status in (301, 302, 303, 307, 308):
-                                    redir = str(fb_resp.headers.get("Location", ""))
-                                    async with fb_session.get(redir, auth=auth, allow_redirects=True, timeout=timeout) as fb_auth:
-                                        fb_body = (await fb_auth.text())[:500]
-                                        if fb_auth.status == 200 and "<html" not in fb_body[:200].lower():
-                                            print(f"PASS: BasicAuth fallback succeeded")
-                                            print(f"Preview: {fb_body[:150]}")
-                                        else:
-                                            print(f"FAIL: BasicAuth fallback HTTP {fb_auth.status}")
-                                            if "<html" in fb_body[:200].lower():
-                                                print(f"HTML preview: {fb_body[:200]}")
-                                            ok = False
-                                else:
-                                    print(f"FAIL: No redirect in fallback (HTTP {fb_resp.status})")
-                                    ok = False
                     else:
+                        print("FAIL: no ASCII data (403 = token rejected or expired, 302 = no token)")
+                        print(f"Body: {body[:200]}")
                         ok = False
-                elif resp.status == 404:
-                    print("WARN: Test file not found (not an auth issue, may need filename update)")
+            except Exception as e:
+                print(f"ERROR: {e}")
+                ok = False
+        else:
+            print("FAIL: EARTHDATA_TOKEN not set")
+            ok = False
+
+        # Test 3: URS token list (Basic auth = the account password)
+        # The token API does not accept a Bearer token (always 401); it needs Basic auth.
+        print("\n--- Test 3: URS Token API (Basic auth) ---")
+        try:
+            async with session.get(
+                "https://urs.earthdata.nasa.gov/api/users/tokens",
+                auth=auth, timeout=timeout,
+            ) as resp:
+                print(f"HTTP {resp.status}")
+                if resp.status == 200:
+                    data = await resp.json(content_type=None)
+                    print(f"PASS: password accepted, account has {len(data)} token(s)")
+                    mine = [t for t in data if token and t.get("access_token") == token]
+                    if mine:
+                        print(f"PASS: EARTHDATA_TOKEN is a live token, expires {mine[0].get('expiration_date', 'unknown')}")
+                    else:
+                        print("FAIL: EARTHDATA_TOKEN is not among the account's live tokens (expired or replaced)")
+                        ok = False
                 else:
-                    body = (await resp.text())[:300]
-                    print(f"UNEXPECTED HTTP {resp.status}: {body}")
+                    print("FAIL: password rejected by the token API")
+                    ok = False
         except Exception as e:
             print(f"ERROR: {e}")
             ok = False
-
-        # Test 3: Earthdata token via profile API (Bearer)
-        print("\n--- Test 3: URS Token API ---")
-        if token:
-            try:
-                async with session.get(
-                    "https://urs.earthdata.nasa.gov/api/users/tokens",
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=timeout,
-                ) as resp:
-                    print(f"HTTP {resp.status}")
-                    if resp.status == 200:
-                        data = await resp.json()
-                        print(f"Token count: {len(data)}")
-                        if data:
-                            exp = data[0].get("expiration_date", "unknown")
-                            print(f"Expiration: {exp}")
-                        print("PASS: Bearer token valid")
-                    else:
-                        body = (await resp.text())[:300]
-                        print(f"INFO: HTTP {resp.status} (API may require different auth)")
-                        print(f"Body: {body}")
-            except Exception as e:
-                print(f"ERROR: {e}")
-        else:
-            print("SKIP: No token")
 
         # Test 4: CMR API (no auth, connectivity check)
         print("\n--- Test 4: CMR API (no auth) ---")
