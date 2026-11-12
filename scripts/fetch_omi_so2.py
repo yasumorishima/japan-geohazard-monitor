@@ -394,9 +394,11 @@ async def main():
             rows = await fetch_so2_day(session, date)
             if getattr(fetch_so2_day, "auth_failures", 0) >= 3:
                 logger.warning(
-                    "SO2: stopping after 3 consecutive auth failures (HTTP 401/403). "
-                    "Earthdata Cloud OPeNDAP needs a working EARTHDATA_TOKEN; "
-                    "renew it at https://urs.earthdata.nasa.gov/profile"
+                    "SO2: stopping after 3 consecutive auth failures (HTTP 401/403; a "
+                    "Bearer timeout also ends here, via the Basic fallback). "
+                    "Earthdata Cloud OPeNDAP needs a working EARTHDATA_TOKEN; if the "
+                    "test-earthdata-auth run shows the token is live, this was slowness "
+                    "and the next run continues. Renew at https://urs.earthdata.nasa.gov/profile"
                 )
                 break
             if rows:
