@@ -140,6 +140,9 @@ def _date_from_filename(fname: str):
         return None
 
 
+LOGIN_RETRIES = 3
+
+
 async def main():
     await init_cloud_table()
     await init_db()
@@ -151,7 +154,23 @@ async def main():
         )
         return
 
-    auth = earthaccess.login(strategy="environment")
+    # urs.earthdata.nasa.gov sometimes answers 5xx for a few minutes
+    # (run 43235828222: 502 Bad Gateway on /profile inside login); retry,
+    # then skip this run instead of crashing the step.
+    auth = None
+    for attempt in range(1, LOGIN_RETRIES + 1):
+        try:
+            auth = earthaccess.login(strategy="environment")
+            break
+        except Exception as e:
+            if attempt == LOGIN_RETRIES:
+                logger.warning(
+                    "earthaccess login: %s after %d attempts; skipping this run",
+                    type(e).__name__, attempt,
+                )
+                return
+            logger.info("earthaccess login: %s, retrying", type(e).__name__)
+            await asyncio.sleep(30 * attempt)
     if not getattr(auth, "authenticated", False):
         logger.error("earthaccess login failed; aborting")
         return
