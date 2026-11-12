@@ -155,7 +155,11 @@ async def _get_year_granules(year: int) -> dict[str, str] | None:
         return None
 
     _granule_cache[year] = {d: v[1] for d, v in found.items()}
-    logger.info("SO2 CMR %d: %d granules with cloud OPeNDAP URLs", year, len(found))
+    if found:
+        logger.info("SO2 CMR %d: %d granules with cloud OPeNDAP URLs", year, len(found))
+    else:
+        logger.warning("SO2 CMR %d: 0 granules with cloud OPeNDAP URLs in %s "
+                       "(collection retired or moved?)", year, OMSO2G_COLLECTION)
     return _granule_cache[year] or None
 
 
@@ -209,6 +213,7 @@ async def fetch_so2_day(session: aiohttp.ClientSession, date: datetime) -> list[
                         logger.info("SO2 %s: got HTML instead of ASCII (len=%d, preview=%s)",
                                     date_str, len(text) if text else 0, repr((text or "")[:100]))
                     return []
+                fetch_so2_day.auth_failures = 0
                 rows = _parse_opendap_ascii(text, date_str)
                 if not rows and not hasattr(fetch_so2_day, '_empty_warned'):
                     fetch_so2_day._empty_warned = True
@@ -216,6 +221,9 @@ async def fetch_so2_day(session: aiohttp.ClientSession, date: datetime) -> list[
                                 date_str, len(text), repr(text[:200]))
                 return rows
             elif status in (401, 403):
+                # Cloud OPeNDAP needs a working Bearer token: the Basic-auth
+                # fallback ends in 401 there (measured 2026-11-13).
+                fetch_so2_day.auth_failures = getattr(fetch_so2_day, "auth_failures", 0) + 1
                 if not hasattr(fetch_so2_day, '_auth_warned'):
                     fetch_so2_day._auth_warned = True
                     logger.info("SO2 %s: auth failed (HTTP %d) — credentials may be invalid for GES DISC",
@@ -384,6 +392,13 @@ async def main():
     try:
         for i, date in enumerate(dates_to_fetch):
             rows = await fetch_so2_day(session, date)
+            if getattr(fetch_so2_day, "auth_failures", 0) >= 3:
+                logger.warning(
+                    "SO2: stopping after 3 consecutive auth failures (HTTP 401/403). "
+                    "Earthdata Cloud OPeNDAP needs a working EARTHDATA_TOKEN; "
+                    "renew it at https://urs.earthdata.nasa.gov/profile"
+                )
+                break
             if rows:
                 async with safe_connect() as db:
                     await db.executemany(

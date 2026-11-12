@@ -2,14 +2,17 @@
 
 Tests actual data access flows (not just API endpoints):
 1. LAADS DAAC content listing (connectivity only: this listing is public, it does not test auth)
-2. Earthdata Cloud OPeNDAP data subset with the Bearer token (SO2; rejects a missing/expired token)
+2. Earthdata Cloud OPeNDAP data subset with the Bearer token (SO2; 403 for a bad/expired token)
 3. URS token list with Basic auth (tests the password; checks EARTHDATA_TOKEN is a live token)
+The exit code fails only when neither the token nor the password works (it gates
+several fetchers, some of which use the password only); one-sided problems warn.
 4. CMR search API (no auth, just connectivity)
 
 Run: python3 scripts/test_earthdata_auth.py
 Env: EARTHDATA_USERNAME, EARTHDATA_PASSWORD, EARTHDATA_TOKEN (optional)
 """
 import asyncio
+import json
 import os
 import sys
 
@@ -74,58 +77,97 @@ async def main():
         else:
             print("SKIP: EARTHDATA_TOKEN not set")
 
+        # Tests 2 and 3 decide the exit code together: it gates SO2, cloud,
+        # ISS LIS, WWLLN, LIS/OTD and nightlight in backfill.yml / analysis.yml.
+        # Some of those log in with the password only, and earthdata_fetch falls
+        # back from a rejected token to Basic auth, so the run fails only when
+        # NEITHER the token NOR the password works. One-sided problems warn.
+        token_ok = None     # None = not tested / inconclusive
+        password_ok = None
+
+        async def _get_with_retry(url, **kw):
+            """GET with 3 tries on 5xx / network errors. Returns (status, text)."""
+            last = None
+            for attempt in range(1, 4):
+                try:
+                    async with session.get(url, timeout=timeout, **kw) as resp:
+                        text = await resp.text()
+                        if resp.status < 500:
+                            return resp.status, text
+                        last = (resp.status, text)
+                except Exception as e:
+                    last = (None, f"{type(e).__name__}: {e}")
+                if attempt < 3:
+                    await asyncio.sleep(5 * attempt)
+            return last
+
         # Test 2: Earthdata Cloud OPeNDAP actual data download (not catalog)
         # GES DISC retired its on-premises OPeNDAP (HTTP 410, seen 2026-11-13).
         # Cloud OPeNDAP answers 403 for a bad/expired Bearer token and 302 with none,
         # so a 200 with ASCII data proves the token works for SO2.
         print("\n--- Test 2: Cloud OPeNDAP Data Download (Bearer) ---")
         if token:
-            try:
-                test_url = (
+            test_url = (
                     "https://opendap.earthdata.nasa.gov/collections/C3685693295-GES_DISC/granules/OMSO2G.004%3AOMI-Aura_L2G-OMSO2G_2024m0101_v004-2025m0904t091514.he5.ascii"
                     "?/HDFEOS/GRIDS/OMI_Total_Column_Amount_SO2/Data_Fields/ColumnAmountSO2_PBL[0:0][500:500][1250:1250]"
-                )
-                headers_t2 = {"Authorization": f"Bearer {token}"}
-                async with session.get(test_url, headers=headers_t2, allow_redirects=False, timeout=timeout) as resp:
-                    body = (await resp.text())[:500]
-                    print(f"HTTP {resp.status}")
-                    if resp.status == 200 and body.startswith("Dataset:") and "ColumnAmountSO2_PBL" in body:
-                        print("PASS: Got ASCII data via cloud OPeNDAP")
-                        print(f"Preview: {body[:150]}")
-                    else:
-                        print("FAIL: no ASCII data (403 = token rejected or expired, 302 = no token)")
-                        print(f"Body: {body[:200]}")
-                        ok = False
-            except Exception as e:
-                print(f"ERROR: {e}")
-                ok = False
+            )
+            status, body = await _get_with_retry(
+                test_url, headers={"Authorization": f"Bearer {token}"}, allow_redirects=False,
+            )
+            print(f"HTTP {status}")
+            if status == 200 and body.startswith("Dataset:") and "ColumnAmountSO2_PBL" in body:
+                print("PASS: Got ASCII data via cloud OPeNDAP")
+                print(f"Preview: {body[:150]}")
+                token_ok = True
+            elif status in (302, 401, 403):
+                print("FAIL: token rejected or expired (403) / not applied (302)")
+                token_ok = False
+            elif status == 404:
+                print("WARN: test granule not found (reprocessed?) -- inconclusive, not an auth failure")
+            else:
+                print(f"WARN: inconclusive ({status}): {body[:200]}")
         else:
-            print("FAIL: EARTHDATA_TOKEN not set")
-            ok = False
+            print("SKIP: EARTHDATA_TOKEN not set")
+            token_ok = False
 
         # Test 3: URS token list (Basic auth = the account password)
         # The token API does not accept a Bearer token (always 401); it needs Basic auth.
         print("\n--- Test 3: URS Token API (Basic auth) ---")
-        try:
-            async with session.get(
-                "https://urs.earthdata.nasa.gov/api/users/tokens",
-                auth=auth, timeout=timeout,
-            ) as resp:
-                print(f"HTTP {resp.status}")
-                if resp.status == 200:
-                    data = await resp.json(content_type=None)
-                    print(f"PASS: password accepted, account has {len(data)} token(s)")
-                    mine = [t for t in data if token and t.get("access_token") == token]
-                    if mine:
-                        print(f"PASS: EARTHDATA_TOKEN is a live token, expires {mine[0].get('expiration_date', 'unknown')}")
-                    else:
-                        print("FAIL: EARTHDATA_TOKEN is not among the account's live tokens (expired or replaced)")
-                        ok = False
-                else:
-                    print("FAIL: password rejected by the token API")
-                    ok = False
-        except Exception as e:
-            print(f"ERROR: {e}")
+        status, body = await _get_with_retry(
+            "https://urs.earthdata.nasa.gov/api/users/tokens", auth=auth,
+        )
+        print(f"HTTP {status}")
+        if status == 200:
+            password_ok = True
+            try:
+                data = json.loads(body)
+            except ValueError:
+                data = []
+            print(f"PASS: password accepted, account has {len(data)} token(s)")
+            mine = [t for t in data if token and t.get("access_token") == token]
+            if mine:
+                print(f"PASS: EARTHDATA_TOKEN is a live token, expires {mine[0].get('expiration_date', 'unknown')}")
+            elif token:
+                print("WARN: EARTHDATA_TOKEN is not among the account's live tokens (expired or replaced)")
+                if token_ok is None:
+                    token_ok = False
+        elif status in (401, 403):
+            print("FAIL: password rejected by the token API")
+            password_ok = False
+        else:
+            print(f"WARN: inconclusive ({status}): {(body or '')[:200]}")
+
+        if token_ok is False:
+            print("::warning::EARTHDATA_TOKEN does not work (expired, replaced or unset). "
+                  "SO2 (cloud OPeNDAP) needs the token and will stop; password-based "
+                  "fetchers still run. Renew at https://urs.earthdata.nasa.gov/profile")
+        if password_ok is False:
+            print("::warning::EARTHDATA_PASSWORD was rejected by Earthdata Login")
+        if token_ok is False and password_ok is False:
+            print("FAIL: neither the token nor the password works")
+            ok = False
+        elif token_ok is None and password_ok is None:
+            print("FAIL: auth could not be confirmed either way (both tests inconclusive)")
             ok = False
 
         # Test 4: CMR API (no auth, connectivity check)
