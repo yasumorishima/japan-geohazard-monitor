@@ -171,7 +171,10 @@ async def fetch_swpc_recent(session: aiohttp.ClientSession) -> list[dict]:
                     break
                 else:
                     logger.warning("SWPC proton: HTTP %d (attempt %d)", resp.status, attempt)
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
+            # ValueError covers json.JSONDecodeError: SWPC sometimes serves a
+            # body with trailing extra data while the file is being rewritten
+            # (run 43154675200); retry instead of crashing the step.
             if attempt == MAX_RETRIES:
                 logger.warning("SWPC proton: %s", type(e).__name__)
                 return []
