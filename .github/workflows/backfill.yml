@@ -599,6 +599,12 @@ jobs:
       restore_restored: ${{ steps.restore.outputs.restored }}
 
     steps:
+      # The SO2 fetch budget is measured from here: a full-checkpoint restore
+      # can take most of the 120-min job, and the snapshot/extract/upload steps
+      # after the fetch need their time too.
+      - name: Record job start
+        run: echo "SO2_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
       # Free ~30GB of pre-installed software we never use. The 2026-05-28
       # 15:00 UTC full-schedule run hit "no space left on device" while
       # expanding the 17GB checkpoint into /tmp/db-restore; so2/modis/cloud/
@@ -761,9 +767,10 @@ jobs:
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
                   continue
                 fi
-                # so2_fetch_log (added 2026-11-13) is absent from overlays made before it
-                # existed: only the first owned table must exist; absent later tables count 0.
-                OVL_ROWS=$(timeout 120 python3 -c "import sqlite3; c=sqlite3.connect('data/geohazard.db'); t='''${OWN_TABLES}'''.split(); n={r[0] for r in c.execute('SELECT name FROM sqlite_master WHERE type=?', ('table',))}; print(0 if t[0] not in n else sum(c.execute('SELECT COUNT(*) FROM '+x).fetchone()[0] for x in t if x in n))" 2>/dev/null)
+                # Only the data table (first owned table) must hold rows. so2_fetch_log
+                # (added 2026-11-13) is absent from overlays made before it existed and
+                # must not make an overlay with an empty so2_column acceptable.
+                OVL_ROWS=$(timeout 120 python3 -c "import sqlite3; c=sqlite3.connect('data/geohazard.db'); t='''${OWN_TABLES}'''.split(); n={r[0] for r in c.execute('SELECT name FROM sqlite_master WHERE type=?', ('table',))}; print(c.execute('SELECT COUNT(*) FROM '+t[0]).fetchone()[0] if t[0] in n else 0)" 2>/dev/null)
                 if [ -z "$OVL_ROWS" ] || [ "$OVL_ROWS" = "0" ]; then
                   log "  own-overlay ${ARTIFACT_NAME} empty/unreadable for (${OWN_TABLES}) -- discard, try full checkpoint"
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
@@ -946,7 +953,16 @@ jobs:
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
           SO2_MAX_DATES: "2000"
-        run: exec python3 -u scripts/fetch_omi_so2.py
+        # Budget = time left before minute 100 of the 120-min job (20 min kept for
+        # snapshot/extract/upload), at most 75 min. Progress is kept in the DB.
+        run: |
+          ELAPSED_MIN=$(( ( $(date +%s) - ${SO2_JOB_START:-$(date +%s)} ) / 60 ))
+          BUDGET=$(( 100 - ELAPSED_MIN ))
+          if [ "$BUDGET" -gt 75 ]; then BUDGET=75; fi
+          if [ "$BUDGET" -lt 0 ]; then BUDGET=0; fi
+          echo "job elapsed ${ELAPSED_MIN} min -> SO2_TIME_BUDGET_MIN=${BUDGET}"
+          export SO2_TIME_BUDGET_MIN="$BUDGET"
+          exec python3 -u scripts/fetch_omi_so2.py
 
       - name: Snapshot DB
         id: snapshot

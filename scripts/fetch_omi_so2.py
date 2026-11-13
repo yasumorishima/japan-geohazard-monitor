@@ -106,8 +106,12 @@ _ORBIT = re.compile(r"-o(\d+)_")
 # Dates younger than this are never marked done in so2_fetch_log (granules can
 # still be published or reprocessed); older empty dates are skipped next run.
 SETTLE_DAYS = 30
-# Stop starting new dates after this many minutes (step timeout is 90 min);
-# so2_column and so2_fetch_log keep the progress for the next run.
+# L2 orbits younger than this are not used (each orbit appears in CMR ~5-12 h
+# after observation; a partial set would fix the wrong candidate 0 for good).
+L2_SETTLE_DAYS = 3
+# Stop starting new dates after this many minutes; so2_column and
+# so2_fetch_log keep the progress for the next run. The workflow sets it from
+# the time left in the job (restore can take most of the 120-min job).
 TIME_BUDGET_S = float(os.environ.get("SO2_TIME_BUDGET_MIN", "75")) * 60
 
 
@@ -269,14 +273,19 @@ async def fetch_so2_day(session: aiohttp.ClientSession, date: datetime) -> tuple
                                     date_str, len(text) if text else 0, repr((text or "")[:100]))
                     return [], "error", "OMSO2G"
                 fetch_so2_day.auth_failures = 0
+                shape = _ascii_shape(text)
+                if shape != (LAT_END - LAT_START + 1, LON_END - LON_START + 1):
+                    # A DAP error after the header or a cut-off body is not "empty":
+                    # it must not be stored or logged, so the date is retried.
+                    logger.info("SO2 %s: OPeNDAP ASCII has shape %s, expected %s -- retry next run",
+                                date_str, shape, (LAT_END - LAT_START + 1, LON_END - LON_START + 1))
+                    return [], "error", "OMSO2G"
                 rows = _parse_opendap_ascii(text, date_str)
                 if not rows and not hasattr(fetch_so2_day, '_empty_warned'):
                     fetch_so2_day._empty_warned = True
                     logger.info("SO2 %s: ASCII parsed but 0 valid values -- every Japan cell is "
                                 "fill in candidate 0 (text len=%d, first 200 chars=%s)",
                                 date_str, len(text), repr(text[:200]))
-                if not rows and "ColumnAmountSO2" not in text:
-                    return [], "error", "OMSO2G"  # not the expected response: retry next run
                 return rows, ("rows" if rows else "empty"), "OMSO2G"
             elif status in (401, 403):
                 # Cloud OPeNDAP needs a working Bearer token: the Basic-auth
@@ -288,12 +297,30 @@ async def fetch_so2_day(session: aiohttp.ClientSession, date: datetime) -> tuple
             else:
                 if attempt == MAX_RETRIES:
                     logger.warning("SO2 %s: HTTP %d", date_str, status)
+                else:
+                    await asyncio.sleep(2 ** attempt)
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             if attempt == MAX_RETRIES:
                 logger.info("SO2 %s: %s", date_str, type(e).__name__)
             await asyncio.sleep(2 ** attempt)
 
     return [], "error", "OMSO2G"
+
+
+def _ascii_shape(text: str) -> tuple[int, int] | None:
+    """(data lines, values per line) of an OPeNDAP ASCII grid answer, or None if ragged.
+
+    Counts every value, fill included, so a complete Japan-box answer is
+    (LAT_END-LAT_START+1, LON_END-LON_START+1) whatever the cloud cover.
+    """
+    widths = []
+    for line in text.split("\n"):
+        line = line.strip()
+        if "ColumnAmountSO2" in line and "[" in line and "," in line:
+            widths.append(len(line.split(",")) - 1)
+    if not widths or len(set(widths)) != 1:
+        return None if widths else (0, 0)
+    return len(widths), widths[0]
 
 
 def _note_auth_failure(date_str: str, status: int) -> None:
@@ -304,32 +331,81 @@ def _note_auth_failure(date_str: str, status: int) -> None:
                     date_str, status)
 
 
-async def _l2_orbits_for_date(date_str: str) -> list[tuple[int, str]] | None:
-    """CMR lookup (public) of the OMSO2 v004 L2 orbits that touch the Japan box.
+_l2_year_hits: dict[int, int] = {}
 
-    Returns [(orbit number, HTTPS download URL)] sorted by orbit, [] when CMR
-    has none, or None when the lookup failed (transient).
-    """
-    params = {
-        "collection_concept_id": OMSO2_L2_COLLECTION,
-        "temporal": f"{date_str}T00:00:00Z,{date_str}T23:59:59Z",
-        "bounding_box": JAPAN_BBOX,
-        "page_size": "100",
-    }
+
+async def _cmr_get(params: dict, what: str) -> tuple[dict, int] | None:
+    """GET CMR granules (public, no auth). Returns (json, CMR-Hits) or None on failure."""
     try:
         async with aiohttp.ClientSession() as plain_session:
             async with plain_session.get(CMR_GRANULES, params=params, timeout=TIMEOUT) as resp:
                 if resp.status != 200:
-                    logger.info("SO2 L2 CMR %s: HTTP %d (expected 200)", date_str, resp.status)
+                    logger.info("SO2 L2 CMR %s: HTTP %d (expected 200)", what, resp.status)
                     return None
-                data = await resp.json(content_type=None)
+                hits = int(resp.headers.get("CMR-Hits", "-1"))
+                return await resp.json(content_type=None), hits
     except Exception as e:
-        logger.info("SO2 L2 CMR %s: %s: %s", date_str, type(e).__name__, e)
+        logger.info("SO2 L2 CMR %s: %s: %s", what, type(e).__name__, e)
         return None
+
+
+async def _l2_collection_alive(year: int) -> bool | None:
+    """Does OMSO2_L2_COLLECTION have any granule in `year`? None if CMR failed.
+
+    CMR answers 200 with no items for a retired or moved concept id, which
+    would otherwise turn every fallback date into a permanent 'no_granule'.
+    """
+    if year not in _l2_year_hits:
+        got = await _cmr_get({
+            "collection_concept_id": OMSO2_L2_COLLECTION,
+            "temporal": f"{year}-01-01T00:00:00Z,{year}-12-31T23:59:59Z",
+            "page_size": "1",
+        }, f"year {year}")
+        if got is None or got[1] < 0:
+            return None
+        _l2_year_hits[year] = got[1]
+        if got[1] == 0:
+            logger.warning("SO2 L2 CMR: 0 granules in %s for %d (collection retired or moved?) "
+                           "-- dates are not logged as no_granule", OMSO2_L2_COLLECTION, year)
+    return _l2_year_hits[year] > 0
+
+
+async def _l2_orbits_for_date(date_str: str) -> list[tuple[int, str]] | None:
+    """CMR lookup (public) of the OMSO2 v004 L2 orbits that touch the Japan box.
+
+    Returns [(orbit number, HTTPS download URL)] sorted by orbit, [] when the
+    collection has no orbit over Japan that day, or None when the answer cannot
+    be trusted (CMR failure, collection without granules that year).
+    All orbits of the UTC day are listed; an orbit is kept when CMR's bbox
+    search returns it or when it has no spatial metadata (so a granule with
+    missing geometry cannot silently drop out and change candidate 0).
+    """
+    temporal = f"{date_str}T00:00:00Z,{date_str}T23:59:59Z"
+    day = await _cmr_get({"collection_concept_id": OMSO2_L2_COLLECTION,
+                          "temporal": temporal, "page_size": "100"}, date_str)
+    boxed = await _cmr_get({"collection_concept_id": OMSO2_L2_COLLECTION,
+                            "temporal": temporal, "bounding_box": JAPAN_BBOX,
+                            "page_size": "100"}, f"{date_str} bbox")
+    if day is None or boxed is None:
+        return None
+    day_items = day[0].get("items") or []
+    if day[1] > len(day_items):
+        logger.info("SO2 L2 CMR %s: %d hits but %d items returned", date_str, day[1], len(day_items))
+        return None
+    if not day_items:
+        alive = await _l2_collection_alive(int(date_str[:4]))
+        return [] if alive else None
+    in_box = {(it.get("umm") or {}).get("GranuleUR", "") for it in boxed[0].get("items") or []}
+
     best: dict[int, tuple[str, str]] = {}  # orbit -> (GranuleUR, url)
-    for item in data.get("items") or []:
+    for item in day_items:
         umm = item.get("umm", {})
         ur = umm.get("GranuleUR", "")
+        geom = ((umm.get("SpatialExtent") or {}).get("HorizontalSpatialDomain") or {}).get("Geometry")
+        if ur not in in_box:
+            if geom:
+                continue
+            logger.info("SO2 L2 %s: %s has no spatial metadata -- downloaded anyway", date_str, ur)
         m = _ORBIT.search(ur)
         url = next(
             (r.get("URL") for r in umm.get("RelatedUrls", [])
@@ -337,7 +413,8 @@ async def _l2_orbits_for_date(date_str: str) -> list[tuple[int, str]] | None:
             None,
         )
         if not m or not url:
-            continue
+            logger.info("SO2 L2 %s: %s has no orbit number or download URL", date_str, ur)
+            return None  # an unreadable orbit could hold candidate 0 of some cells
         orb = int(m.group(1))
         # Several revisions of one orbit: keep the latest (UR sorts by production stamp)
         if orb not in best or ur > best[orb][0]:
@@ -412,6 +489,14 @@ async def fetch_so2_day_l2(session: aiohttp.ClientSession, date: datetime) -> tu
             fetch_so2_day_l2._notoken_warned = True
             logger.info("SO2 L2: no EARTHDATA_TOKEN -- L2 fallback needs the Bearer token")
         return [], "error", "OMSO2-L2"
+    # L2 orbits are published one by one: a date fetched too early would be
+    # stored from a partial orbit set (wrong candidate 0) and never fetched again.
+    if date.date() >= datetime.now(timezone.utc).date() - timedelta(days=L2_SETTLE_DAYS):
+        if not hasattr(fetch_so2_day_l2, "_young_noted"):
+            fetch_so2_day_l2._young_noted = True
+            logger.info("SO2 %s: younger than %d days -- L2 orbits may still be arriving, "
+                        "left for a later run", date_str, L2_SETTLE_DAYS)
+        return [], "error", "OMSO2-L2"
     orbits = await _l2_orbits_for_date(date_str)
     if orbits is None:
         return [], "error", "OMSO2-L2"
@@ -439,8 +524,8 @@ async def fetch_so2_day_l2(session: aiohttp.ClientSession, date: datetime) -> tu
             await asyncio.sleep(2 ** attempt)
         try:
             loaded.append((orb, _read_l2_orbit(data)))
-        except (OSError, KeyError) as e:
-            logger.warning("SO2 %s L2 orbit %d: unreadable (%s)", date_str, orb, e)
+        except Exception as e:  # any bad file: retry the date next run, never crash main()
+            logger.warning("SO2 %s L2 orbit %d: unreadable (%s: %s)", date_str, orb, type(e).__name__, e)
             return [], "error", "OMSO2-L2"
     fetch_so2_day.auth_failures = 0
     rows, n_cells = grid_l2_orbits(loaded, date_str)
