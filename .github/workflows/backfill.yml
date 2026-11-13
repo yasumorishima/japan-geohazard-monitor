@@ -237,7 +237,7 @@ jobs:
           case "${{ github.job }}" in
             fetch-hinet) OWN_PREFIX="backfill-hinet-"; OWN_TABLES="hinet_waveform";;
             fetch-gnss)  OWN_PREFIX="backfill-gnss-";  OWN_TABLES="gnss_tec";;
-            fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column";;
+            fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column so2_fetch_log";;
             fetch-cloud) OWN_PREFIX="backfill-cloud-"; OWN_TABLES="cloud_fraction";;
             fetch-snet)  OWN_PREFIX="backfill-snet-";  OWN_TABLES="snet_waveform fnet_waveform";;
             fetch-modis) OWN_PREFIX=""; OWN_TABLES="";;  # full restore: fetch reads cross-table earthquakes master
@@ -599,6 +599,12 @@ jobs:
       restore_restored: ${{ steps.restore.outputs.restored }}
 
     steps:
+      # The SO2 fetch budget is measured from here: a full-checkpoint restore
+      # can take most of the 120-min job, and the snapshot/extract/upload steps
+      # after the fetch need their time too.
+      - name: Record job start
+        run: echo "SO2_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
       # Free ~30GB of pre-installed software we never use. The 2026-05-28
       # 15:00 UTC full-schedule run hit "no space left on device" while
       # expanding the 17GB checkpoint into /tmp/db-restore; so2/modis/cloud/
@@ -667,7 +673,7 @@ jobs:
           case "${{ github.job }}" in
             fetch-hinet) OWN_PREFIX="backfill-hinet-"; OWN_TABLES="hinet_waveform";;
             fetch-gnss)  OWN_PREFIX="backfill-gnss-";  OWN_TABLES="gnss_tec";;
-            fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column";;
+            fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column so2_fetch_log";;
             fetch-cloud) OWN_PREFIX="backfill-cloud-"; OWN_TABLES="cloud_fraction";;
             fetch-snet)  OWN_PREFIX="backfill-snet-";  OWN_TABLES="snet_waveform fnet_waveform";;
             fetch-modis) OWN_PREFIX=""; OWN_TABLES="";;  # full restore: fetch reads cross-table earthquakes master
@@ -761,7 +767,10 @@ jobs:
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
                   continue
                 fi
-                OVL_ROWS=$(timeout 120 python3 -c "import sqlite3; c=sqlite3.connect('data/geohazard.db'); print(sum(c.execute('SELECT COUNT(*) FROM '+t).fetchone()[0] for t in '''${OWN_TABLES}'''.split()))" 2>/dev/null)
+                # Only the data table (first owned table) must hold rows. so2_fetch_log
+                # (added 2026-11-13) is absent from overlays made before it existed and
+                # must not make an overlay with an empty so2_column acceptable.
+                OVL_ROWS=$(timeout 120 python3 -c "import sqlite3; c=sqlite3.connect('data/geohazard.db'); t='''${OWN_TABLES}'''.split(); n={r[0] for r in c.execute('SELECT name FROM sqlite_master WHERE type=?', ('table',))}; print(c.execute('SELECT COUNT(*) FROM '+t[0]).fetchone()[0] if t[0] in n else 0)" 2>/dev/null)
                 if [ -z "$OVL_ROWS" ] || [ "$OVL_ROWS" = "0" ]; then
                   log "  own-overlay ${ARTIFACT_NAME} empty/unreadable for (${OWN_TABLES}) -- discard, try full checkpoint"
                   rm -f data/geohazard.db data/geohazard.db-wal data/geohazard.db-shm
@@ -944,7 +953,26 @@ jobs:
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
           SO2_MAX_DATES: "2000"
-        run: exec python3 -u scripts/fetch_omi_so2.py
+        # Budget = time left before minute 90 of the 120-min job, at most 75 min.
+        # The budget only stops new dates; a date already running (several L2
+        # orbits, 3 tries x 300 s each) could run on, so the process is capped
+        # 10 min after the budget (job minute 100 at the latest; 20 min stay for
+        # snapshot/extract/upload). SIGINT: each finished date is already
+        # committed, so hitting the cap is a warning, not a failed step.
+        run: |
+          ELAPSED_MIN=$(( ( $(date +%s) - ${SO2_JOB_START:-$(date +%s)} ) / 60 ))
+          BUDGET=$(( 90 - ELAPSED_MIN ))
+          if [ "$BUDGET" -gt 75 ]; then BUDGET=75; fi
+          if [ "$BUDGET" -lt 0 ]; then BUDGET=0; fi
+          echo "job elapsed ${ELAPSED_MIN} min -> SO2_TIME_BUDGET_MIN=${BUDGET}"
+          export SO2_TIME_BUDGET_MIN="$BUDGET"
+          rc=0
+          timeout --foreground -s INT $(( (BUDGET + 10) * 60 )) python3 -u scripts/fetch_omi_so2.py || rc=$?
+          if [ "$rc" -eq 124 ]; then
+            echo "::warning::SO2 fetch stopped at its time cap; finished dates are kept and the next run continues"
+            exit 0
+          fi
+          exit "$rc"
 
       - name: Snapshot DB
         id: snapshot
@@ -1018,7 +1046,7 @@ jobs:
           python3 scripts/extract_overlay.py \
             --src data/geohazard.db \
             --dst data/geohazard_overlay.db \
-            --tables so2_column \
+            --tables so2_column,so2_fetch_log \
             && mv data/geohazard_overlay.db data/geohazard.db
 
       - name: Upload so2.db artifact
@@ -1116,7 +1144,7 @@ jobs:
           case "${{ github.job }}" in
             fetch-hinet) OWN_PREFIX="backfill-hinet-"; OWN_TABLES="hinet_waveform";;
             fetch-gnss)  OWN_PREFIX="backfill-gnss-";  OWN_TABLES="gnss_tec";;
-            fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column";;
+            fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column so2_fetch_log";;
             fetch-cloud) OWN_PREFIX="backfill-cloud-"; OWN_TABLES="cloud_fraction";;
             fetch-snet)  OWN_PREFIX="backfill-snet-";  OWN_TABLES="snet_waveform fnet_waveform";;
             fetch-modis) OWN_PREFIX=""; OWN_TABLES="";;  # full restore: fetch reads cross-table earthquakes master
@@ -1580,7 +1608,7 @@ jobs:
           case "${{ github.job }}" in
             fetch-hinet) OWN_PREFIX="backfill-hinet-"; OWN_TABLES="hinet_waveform";;
             fetch-gnss)  OWN_PREFIX="backfill-gnss-";  OWN_TABLES="gnss_tec";;
-            fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column";;
+            fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column so2_fetch_log";;
             fetch-cloud) OWN_PREFIX="backfill-cloud-"; OWN_TABLES="cloud_fraction";;
             fetch-snet)  OWN_PREFIX="backfill-snet-";  OWN_TABLES="snet_waveform fnet_waveform";;
             fetch-modis) OWN_PREFIX=""; OWN_TABLES="";;  # full restore: fetch reads cross-table earthquakes master
@@ -2065,7 +2093,7 @@ jobs:
           case "${{ github.job }}" in
             fetch-hinet) OWN_PREFIX="backfill-hinet-"; OWN_TABLES="hinet_waveform";;
             fetch-gnss)  OWN_PREFIX="backfill-gnss-";  OWN_TABLES="gnss_tec";;
-            fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column";;
+            fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column so2_fetch_log";;
             fetch-cloud) OWN_PREFIX="backfill-cloud-"; OWN_TABLES="cloud_fraction";;
             fetch-snet)  OWN_PREFIX="backfill-snet-";  OWN_TABLES="snet_waveform fnet_waveform";;
             fetch-modis) OWN_PREFIX=""; OWN_TABLES="";;  # full restore: fetch reads cross-table earthquakes master
@@ -2551,7 +2579,7 @@ jobs:
           case "${{ github.job }}" in
             fetch-hinet) OWN_PREFIX="backfill-hinet-"; OWN_TABLES="hinet_waveform";;
             fetch-gnss)  OWN_PREFIX="backfill-gnss-";  OWN_TABLES="gnss_tec";;
-            fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column";;
+            fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column so2_fetch_log";;
             fetch-cloud) OWN_PREFIX="backfill-cloud-"; OWN_TABLES="cloud_fraction";;
             fetch-snet)  OWN_PREFIX="backfill-snet-";  OWN_TABLES="snet_waveform fnet_waveform";;
             fetch-modis) OWN_PREFIX=""; OWN_TABLES="";;  # full restore: fetch reads cross-table earthquakes master
@@ -3312,7 +3340,7 @@ jobs:
           case "${{ github.job }}" in
             fetch-hinet) OWN_PREFIX="backfill-hinet-"; OWN_TABLES="hinet_waveform";;
             fetch-gnss)  OWN_PREFIX="backfill-gnss-";  OWN_TABLES="gnss_tec";;
-            fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column";;
+            fetch-so2)   OWN_PREFIX="backfill-so2-";   OWN_TABLES="so2_column so2_fetch_log";;
             fetch-cloud) OWN_PREFIX="backfill-cloud-"; OWN_TABLES="cloud_fraction";;
             fetch-snet)  OWN_PREFIX="backfill-snet-";  OWN_TABLES="snet_waveform fnet_waveform";;
             fetch-modis) OWN_PREFIX=""; OWN_TABLES="";;  # full restore: fetch reads cross-table earthquakes master
@@ -3857,7 +3885,7 @@ jobs:
           python3 scripts/merge_checkpoints.py \
             --base /mnt/merge/light/geohazard.db \
             --overlay /mnt/merge/modis/geohazard.db:modis_lst,modis_lst_fetch_log \
-            --overlay /mnt/merge/so2/geohazard.db:so2_column \
+            --overlay /mnt/merge/so2/geohazard.db:so2_column,so2_fetch_log \
             --overlay /mnt/merge/gnss/geohazard.db:gnss_tec \
             --overlay /mnt/merge/cloud/geohazard.db:cloud_fraction \
             --overlay /mnt/merge/snet/geohazard.db:snet_waveform \
