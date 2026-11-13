@@ -962,7 +962,10 @@ jobs:
           if [ "$BUDGET" -lt 0 ]; then BUDGET=0; fi
           echo "job elapsed ${ELAPSED_MIN} min -> SO2_TIME_BUDGET_MIN=${BUDGET}"
           export SO2_TIME_BUDGET_MIN="$BUDGET"
-          exec python3 -u scripts/fetch_omi_so2.py
+          # The budget only stops new dates; a date already running (several L2
+          # orbits, 3 tries x 300 s each) could run on, so cap the whole process
+          # 10 min after the budget. SIGINT: each finished date is already committed.
+          exec timeout -s INT $(( (BUDGET + 10) * 60 )) python3 -u scripts/fetch_omi_so2.py
 
       - name: Snapshot DB
         id: snapshot

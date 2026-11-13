@@ -317,7 +317,7 @@ def _ascii_shape(text: str) -> tuple[int, int] | None:
     for line in text.split("\n"):
         line = line.strip()
         if "ColumnAmountSO2" in line and "[" in line and "," in line:
-            widths.append(len(line.split(",")) - 1)
+            widths.append(sum(1 for v in line.split(",")[1:] if v.strip()))
     if not widths or len(set(widths)) != 1:
         return None if widths else (0, 0)
     return len(widths), widths[0]
@@ -331,7 +331,7 @@ def _note_auth_failure(date_str: str, status: int) -> None:
                     date_str, status)
 
 
-_l2_year_hits: dict[int, int] = {}
+_l2_latest: list[str] = []  # [start time of the newest L2 granule] once looked up
 
 
 async def _cmr_get(params: dict, what: str) -> tuple[dict, int] | None:
@@ -349,25 +349,37 @@ async def _cmr_get(params: dict, what: str) -> tuple[dict, int] | None:
         return None
 
 
-async def _l2_collection_alive(year: int) -> bool | None:
-    """Does OMSO2_L2_COLLECTION have any granule in `year`? None if CMR failed.
+async def _l2_covers_after(date_str: str) -> bool | None:
+    """Does OMSO2_L2_COLLECTION have a granule that starts after date_str ends?
 
-    CMR answers 200 with no items for a retired or moved concept id, which
-    would otherwise turn every fallback date into a permanent 'no_granule'.
+    Only then is a date with no orbit a real gap ('no_granule'). A retired or
+    moved concept id answers 200 with no items, and a collection that stops
+    part-way through a year (as OMSO2G did on 2026-06-08) still has granules
+    that year; both would otherwise log every later date as 'no_granule'.
+    None when CMR failed. The newest granule is looked up once per run.
     """
-    if year not in _l2_year_hits:
+    if not _l2_latest:
         got = await _cmr_get({
             "collection_concept_id": OMSO2_L2_COLLECTION,
-            "temporal": f"{year}-01-01T00:00:00Z,{year}-12-31T23:59:59Z",
+            "sort_key": "-start_date",
             "page_size": "1",
-        }, f"year {year}")
-        if got is None or got[1] < 0:
+        }, "newest granule")
+        if got is None:
             return None
-        _l2_year_hits[year] = got[1]
-        if got[1] == 0:
-            logger.warning("SO2 L2 CMR: 0 granules in %s for %d (collection retired or moved?) "
-                           "-- dates are not logged as no_granule", OMSO2_L2_COLLECTION, year)
-    return _l2_year_hits[year] > 0
+        items = got[0].get("items") or []
+        start = ""
+        if items:
+            start = (((items[0].get("umm") or {}).get("TemporalExtent") or {})
+                     .get("RangeDateTime") or {}).get("BeginningDateTime", "")
+        _l2_latest.append(start)
+        logger.info("SO2 L2 CMR: newest %s granule starts %s", OMSO2_L2_COLLECTION, start or "<none>")
+    covered = _l2_latest[0] > f"{date_str}T23:59:59.999Z"
+    if not covered and not hasattr(_l2_covers_after, "_warned"):
+        _l2_covers_after._warned = True
+        logger.warning("SO2 L2 CMR: no orbit for %s and no %s granule after it (newest: %s) -- "
+                       "collection stopped or moved? Such dates are not logged as no_granule",
+                       date_str, OMSO2_L2_COLLECTION, _l2_latest[0] or "<none>")
+    return covered
 
 
 async def _l2_orbits_for_date(date_str: str) -> list[tuple[int, str]] | None:
@@ -389,13 +401,21 @@ async def _l2_orbits_for_date(date_str: str) -> list[tuple[int, str]] | None:
     if day is None or boxed is None:
         return None
     day_items = day[0].get("items") or []
-    if day[1] > len(day_items):
-        logger.info("SO2 L2 CMR %s: %d hits but %d items returned", date_str, day[1], len(day_items))
+    box_items = boxed[0].get("items") or []
+    if day[1] > len(day_items) or boxed[1] > len(box_items) or day[1] < 0 or boxed[1] < 0:
+        logger.info("SO2 L2 CMR %s: hits %d/%d but %d/%d items returned (day/bbox)",
+                    date_str, day[1], boxed[1], len(day_items), len(box_items))
         return None
     if not day_items:
-        alive = await _l2_collection_alive(int(date_str[:4]))
-        return [] if alive else None
-    in_box = {(it.get("umm") or {}).get("GranuleUR", "") for it in boxed[0].get("items") or []}
+        covered = await _l2_covers_after(date_str)
+        return [] if covered else None
+    in_box = {(it.get("umm") or {}).get("GranuleUR", "") for it in box_items}
+    if not in_box and len(day_items) >= 10:
+        # Daytime orbits cross Japan every day: a full day with none in the box
+        # means the bbox answer is wrong, not that there is no data.
+        logger.warning("SO2 L2 CMR %s: %d orbits that day but none over Japan -- retry next run",
+                       date_str, len(day_items))
+        return None
 
     best: dict[int, tuple[str, str]] = {}  # orbit -> (GranuleUR, url)
     for item in day_items:
@@ -413,7 +433,8 @@ async def _l2_orbits_for_date(date_str: str) -> list[tuple[int, str]] | None:
             None,
         )
         if not m or not url:
-            logger.info("SO2 L2 %s: %s has no orbit number or download URL", date_str, ur)
+            logger.warning("SO2 L2 %s: %s has no orbit number or download URL -- date retried "
+                           "every run until CMR is fixed", date_str, ur)
             return None  # an unreadable orbit could hold candidate 0 of some cells
         orb = int(m.group(1))
         # Several revisions of one orbit: keep the latest (UR sorts by production stamp)
