@@ -12,10 +12,22 @@ Physical mechanism:
     in their collective degassing pattern could indicate broad-scale
     stress redistribution.
 
-Data source: NASA OMI OMSO2e (Level 3 daily gridded SO2)
-    - 0.25° global grid, daily, 2004-present
+Data source: NASA OMI OMSO2G v004 (Level 2G, 0.25° grid, candidate 0)
+    - 0.25° global grid, daily, 2004-present, ColumnAmountSO2_PBL
     - Requires Earthdata login (free) for OPeNDAP access
-    - Alternative: NASA SO2 monitoring portal for summary data
+    - OMSO2G.004 stops at 2026-06-08 in CMR while OMI keeps observing.
+      For dates without an OMSO2G granule the same cells are rebuilt from
+      the OMSO2 v004 Level 2 orbits (see grid_l2_orbits).  Measured on
+      2026-11-13 for 2026-06-08, 2020-06-01 and 2011-01-05: candidate 0 of
+      OMSO2G is, for every cell, the first L2 pixel (orbit, line, scene
+      order) whose centre falls in the cell, and its value is the L2 value
+      rounded to 0.01 DU -- 5,241 of 5,241 Japan cells matched exactly.
+      OMSO2e v004 is not used: it has no PBL column (only the GEOS-5
+      profile ColumnAmountSO2), a different quantity.
+    - Every finished date is written to so2_fetch_log; dates that came back
+      empty (no granule, or every Japan cell is fill) are skipped on later
+      runs once they are SETTLE_DAYS old.  Before this, ~660 such dates were
+      re-requested on every run (~16 min, run 43360558222).
 
 Target features:
     - so2_column_anomaly: deviation from seasonal baseline (DU)
@@ -26,10 +38,12 @@ References:
 """
 
 import asyncio
+import io
 import logging
 import os
 import re
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -41,7 +55,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from db import init_db
 from config import DB_PATH
 from earthdata_auth import (
-    get_earthdata_session, earthdata_fetch,
+    get_earthdata_session, earthdata_fetch, earthdata_fetch_bytes,
     EARTHDATA_TOKEN, EARTHDATA_USERNAME, EARTHDATA_PASSWORD,
 )
 
@@ -77,6 +91,25 @@ MAX_RETRIES = 3
 TIMEOUT = aiohttp.ClientTimeout(total=300, connect=60)
 START_YEAR = 2004
 
+# OMSO2 v004 Level 2 orbits (HTTPS download only: no cloud OPeNDAP, and the
+# on-prem aura.gesdisc OPeNDAP answers 410). ~16 MB each, 3-5 orbits/day touch
+# the Japan box.
+OMSO2_L2_COLLECTION = "C3454342607-GES_DISC"  # OMSO2.004 (GES_DISC)
+L2_GROUP = "HDFEOS/SWATHS/OMI Total Column Amount SO2"
+# Outer edges of the LAT_START..LAT_END x LON_START..LON_END cells
+JAPAN_BBOX = (
+    f"{-180 + LON_START * 0.25},{-90 + LAT_START * 0.25},"
+    f"{-180 + (LON_END + 1) * 0.25},{-90 + (LAT_END + 1) * 0.25}"
+)
+_ORBIT = re.compile(r"-o(\d+)_")
+
+# Dates younger than this are never marked done in so2_fetch_log (granules can
+# still be published or reprocessed); older empty dates are skipped next run.
+SETTLE_DAYS = 30
+# Stop starting new dates after this many minutes (step timeout is 90 min);
+# so2_column and so2_fetch_log keep the progress for the next run.
+TIME_BUDGET_S = float(os.environ.get("SO2_TIME_BUDGET_MIN", "75")) * 60
+
 
 async def init_so2_table():
     """Create SO2 column table."""
@@ -95,6 +128,18 @@ async def init_so2_table():
         await db.execute("""
             CREATE INDEX IF NOT EXISTS idx_so2_time
             ON so2_column(observed_at)
+        """)
+        # One row per finished date. kind: 'rows' (cells stored), 'empty'
+        # (granule exists, every Japan cell is fill), 'no_granule' (neither
+        # OMSO2G nor OMSO2 L2 has a granule). Errors are not logged.
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS so2_fetch_log (
+                observed_at TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                n_records INTEGER NOT NULL,
+                fetched_at TEXT NOT NULL
+            )
         """)
         await db.commit()
 
@@ -163,36 +208,46 @@ async def _get_year_granules(year: int) -> dict[str, str] | None:
     return _granule_cache[year] or None
 
 
-async def _resolve_so2_url(year: int, date_str: str) -> str | None:
-    """Return the cloud OPeNDAP URL of the OMSO2G granule for date_str, or None."""
+async def _resolve_so2_url(year: int, date_str: str) -> tuple[str | None, bool]:
+    """Return (cloud OPeNDAP URL of the OMSO2G granule for date_str or None, cmr_answered).
+
+    cmr_answered is False when the CMR lookup itself failed (transient), so the
+    caller must not conclude that the granule does not exist.
+    """
     granules = await _get_year_granules(year)
-    if not granules:
-        return None
-    url = granules.get(date_str)
+    if year not in _granule_cache:
+        return None, False
+    url = (granules or {}).get(date_str)
     if not url:
         logger.info("SO2 %s: no OMSO2G granule in CMR", date_str)
-    return url
+    return url, True
 
 
-async def fetch_so2_day(session: aiohttp.ClientSession, date: datetime) -> list[dict]:
-    """Fetch SO2 column data for one day via Earthdata Cloud OPeNDAP.
+async def fetch_so2_day(session: aiohttp.ClientSession, date: datetime) -> tuple[list[dict], str, str]:
+    """Fetch SO2 column data for one day.
 
-    Uses OMSO2G (Level 2G gridded, 0.25° grid, nCandidate=15).
-    nCandidate[0] = best pixel per grid cell.
-    Cloud OPeNDAP accepts the Bearer token (earthdata_fetch tries it first).
+    Returns (rows, kind, source). kind is 'rows', 'empty', 'no_granule' or
+    'error' (transient: auth, HTTP, CMR failure -- the date is retried).
+
+    Uses OMSO2G (Level 2G gridded, 0.25° grid, nCandidate=15) via Earthdata
+    Cloud OPeNDAP, nCandidate[0] for the Japan box. Cloud OPeNDAP accepts the
+    Bearer token (earthdata_fetch tries it first). Dates without an OMSO2G
+    granule are rebuilt from the OMSO2 v004 Level 2 orbits (fetch_so2_day_l2).
     """
     has_auth = (EARTHDATA_USERNAME and EARTHDATA_PASSWORD) or EARTHDATA_TOKEN
     if not has_auth:
         logger.debug("SO2 %s: no Earthdata credentials available", date.strftime("%Y-%m-%d"))
-        return []
+        return [], "error", "none"
 
     date_str = date.strftime("%Y-%m-%d")
     year = date.year
 
     # Resolve the granule URL (file name carries a reprocessing timestamp)
-    granule_url = await _resolve_so2_url(year, date_str)
+    granule_url, cmr_ok = await _resolve_so2_url(year, date_str)
+    if not cmr_ok:
+        return [], "error", "OMSO2G"
     if not granule_url:
-        return []
+        return await fetch_so2_day_l2(session, date)
 
     # OPeNDAP ASCII: fetch best pixel (nCandidate=0) for Japan bbox
     # OMSO2G is 3D: [nCandidate=15][YDim=720][XDim=1440]
@@ -212,25 +267,24 @@ async def fetch_so2_day(session: aiohttp.ClientSession, date: datetime) -> list[
                         fetch_so2_day._html_warned = True
                         logger.info("SO2 %s: got HTML instead of ASCII (len=%d, preview=%s)",
                                     date_str, len(text) if text else 0, repr((text or "")[:100]))
-                    return []
+                    return [], "error", "OMSO2G"
                 fetch_so2_day.auth_failures = 0
                 rows = _parse_opendap_ascii(text, date_str)
                 if not rows and not hasattr(fetch_so2_day, '_empty_warned'):
                     fetch_so2_day._empty_warned = True
-                    logger.info("SO2 %s: ASCII parsed but 0 positive values (text len=%d, first 200 chars=%s)",
+                    logger.info("SO2 %s: ASCII parsed but 0 valid values -- every Japan cell is "
+                                "fill in candidate 0 (text len=%d, first 200 chars=%s)",
                                 date_str, len(text), repr(text[:200]))
-                return rows
+                if not rows and "ColumnAmountSO2" not in text:
+                    return [], "error", "OMSO2G"  # not the expected response: retry next run
+                return rows, ("rows" if rows else "empty"), "OMSO2G"
             elif status in (401, 403):
                 # Cloud OPeNDAP needs a working Bearer token: the Basic-auth
                 # fallback ends in 401 there (measured 2026-11-13).
-                fetch_so2_day.auth_failures = getattr(fetch_so2_day, "auth_failures", 0) + 1
-                if not hasattr(fetch_so2_day, '_auth_warned'):
-                    fetch_so2_day._auth_warned = True
-                    logger.info("SO2 %s: auth failed (HTTP %d) — credentials may be invalid for GES DISC",
-                                date_str, status)
-                return []
+                _note_auth_failure(date_str, status)
+                return [], "error", "OMSO2G"
             elif status == 404:
-                return []  # No data for this date
+                return [], "error", "OMSO2G"  # CMR listed it; retry next run
             else:
                 if attempt == MAX_RETRIES:
                     logger.warning("SO2 %s: HTTP %d", date_str, status)
@@ -239,7 +293,160 @@ async def fetch_so2_day(session: aiohttp.ClientSession, date: datetime) -> list[
                 logger.info("SO2 %s: %s", date_str, type(e).__name__)
             await asyncio.sleep(2 ** attempt)
 
-    return []
+    return [], "error", "OMSO2G"
+
+
+def _note_auth_failure(date_str: str, status: int) -> None:
+    fetch_so2_day.auth_failures = getattr(fetch_so2_day, "auth_failures", 0) + 1
+    if not hasattr(fetch_so2_day, '_auth_warned'):
+        fetch_so2_day._auth_warned = True
+        logger.info("SO2 %s: auth failed (HTTP %d) — credentials may be invalid for GES DISC",
+                    date_str, status)
+
+
+async def _l2_orbits_for_date(date_str: str) -> list[tuple[int, str]] | None:
+    """CMR lookup (public) of the OMSO2 v004 L2 orbits that touch the Japan box.
+
+    Returns [(orbit number, HTTPS download URL)] sorted by orbit, [] when CMR
+    has none, or None when the lookup failed (transient).
+    """
+    params = {
+        "collection_concept_id": OMSO2_L2_COLLECTION,
+        "temporal": f"{date_str}T00:00:00Z,{date_str}T23:59:59Z",
+        "bounding_box": JAPAN_BBOX,
+        "page_size": "100",
+    }
+    try:
+        async with aiohttp.ClientSession() as plain_session:
+            async with plain_session.get(CMR_GRANULES, params=params, timeout=TIMEOUT) as resp:
+                if resp.status != 200:
+                    logger.info("SO2 L2 CMR %s: HTTP %d (expected 200)", date_str, resp.status)
+                    return None
+                data = await resp.json(content_type=None)
+    except Exception as e:
+        logger.info("SO2 L2 CMR %s: %s: %s", date_str, type(e).__name__, e)
+        return None
+    best: dict[int, tuple[str, str]] = {}  # orbit -> (GranuleUR, url)
+    for item in data.get("items") or []:
+        umm = item.get("umm", {})
+        ur = umm.get("GranuleUR", "")
+        m = _ORBIT.search(ur)
+        url = next(
+            (r.get("URL") for r in umm.get("RelatedUrls", [])
+             if r.get("Type") == "GET DATA" and str(r.get("URL", "")).startswith("https://")),
+            None,
+        )
+        if not m or not url:
+            continue
+        orb = int(m.group(1))
+        # Several revisions of one orbit: keep the latest (UR sorts by production stamp)
+        if orb not in best or ur > best[orb][0]:
+            best[orb] = (ur, url)
+    return [(orb, best[orb][1]) for orb in sorted(best)]
+
+
+def grid_l2_orbits(orbits: list[tuple[int, dict]], date_str: str) -> tuple[list[dict], int]:
+    """Rebuild OMSO2G candidate 0 for the Japan box from OMSO2 L2 orbits.
+
+    orbits: [(orbit number, {"lat", "lon", "pbl"} 2-D arrays)] in any order.
+    For each 0.25° cell the first pixel -- by orbit, then line, then scene --
+    whose centre falls in the cell is candidate 0, even when its value is
+    fill (OMSO2G does the same: cells whose candidate 0 is fill stay fill
+    although later candidates are valid). Values are rounded to 0.01 DU as in
+    OMSO2G. Returns (rows, number of cells that had a candidate).
+    """
+    import numpy as np
+
+    lat_parts, lon_parts, val_parts = [], [], []
+    for _, d in sorted(orbits, key=lambda x: x[0]):
+        lat_parts.append(np.asarray(d["lat"], dtype=np.float64).ravel())
+        lon_parts.append(np.asarray(d["lon"], dtype=np.float64).ravel())
+        val_parts.append(np.asarray(d["pbl"], dtype=np.float64).ravel())
+    if not lat_parts:
+        return [], 0
+    lat = np.concatenate(lat_parts)
+    lon = np.concatenate(lon_parts)
+    val = np.concatenate(val_parts)
+    ok = np.isfinite(lat) & np.isfinite(lon) & (np.abs(lat) <= 90) & (np.abs(lon) <= 180)
+    yi = np.full(lat.shape, -1, dtype=np.int64)
+    xi = np.full(lon.shape, -1, dtype=np.int64)
+    yi[ok] = np.floor((lat[ok] + 90.0) / 0.25).astype(np.int64)
+    xi[ok] = np.floor((lon[ok] + 180.0) / 0.25).astype(np.int64)
+    inbox = ok & (yi >= LAT_START) & (yi <= LAT_END) & (xi >= LON_START) & (xi <= LON_END)
+    pos = np.nonzero(inbox)[0]  # flattened order = orbit, line, scene
+    if pos.size == 0:
+        return [], 0
+    cell = yi[pos] * 1440 + xi[pos]
+    _, first = np.unique(cell, return_index=True)  # first occurrence per cell
+    pick = pos[first]
+    rows = []
+    for p in pick:
+        v = val[p]
+        if not np.isfinite(v) or v < -999 or v > 1000:
+            continue  # fill (-1.2676506e+30), as in _parse_opendap_ascii
+        rows.append({
+            "date": date_str,
+            "lat": round(-89.875 + int(yi[p]) * 0.25, 3),
+            "lon": round(-179.875 + int(xi[p]) * 0.25, 3),
+            "so2": round(round(float(v), 2), 4),
+        })
+    return rows, int(pick.size)
+
+
+def _read_l2_orbit(data: bytes) -> dict:
+    import h5py
+
+    with h5py.File(io.BytesIO(data), "r") as f:
+        return {
+            "lat": f[f"{L2_GROUP}/Geolocation Fields/Latitude"][...],
+            "lon": f[f"{L2_GROUP}/Geolocation Fields/Longitude"][...],
+            "pbl": f[f"{L2_GROUP}/Data Fields/ColumnAmountSO2_PBL"][...],
+        }
+
+
+async def fetch_so2_day_l2(session: aiohttp.ClientSession, date: datetime) -> tuple[list[dict], str, str]:
+    """Japan-box SO2 for a date without an OMSO2G granule, from OMSO2 v004 L2 orbits."""
+    date_str = date.strftime("%Y-%m-%d")
+    if not EARTHDATA_TOKEN:
+        if not hasattr(fetch_so2_day_l2, "_notoken_warned"):
+            fetch_so2_day_l2._notoken_warned = True
+            logger.info("SO2 L2: no EARTHDATA_TOKEN -- L2 fallback needs the Bearer token")
+        return [], "error", "OMSO2-L2"
+    orbits = await _l2_orbits_for_date(date_str)
+    if orbits is None:
+        return [], "error", "OMSO2-L2"
+    if not orbits:
+        logger.info("SO2 %s: no OMSO2 L2 orbit over Japan in CMR either", date_str)
+        return [], "no_granule", "OMSO2-L2"
+
+    loaded: list[tuple[int, dict]] = []
+    for orb, url in orbits:
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                status, data = await earthdata_fetch_bytes(session, url, timeout=TIMEOUT)
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                status, data = 0, b""
+                logger.info("SO2 %s L2 orbit %d: %s", date_str, orb, type(e).__name__)
+            if status == 200 and data[:8] == b"\x89HDF\r\n\x1a\n":
+                break
+            if status in (401, 403):
+                _note_auth_failure(date_str, status)
+                return [], "error", "OMSO2-L2"
+            if attempt == MAX_RETRIES:
+                logger.warning("SO2 %s L2 orbit %d: HTTP %d (%d bytes, not HDF5)",
+                               date_str, orb, status, len(data))
+                return [], "error", "OMSO2-L2"  # every orbit is needed for candidate order
+            await asyncio.sleep(2 ** attempt)
+        try:
+            loaded.append((orb, _read_l2_orbit(data)))
+        except (OSError, KeyError) as e:
+            logger.warning("SO2 %s L2 orbit %d: unreadable (%s)", date_str, orb, e)
+            return [], "error", "OMSO2-L2"
+    fetch_so2_day.auth_failures = 0
+    rows, n_cells = grid_l2_orbits(loaded, date_str)
+    logger.info("SO2 %s: rebuilt from %d L2 orbits -> %d cells, %d valid",
+                date_str, len(loaded), n_cells, len(rows))
+    return rows, ("rows" if rows else "empty"), "OMSO2-L2"
 
 
 def _parse_opendap_ascii(text: str, date_str: str) -> list[dict]:
@@ -361,15 +568,31 @@ async def main():
         )
     existing_dates = set(r[0] for r in ed_rows)
 
+    # Dates that finished empty on an earlier run (no granule / all fill).
+    # SO2_RECHECK=1 ignores the log, e.g. after a reprocessing.
+    async with safe_connect() as db:
+        log_rows = await db.execute_fetchall(
+            "SELECT observed_at FROM so2_fetch_log WHERE kind IN ('empty', 'no_granule')"
+        )
+    logged_empty = set() if os.environ.get("SO2_RECHECK") == "1" else set(r[0] for r in log_rows)
+    logger.info("SO2 fetch log: %d dates finished empty on earlier runs%s",
+                len(log_rows), " (ignored: SO2_RECHECK=1)" if not logged_empty and log_rows else "")
+
     # Generate all dates from START_YEAR to yesterday
     today = datetime.now(timezone.utc).date()
+    settle_cut = today - timedelta(days=SETTLE_DAYS)
     d = datetime(START_YEAR, 1, 1).date()
     target_dates = []
+    skipped_logged = 0
     while d < today:
         ds = d.strftime("%Y-%m-%d")
-        if ds not in existing_dates:
+        if ds in logged_empty:
+            skipped_logged += 1
+        elif ds not in existing_dates:
             target_dates.append(datetime(d.year, d.month, d.day))
         d += timedelta(days=1)
+    if skipped_logged:
+        logger.info("SO2: skipping %d dates logged empty", skipped_logged)
 
     # Prioritize recent gaps first (most impactful for test period), then backfill
     # Split: 2011+ dates first (analysis period), then pre-2011 (baseline building)
@@ -385,13 +608,20 @@ async def main():
     logger.info("SO2: %d dates to fetch", len(dates_to_fetch))
 
     total_records = 0
-    auth_fail_count = 0
-    html_fail_count = 0
-    no_file_count = 0
+    kinds: dict[str, int] = {}
+    l2_dates = 0
+    t0 = time.monotonic()
     session = await get_earthdata_session()
     try:
         for i, date in enumerate(dates_to_fetch):
-            rows = await fetch_so2_day(session, date)
+            if time.monotonic() - t0 > TIME_BUDGET_S:
+                logger.info("SO2: time budget (%.0f min) reached after %d/%d dates -- "
+                            "the next run continues", TIME_BUDGET_S / 60, i, len(dates_to_fetch))
+                break
+            rows, kind, source = await fetch_so2_day(session, date)
+            kinds[kind] = kinds.get(kind, 0) + 1
+            if source == "OMSO2-L2" and kind == "rows":
+                l2_dates += 1
             if getattr(fetch_so2_day, "auth_failures", 0) >= 3:
                 logger.warning(
                     "SO2: stopping after 3 consecutive auth failures (HTTP 401/403; a "
@@ -401,14 +631,25 @@ async def main():
                     "and the next run continues. Renew at https://urs.earthdata.nasa.gov/profile"
                 )
                 break
-            if rows:
+            date_str = date.strftime("%Y-%m-%d")
+            settled = date.date() < settle_cut
+            if rows or (kind in ("empty", "no_granule") and settled):
                 async with safe_connect() as db:
-                    await db.executemany(
-                        """INSERT OR IGNORE INTO so2_column
-                           (observed_at, cell_lat, cell_lon, so2_du, received_at)
-                           VALUES (?, ?, ?, ?, ?)""",
-                        [(r["date"], r["lat"], r["lon"], r["so2"], now) for r in rows],
-                    )
+                    if rows:
+                        await db.executemany(
+                            """INSERT OR IGNORE INTO so2_column
+                               (observed_at, cell_lat, cell_lon, so2_du, received_at)
+                               VALUES (?, ?, ?, ?, ?)""",
+                            [(r["date"], r["lat"], r["lon"], r["so2"], now) for r in rows],
+                        )
+                    # Empty dates younger than SETTLE_DAYS are not logged, so they are retried.
+                    if kind != "error" and (rows or settled):
+                        await db.execute(
+                            """INSERT OR REPLACE INTO so2_fetch_log
+                               (observed_at, source, kind, n_records, fetched_at)
+                               VALUES (?, ?, ?, ?, ?)""",
+                            (date_str, source, kind, len(rows), now),
+                        )
                     await db.commit()
                 total_records += len(rows)
 
@@ -420,17 +661,18 @@ async def main():
         await session.close()
 
     # Diagnostic summary: why 0 records?
+    summary = ", ".join(f"{k} {v}" for k, v in sorted(kinds.items()))
     if total_records == 0 and dates_to_fetch:
         logger.info(
-            "SO2 fetch complete: 0 records from %d dates. "
-            "Likely cause: no OMI OMSO2G archive files exist for these dates "
-            "(if persistent, check Earthdata auth or the OMSO2G.004 granules in CMR for these dates). "
-            "If auth failed, 'auth failed (HTTP 401/403)' entries appear in the INFO logs above.",
-            len(dates_to_fetch),
+            "SO2 fetch complete: 0 records from %d dates (%s). "
+            "'empty' = every Japan cell is fill, 'no_granule' = neither OMSO2G nor "
+            "OMSO2 L2 has a granule, 'error' = auth/HTTP/CMR failure (see the INFO "
+            "lines above; 'auth failed (HTTP 401/403)' means the token).",
+            len(dates_to_fetch), summary,
         )
     else:
-        logger.info("SO2 fetch complete: %d total records from %d dates",
-                     total_records, len(dates_to_fetch))
+        logger.info("SO2 fetch complete: %d total records from %d dates (%s; %d dates rebuilt from L2)",
+                     total_records, len(dates_to_fetch), summary, l2_dates)
 
 
 if __name__ == "__main__":
