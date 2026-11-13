@@ -953,19 +953,26 @@ jobs:
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
           SO2_MAX_DATES: "2000"
-        # Budget = time left before minute 100 of the 120-min job (20 min kept for
-        # snapshot/extract/upload), at most 75 min. Progress is kept in the DB.
+        # Budget = time left before minute 90 of the 120-min job, at most 75 min.
+        # The budget only stops new dates; a date already running (several L2
+        # orbits, 3 tries x 300 s each) could run on, so the process is capped
+        # 10 min after the budget (job minute 100 at the latest; 20 min stay for
+        # snapshot/extract/upload). SIGINT: each finished date is already
+        # committed, so hitting the cap is a warning, not a failed step.
         run: |
           ELAPSED_MIN=$(( ( $(date +%s) - ${SO2_JOB_START:-$(date +%s)} ) / 60 ))
-          BUDGET=$(( 100 - ELAPSED_MIN ))
+          BUDGET=$(( 90 - ELAPSED_MIN ))
           if [ "$BUDGET" -gt 75 ]; then BUDGET=75; fi
           if [ "$BUDGET" -lt 0 ]; then BUDGET=0; fi
           echo "job elapsed ${ELAPSED_MIN} min -> SO2_TIME_BUDGET_MIN=${BUDGET}"
           export SO2_TIME_BUDGET_MIN="$BUDGET"
-          # The budget only stops new dates; a date already running (several L2
-          # orbits, 3 tries x 300 s each) could run on, so cap the whole process
-          # 10 min after the budget. SIGINT: each finished date is already committed.
-          exec timeout -s INT $(( (BUDGET + 10) * 60 )) python3 -u scripts/fetch_omi_so2.py
+          rc=0
+          timeout --foreground -s INT $(( (BUDGET + 10) * 60 )) python3 -u scripts/fetch_omi_so2.py || rc=$?
+          if [ "$rc" -eq 124 ]; then
+            echo "::warning::SO2 fetch stopped at its time cap; finished dates are kept and the next run continues"
+            exit 0
+          fi
+          exit "$rc"
 
       - name: Snapshot DB
         id: snapshot

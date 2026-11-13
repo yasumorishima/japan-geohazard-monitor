@@ -369,8 +369,8 @@ async def _l2_covers_after(date_str: str) -> bool | None:
         items = got[0].get("items") or []
         start = ""
         if items:
-            start = (((items[0].get("umm") or {}).get("TemporalExtent") or {})
-                     .get("RangeDateTime") or {}).get("BeginningDateTime", "")
+            start = str((((items[0].get("umm") or {}).get("TemporalExtent") or {})
+                         .get("RangeDateTime") or {}).get("BeginningDateTime") or "")
         _l2_latest.append(start)
         logger.info("SO2 L2 CMR: newest %s granule starts %s", OMSO2_L2_COLLECTION, start or "<none>")
     covered = _l2_latest[0] > f"{date_str}T23:59:59.999Z"
@@ -409,8 +409,12 @@ async def _l2_orbits_for_date(date_str: str) -> list[tuple[int, str]] | None:
     if not day_items:
         covered = await _l2_covers_after(date_str)
         return [] if covered else None
+    def _geom(it: dict):
+        umm = it.get("umm") or {}
+        return ((umm.get("SpatialExtent") or {}).get("HorizontalSpatialDomain") or {}).get("Geometry")
+
     in_box = {(it.get("umm") or {}).get("GranuleUR", "") for it in box_items}
-    if not in_box and len(day_items) >= 10:
+    if not in_box and len(day_items) >= 10 and all(_geom(it) for it in day_items):
         # Daytime orbits cross Japan every day: a full day with none in the box
         # means the bbox answer is wrong, not that there is no data.
         logger.warning("SO2 L2 CMR %s: %d orbits that day but none over Japan -- retry next run",
@@ -421,9 +425,8 @@ async def _l2_orbits_for_date(date_str: str) -> list[tuple[int, str]] | None:
     for item in day_items:
         umm = item.get("umm", {})
         ur = umm.get("GranuleUR", "")
-        geom = ((umm.get("SpatialExtent") or {}).get("HorizontalSpatialDomain") or {}).get("Geometry")
         if ur not in in_box:
-            if geom:
+            if _geom(item):
                 continue
             logger.info("SO2 L2 %s: %s has no spatial metadata -- downloaded anyway", date_str, ur)
         m = _ORBIT.search(ur)
