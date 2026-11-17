@@ -1137,3 +1137,43 @@ reclassified as monitoring because each yearly window is now recorded once, 90 d
 A century-long elapsed-time clock (ISC-GEM 1918-1969 plus the modern record, Brownian passage time) for cells with
 one or two modern precedents stays inside a within-strata permutation floor on both isolated and any-M6 labels
 (gain -0.0003), so the pre-registered verdict is null and the axis does not move (update 188).
+
+From 2026-10-20 the work ran as a separate working series of pre-registered rounds (numbered from
+259 on, overlapping the numbers above). The main yardstick moved to all 2,280 cells (SUDDEN-ALL: isolated
+M6 within 34 days against quiet days, no aftershock positives); on it the base rose from 0.752753 (cell
+climatology) to 0.787474 (round 909; honest axis 0.777844), 33 carries in 431 seen readings against
+36.5 expected under the null (update 189).
+
+Oracle diagnostics put the distance to 0.90 in which cell-year hosts a mainshock (true cell-years with
+our timing 0.9852; perfect timing with our cell order 0.7910); a cell-year instrument and the screens
+on it did not move the axis, and 0.90 needs about 60% of a window's firing cells raised with at most
+1% false cells, half of them in cells without land (update 190).
+
+Existence tests in Japan's dense data (JMA, GNSS, boosted trees) found no large effect at this size
+(about +0.02 at lead 1-3 days only), and on synthetic ETAS worlds a catalogue model of our type is
+within about 0.01 of the true intensity, which itself reads 0.737-0.766 (update 191).
+
+Ten non-catalogue sources (slow earthquakes, altimetry twice, GRACE gravity, TEC, Earth rotation, core
+field, OLR, Swarm magnetics, OMI SO2) read with one instrument stay at |S| <= 0.101, none reaches the
+pilot gate; an audit with real positive controls passes, and the gain rule 0.018 c S^2 is an upper
+indication only (realised / predicted 0.02 to 5.34 over six families) (update 192).
+
+Events below the catalogue floor read +0.300 sd at 11-34 days on Japan's CLEAN rows, but the effect
+does not grow steadily with a lower floor (slope +0.042 per magnitude unit, interval includes 0), does
+not carry to the global grid, and the offshore reading after the seafloor networks (+0.86 on 11
+mainshocks) is not found at this size and not replicated outside Japan; it is frozen for re-reading
+on new rows from 2025, and a below-floor arm is frozen for the prospective windows (update 193).
+
+The main number has not moved since round 909 (0.787474; honest 0.777844) and no route to 0.90 is
+supported by a measurement yet; 42 frozen arms were dry-run on window 36 (30 exact), the 2027 fits
+start after 2026-12-15 with hashes before 2027-02-01, and new sources keep being opened as declared
+pilots in the meantime (update 194).
+
+The main number stays at 0.787474 (honest 0.777844). Rounds 992-1042 read about thirty new catalogue
+parameter groups (cycle phase, loading budget, tidal sensitivity, fractal and entropy measures,
+mechanism diversity, recurrence networks) and four method arms, none admitted (early gain negative in
+22 of 22 groups; completeness, history length and the era difference of the model were checked), and
+more than twenty further non-catalogue sources, none at its gate (26 of 1,885 readings pass their
+nulls against about 94 by chance); the quiet-looking 70% of cells holds 0.306 of firing cells,
+ordering every stratum perfectly gives 0.8821, 343 of 634 quiet firing cell-windows have no
+small-event information, and three more arms are frozen for the 2027 fits (update 195).
