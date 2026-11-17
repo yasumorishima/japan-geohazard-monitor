@@ -1,23 +1,24 @@
 # -*- coding: utf-8 -*-
-"""Figures for the sudden-earthquake (isolated mainshock) axis.
+"""Figures for the sudden-earthquake (isolated mainshock) axis, SUDDEN-ALL.
 
 Inputs (the only source of the numbers):
-  stand.csv    - where the axis stands per arena (figure 1)
-  results.csv  - one row per declared statistic of each pre-registered round (figure 2); rows are appended by
-                 add_round.py from the round's run log, never typed by hand
-The GitHub Actions workflow sudden-axis-figures.yml reruns this script whenever either file changes and commits the
+  stand.csv    - where the SUDDEN-ALL axis stands (figure 1); each value copied from a run log
+  pilots.csv   - one row per non-catalogue source group read since pilot 960 (figure 2): coverage c, the largest
+                 |partial S| and the end of its 95% interval, taken from the meta-analyses of the run logs
+  results.csv  - the earlier figure 2 (AUC of observation systems on isolated M5.5, rounds 293-); kept, not drawn
+The GitHub Actions workflow sudden-axis-figures.yml reruns this script whenever an input changes and commits the
 PNGs.  The script refuses malformed input (missing columns, values out of range, duplicate rows) instead of drawing.
 Run: python make_figs.py
 """
 import csv
 import os
+import textwrap
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
-from matplotlib.patches import Patch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 INK, INK2, MUTED, GRID = "#0b0b0b", "#52514e", "#8a8984", "#e6e5e0"
@@ -64,60 +65,96 @@ def fig1():
     ax.set_xlim(0.5, 1.0)
     ax.set_ylim(-0.75, len(rows) - 0.35)
     ax.set_xlabel("AUC (0.5 = no skill)", fontsize=14)
-    lo, hi = min(r["auc"] for r in rows), max(r["auc"] for r in rows)
-    fig.suptitle("Isolated mainshocks: skill so far is %.2f-%.2f; the goal is %.2f" % (lo, hi, GOAL),
-                 fontsize=17, x=0.01, ha="left", color=INK)
+    hi = max(r["auc"] for r in rows)
+    fig.suptitle("Sudden axis (SUDDEN-ALL): isolated M>=6 within 34 days, all 2,280 cells\n"
+                 "best so far %.3f; the goal is %.2f" % (hi, GOAL), fontsize=16, x=0.01, ha="left", color=INK)
     style(ax)
-    fig.text(0.01, 0.01, "The populations differ (catalogue, region, cell set); bars are not comparable with each other.",
-             fontsize=11, color=MUTED)
-    fig.tight_layout(rect=(0, 0.04, 1, 1))
+    fig.text(0.01, 0.01, "Positive day: an isolated M>=6 follows within 34 days; negative: no M>=5 within 34 days.\n"
+             "Seen windows were used for selection; the early arena is a second reading.", fontsize=10.5, color=MUTED)
+    fig.tight_layout(rect=(0, 0.07, 1, 1))
     fig.savefig(os.path.join(HERE, "fig1_where_we_stand.png"), dpi=150)
     plt.close(fig)
 
 
+DOMAINS = (  # fixed order = fixed colour (categorical slots 1-8)
+    ("atmosphere", "#2a78d6"),
+    ("ionosphere / space", "#eb6834"),
+    ("ocean surface", "#1baf7a"),
+    ("ocean interior", "#eda100"),
+    ("solid Earth (geodesy, gravity, rotation, tides, core field)", "#e87ba4"),
+    ("hydrology", "#008300"),
+    ("volcanic and gas", "#6250d6"),
+    ("seismic-waveform-derived", "#e34948"),
+)
+FORMS = {"day": "o", "cell-year": "s", "existence": "^"}
+# Direct labels for the widest-coverage and the largest-effect points: group -> (short name, x / y offset in points).
+# Groups not listed are not labelled; a listed group missing from pilots.csv is skipped.
+LABELS = {"1001B": ("wind / PW / soil T", 8, 0), "1008S": ("soil moisture", 8, 0), "1018U": ("UV aerosol", -8, 0),
+          "1015B": ("Argo", 8, 0), "1015A": ("Argo", 8, 0), "996": ("latent heat", 8, 0),
+          "1028A": ("ocean colour", 8, 0), "983": ("altimetry", -8, 0), "975": ("core field", 8, 10),
+          "972": ("GRACE", 8, 0), "974": ("Earth rotation", 8, -10)}
+GATE_GAIN, GAIN_K = 0.0006, 0.018  # pilot gate: predicted gain 0.018 c S^2 >= 0.0006
+
+
+def s_needed(c):
+    return (GATE_GAIN / (GAIN_K * c)) ** 0.5
+
+
 def fig2():
-    cols = ("round", "system", "statistic", "auc", "floor_sd_max", "max_floor_p", "positives", "verdict", "log")
-    rows = read("results.csv", cols)
+    cols = ("group", "round", "source", "domain", "form", "c", "s", "s_upper", "passes", "readings", "verdict", "log")
+    rows = read("pilots.csv", cols)
+    colour = dict(DOMAINS)
     seen = set()
     for r in rows:
-        r["round"], r["positives"] = int(r["round"]), int(r["positives"])
-        r["auc"], r["sd"], r["p"] = float(r["auc"]), float(r["floor_sd_max"]), float(r["max_floor_p"])
-        assert 0.0 < r["auc"] < 1.0 and 0.0 < r["sd"] < 0.2 and 0.0 < r["p"] <= 1.0 and r["positives"] > 0, r
-        key = (r["round"], r["statistic"])
-        assert key not in seen, ("duplicate row", key)
-        seen.add(key)
-    rows.sort(key=lambda r: r["round"])
-    nsys = len({r["system"] for r in rows})
-    n = len(rows)
-    fig, ax = plt.subplots(figsize=(12, 1.9 + 0.48 * n))
-    ys = list(range(n))[::-1]
-    lo = min(min(r["auc"], 0.5 - 1.96 * r["sd"]) for r in rows) - 0.02
-    hi = max(max(r["auc"], 0.5 + 1.96 * r["sd"]) for r in rows) + 0.06
-    for y, r in zip(ys, rows):
-        ax.add_patch(plt.Rectangle((0.5 - 1.96 * r["sd"], y - 0.32), 2 * 1.96 * r["sd"], 0.64, color=GRAY_BAND, lw=0))
-        ax.plot([r["auc"]], [y], "o", ms=10, color=BLUE, mec="white", mew=2, zorder=3)
-        ax.text(hi - 0.008, y, "%.3f" % r["auc"], va="center", ha="right", fontsize=12.5, color=INK)
-    ax.set_yticks(ys, ["%s  -  %s\n(round %d, %d positives)" % (r["system"], r["statistic"], r["round"], r["positives"])
-                       for r in rows], fontsize=11.5)
-    ax.axvline(0.5, color=MUTED, lw=1.2)
-    ax.set_xlim(lo, hi)
-    ax.set_ylim(-0.8, n - 0.2)
-    ax.set_xlabel("AUC on isolated M5.5 in cells without precedent (Japan + New Zealand pooled)", fontsize=14)
-    outside = [r for r in rows if abs(r["auc"] - 0.5) > 1.96 * r["sd"]]
-    supported = [r for r in rows if r["verdict"].startswith("SUPPORTED")]
-    if not outside:
-        head = "%d catalogue-free observation systems: every result sits inside the chance band" % nsys
-    else:
-        head = "%d catalogue-free observation systems: %d of %d results outside the chance band" % (nsys, len(outside), n)
-    fig.suptitle(head, fontsize=17, x=0.01, ha="left", color=INK)
-    style(ax)
-    ax.legend(handles=[Line2D([], [], marker="o", ls="", ms=10, color=BLUE, mec="white", mew=2, label="observed AUC"),
-                       Patch(color=GRAY_BAND, label="chance band: 0.5 +/- 1.96 x widest permutation-floor sd")],
-              loc="lower left", fontsize=12, frameon=False, bbox_to_anchor=(0.0, -0.17), ncol=2)
-    foot = ("Each statistic was declared, with its direction, before any label was read; " +
-            ("none was supported (smallest max floor p %.2f)." % min(r["p"] for r in rows) if not supported
-             else "%d supported: %s." % (len(supported), ", ".join("round %d %s" % (r["round"], r["statistic"]) for r in supported))))
-    fig.text(0.01, 0.005, foot, fontsize=11, color=MUTED)
+        r["c"], r["s"], r["U"] = float(r["c"]), float(r["s"]), float(r["s_upper"])
+        r["passes"], r["readings"], r["round"] = int(r["passes"]), int(r["readings"]), int(r["round"])
+        assert 0.0 < r["c"] <= 1.0 and abs(r["s"]) < 3.0 and abs(r["s"]) <= r["U"] < 3.0, r
+        assert 0 <= r["passes"] <= r["readings"] and r["readings"] > 0, r
+        assert r["domain"] in colour and r["form"] in FORMS and r["verdict"] and r["log"].endswith(".log"), r
+        assert r["group"] not in seen, ("duplicate row", r["group"])
+        seen.add(r["group"])
+    at_gate = [r for r in rows if abs(r["s"]) >= s_needed(r["c"])]
+    fig, ax = plt.subplots(figsize=(12, 7.6))
+    cs = [0.02 + 0.98 * k / 400 for k in range(401)]
+    ax.fill_between(cs, [s_needed(c) for c in cs], 1.0, color="#f3f2ee", lw=0, zorder=0)
+    ax.plot(cs, [s_needed(c) for c in cs], color=INK, lw=2, ls="--", zorder=1)
+    ax.text(0.60, s_needed(0.60) + 0.03, "gate: 0.018 c S² = 0.0006\n(S %.3f at c = 1)" % s_needed(1.0),
+            color=INK, fontsize=12, ha="left", va="bottom")
+    for r in sorted(rows, key=lambda r: -r["U"]):
+        col = colour[r["domain"]]
+        ax.plot([r["c"], r["c"]], [abs(r["s"]), r["U"]], color=col, lw=1.6, alpha=0.75, zorder=2)
+        ax.plot([r["c"] - 0.006, r["c"] + 0.006], [r["U"], r["U"]], color=col, lw=1.6, alpha=0.75, zorder=2)
+        ax.plot([r["c"]], [abs(r["s"])], FORMS[r["form"]], ms=9, color=col, mec="white", mew=1.5, zorder=3)
+    for r in rows:  # selective direct labels
+        if r["group"] in LABELS:
+            name, dx, dy = LABELS[r["group"]]
+            ax.annotate("%s (%s)" % (name, r["group"]), (r["c"], abs(r["s"])), xytext=(dx, dy), textcoords="offset points",
+                        fontsize=10.5, color=INK2, va="center", ha="left" if dx >= 0 else "right",
+                        bbox=dict(fc="white", ec="none", alpha=0.8, pad=0.5), zorder=4)
+    ax.set_xlim(0, 1.17)
+    ax.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
+    ax.set_ylim(0, 0.8)
+    ax.set_xlabel("coverage c (share of seen positive rows the source reaches)", fontsize=13)
+    ax.set_ylabel("largest |partial S| (sd), whisker to the 95% interval end", fontsize=13)
+    ax.grid(color=GRID, lw=1)
+    ax.set_axisbelow(True)
+    for s in ("top", "right"):
+        ax.spines[s].set_visible(False)
+    head = ("Non-catalogue sources read since pilot 960 (%d groups): %s" %
+            (len(rows), "none reaches the gate" if not at_gate else "%d at the gate" % len(at_gate)))
+    fig.suptitle(head, fontsize=16, x=0.01, ha="left", color=INK)
+    dom_used = [d for d, _ in DOMAINS if any(r["domain"] == d for r in rows)]
+    h1 = [Line2D([], [], marker="o", ls="", ms=9, color=colour[d], label=textwrap.fill(d, 32)) for d in dom_used]
+    h2 = [Line2D([], [], marker=m, ls="", ms=9, color=MUTED, label=f) for f, m in FORMS.items()]
+    leg = ax.legend(handles=h1, loc="upper right", fontsize=10.5, frameon=False, title="domain", title_fontsize=11,
+                    alignment="left")
+    ax.add_artist(leg)
+    ax.legend(handles=h2, loc="upper left", bbox_to_anchor=(0.45, 1.0), fontsize=10.5, frameon=False, title="form",
+              title_fontsize=11, alignment="left")
+    fig.text(0.01, 0.01, "Points above the dashed curve would pass the pilot gate. Readings passing their nulls: %d of %d. "
+             "Values from the meta-analyses of the run logs." % (sum(r["passes"] for r in rows),
+                                                                  sum(r["readings"] for r in rows)),
+             fontsize=10.5, color=MUTED)
     fig.tight_layout(rect=(0, 0.03, 1, 1))
     fig.savefig(os.path.join(HERE, "fig2_observation_systems.png"), dpi=150)
     plt.close(fig)
