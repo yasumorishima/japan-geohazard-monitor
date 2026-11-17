@@ -1,9 +1,9 @@
 name: Sudden-axis figures
 
 # Redraws the README figures of the sudden-earthquake axis whenever their input tables or the drawing script change,
-# and commits the PNGs.  Inputs: research/sudden_axis/{results.csv,stand.csv} (rows of results.csv are appended by
-# add_round.py from each pre-registered run log).  make_figs.py refuses malformed input, so a bad row fails this job
-# instead of publishing a wrong figure.
+# and commits the PNGs.  Inputs: research/sudden_axis/{stand.csv,pilots.csv} (figures 1 and 2; results.csv, the
+# earlier figure 2, is kept and its rows are appended by add_round.py from each pre-registered run log).
+# make_figs.py refuses malformed input, so a bad row fails this job instead of publishing a wrong figure.
 
 on:
   push:
@@ -11,6 +11,7 @@ on:
     paths:
       - research/sudden_axis/results.csv
       - research/sudden_axis/stand.csv
+      - research/sudden_axis/pilots.csv
       - research/sudden_axis/make_figs.py
   workflow_dispatch:
     inputs:

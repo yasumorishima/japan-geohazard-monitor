@@ -1,0 +1,37 @@
+group,round,source,domain,form,c,s,s_upper,passes,readings,verdict,log
+960,960,teleseismic repeaters,seismic-waveform-derived,cell-year,0.031,-0.045,0.221,0,4,FAILS AT THIS SIZE,wf960.log
+961,961,slow earthquakes,seismic-waveform-derived,cell-year,0.067,-0.091,0.328,0,6,FAILS AT THIS SIZE,sse961.log
+972,972,GRACE gravity,"solid Earth (geodesy, gravity, rotation, tides, core field)",cell-year,1.000,+0.038,0.132,0,6,FAILS AT THIS SIZE,grv972.log
+973,973,ionospheric TEC,ionosphere / space,day,0.078,+0.079,0.138,3,336,PILOT FAILS,tec973.log
+974,974,Earth rotation,"solid Earth (geodesy, gravity, rotation, tides, core field)",cell-year,1.000,-0.031,0.079,0,11,FAILS AT THIS SIZE,eop974.log
+975,975,core-field change,"solid Earth (geodesy, gravity, rotation, tides, core field)",cell-year,1.000,-0.056,0.135,0,9,FAILS AT THIS SIZE,igrf975.log
+976,976,OLR,atmosphere,day,0.104,+0.041,0.084,0,72,PILOT FAILS,olr976.log
+978,978,Swarm magnetics,ionosphere / space,day,0.022,+0.101,0.226,0,72,PILOT FAILS,swarm978.log
+983,983,altimetry 1993-,ocean surface,cell-year,0.930,+0.019,0.085,0,4,FAILS AT THIS SIZE,ssh983.log
+984,984,OMI SO2,volcanic and gas,day,0.025,+0.091,0.228,7,132,PILOT FAILS,so2_984.log
+996,996,latent heat / humidity,atmosphere,day,0.655,+0.039,0.073,0,144,PILOT FAILS,slhf996.log
+1001A,1001,tropical cyclones,atmosphere,day,0.105,+0.062,0.132,3,135,PILOT FAILS,cyc1001.log
+1001B,1001,wind cubed / precipitable water / soil temperature,atmosphere,day,0.003,+0.345,0.649,1,126,PILOT FAILS,cyc1001.log
+1004,1004,ESMGFZ surface loading,"solid Earth (geodesy, gravity, rotation, tides, core field)",day,0.099,+0.055,0.099,1,132,PILOT FAILS,esm1004.log
+1005A,1005,tidal stress,"solid Earth (geodesy, gravity, rotation, tides, core field)",day,0.104,-0.041,0.083,0,27,PILOT FAILS,tide1005.log
+1008H,1008,ocean wave height (WAVEWATCH III),ocean surface,day,0.135,+0.028,0.073,0,36,PILOT FAILS,atm1008.log
+1008K,1008,skin temperature,atmosphere,day,0.104,-0.075,0.119,2,24,PILOT FAILS,atm1008.log
+1008P,1008,sea-level pressure,atmosphere,day,0.099,-0.046,0.089,0,60,PILOT FAILS,atm1008.log
+1008S,1008,"deep soil moisture, land",hydrology,day,0.015,+0.176,0.365,0,24,PILOT FAILS,atm1008.log
+1010T,1010,sea-surface temperature,ocean surface,day,0.178,-0.044,0.085,0,24,PILOT FAILS,sst1010.log
+1010W,1010,solar wind OMNI2,ionosphere / space,day,0.104,+0.069,0.105,3,120,PILOT FAILS,sst1010.log
+1015A,1015,Argo ocean interior,ocean interior,cell-year,0.533,+0.046,0.113,1,18,FAILS AT THIS SIZE,argo1015.log
+1015B,1015,Argo ocean interior,ocean interior,day,0.483,-0.081,0.138,4,54,PILOT FAILS,argo1015.log
+1018A,1018,AIRS total ozone,atmosphere,day,0.032,+0.057,0.131,0,15,PILOT FAILS,loc1018.log
+1018C,1018,AIRS CO 500 hPa,atmosphere,day,0.131,+0.029,0.071,0,12,PILOT FAILS,loc1018.log
+1018K,1018,AIRS night skin temperature,atmosphere,day,0.014,-0.092,0.210,0,15,PILOT FAILS,loc1018.log
+1018L,1018,LIS / OTD lightning,atmosphere,day,0.101,+0.079,0.253,0,15,PILOT FAILS,loc1018.log
+1018O,1018,OMI total ozone,atmosphere,day,0.007,-0.110,0.268,0,15,PILOT FAILS,loc1018.log
+1018U,1018,OMI UV aerosol index,atmosphere,day,0.416,-0.025,0.065,0,15,PILOT FAILS,loc1018.log
+1028A,1028,ocean colour,ocean surface,cell-year,0.782,+0.051,0.106,1,9,FAILS AT THIS SIZE,chl1028.log
+1028B,1028,ocean colour,ocean surface,day,0.087,+0.032,0.082,0,27,PILOT FAILS,chl1028.log
+1030B,1030,Swarm bubble index IBI,ionosphere / space,day,0.018,+0.085,0.214,0,30,PILOT FAILS,ibi1030.log
+1030E,1030,Swarm electron density,ionosphere / space,day,0.037,-0.082,0.176,0,30,PILOT FAILS,ibi1030.log
+1035,1035,volcanic thermal unrest,volcanic and gas,day,0.072,+0.053,0.112,0,42,PILOT FAILS,mvc1035.log
+1036,1036,seismic noise H/V and spectral slope,seismic-waveform-derived,existence,0.117,+0.066,0.206,0,84,EFFECT OF ORDER 0.3 NOT FOUND AT THIS SIZE,hv1036.log
+1042,1042,seismic velocity change dv/v,seismic-waveform-derived,existence,0.1228,+0.132,0.330,0,5,NOT FOUND AT THIS SIZE,dvv1042.log

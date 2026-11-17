@@ -1,4 +1,5 @@
 arena,detail,auc,note
-Global arena,"USGS, 2,280 cells",0.5785,arm on isolated mainshocks (ACTIVE)
-Japan arena,"JMA, 362 cells",0.7550,"catalogue-based model B0, isolated M5.5"
-New Zealand arena,"GeoNet, 100 cells",0.7548,"catalogue-based model B0, isolated M5.5"
+Day-level model DMBHFI,"2,280 cells, 25 seen windows",0.787474,"current base (round 909); honest axis, dropped rows as negatives: 0.778"
+Cell-year model ANEHL,"2,280 cells, 25 seen windows",0.783541,"one score per cell and window (round 824)"
+Cell-year model ANEHL,"early arena, 1978-1989",0.740990,"same model, 12 older windows (round 824)"
+Starting point N0,"2,280 cells, 25 seen windows",0.752753,"per-cell climatology, the first all-cell base (round 470)"

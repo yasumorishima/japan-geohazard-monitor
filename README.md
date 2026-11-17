@@ -17,10 +17,13 @@ Real-time monitoring dashboard for Japan's geophysical activity — earthquakes,
 ## Sudden-earthquake axis at a glance
 
 The main research question is whether isolated mainshocks (earthquakes with no foreshock sequence and no recent
-precedent in their cell) can be forecast with genuine skill. Details and every number are in
+precedent in their cell) can be forecast with genuine skill. The main yardstick is the SUDDEN-ALL axis: days of all
+2,280 cells on which an isolated M6 follows within 34 days, against quiet days. Figure 1 shows where the models stand
+on it; figure 2 shows each non-catalogue source read since pilot 960 as effect size against coverage, with the gate
+curve a source must cross. Figure 1's values are copied from the run logs and figure 2's rows from the meta-analyses
+of the run logs; details and every number are in
 [RESEARCH-LOG.md](RESEARCH-LOG.md). The figures are redrawn automatically (GitHub Actions) whenever
-[research/sudden_axis/results.csv](research/sudden_axis/results.csv) changes; each row is appended from a
-pre-registered run log by [add_round.py](research/sudden_axis/add_round.py).
+[stand.csv](research/sudden_axis/stand.csv) or [pilots.csv](research/sudden_axis/pilots.csv) changes.
 
 ![Where the sudden axis stands](research/sudden_axis/fig1_where_we_stand.png)
 
