@@ -4364,6 +4364,55 @@ jobs:
       # Only create an issue if (a) manual dispatch, or (b) schedule but
       # already on attempt >= 2 (rerun didn't fix it), or (c) the failure is
       # one auto-rerun will never retry.
+      # Failed-step list, shared by the issue step (title) and the auto-close
+      # step below (an empty list on a clean run is what lets it close).
+      - name: Collect failed steps
+        id: failed
+        if: always()
+        run: |
+          FAILED=""
+          [ "${{ needs.light.outputs.fetch_earthquakes }}" = "failure" ] && FAILED="$FAILED earthquakes"
+          [ "${{ needs.light.outputs.fetch_tec_event }}" = "failure" ] && FAILED="$FAILED tec_event"
+          [ "${{ needs.light.outputs.fetch_tec_random }}" = "failure" ] && FAILED="$FAILED tec_random"
+          [ "${{ needs.light.outputs.fetch_kp }}" = "failure" ] && FAILED="$FAILED kp"
+          [ "${{ needs.light.outputs.fetch_cmt }}" = "failure" ] && FAILED="$FAILED cmt"
+          [ "${{ needs.fetch-snet.outputs.fetch_snet_waveform }}" = "failure" ] && FAILED="$FAILED snet_waveform"
+          [ "${{ needs.fetch-snet.outputs.fetch_fnet_waveform }}" = "failure" ] && FAILED="$FAILED fnet_waveform"
+          [ "${{ needs.fetch-gnss.outputs.fetch_gnss_tec }}" = "failure" ] && FAILED="$FAILED gnss_tec"
+          [ "${{ needs.fetch-modis.outputs.fetch_modis_lst }}" = "failure" ] && FAILED="$FAILED modis_lst"
+          [ "${{ needs.light.outputs.fetch_ulf }}" = "failure" ] && FAILED="$FAILED ulf"
+          [ "${{ needs.light.outputs.fetch_cosmic_ray }}" = "failure" ] && FAILED="$FAILED cosmic_ray"
+          [ "${{ needs.light.outputs.fetch_iss_lis }}" = "failure" ] && FAILED="$FAILED iss_lis"
+          [ "${{ needs.light.outputs.fetch_wwlln_thunder_hour }}" = "failure" ] && FAILED="$FAILED wwlln_thunder_hour"
+          [ "${{ needs.light.outputs.fetch_lis_otd_monthly }}" = "failure" ] && FAILED="$FAILED lis_otd_monthly"
+          [ "${{ needs.light.outputs.fetch_geomag }}" = "failure" ] && FAILED="$FAILED geomag"
+          [ "${{ needs.light.outputs.fetch_olr }}" = "failure" ] && FAILED="$FAILED olr"
+          [ "${{ needs.light.outputs.fetch_iers }}" = "failure" ] && FAILED="$FAILED iers"
+          [ "${{ needs.light.outputs.fetch_solar_wind }}" = "failure" ] && FAILED="$FAILED solar_wind"
+          [ "${{ needs.light.outputs.fetch_grace }}" = "failure" ] && FAILED="$FAILED grace"
+          [ "${{ needs.fetch-so2.outputs.fetch_so2 }}" = "failure" ] && FAILED="$FAILED so2"
+          [ "${{ needs.fetch-cloud.outputs.fetch_cloud }}" = "failure" ] && FAILED="$FAILED cloud"
+          [ "${{ needs.light.outputs.fetch_nightlight }}" = "failure" ] && FAILED="$FAILED nightlight"
+          [ "${{ needs.light.outputs.fetch_tide_gauge }}" = "failure" ] && FAILED="$FAILED tide_gauge"
+          [ "${{ needs.light.outputs.fetch_soil_moisture }}" = "failure" ] && FAILED="$FAILED soil_moisture"
+          [ "${{ needs.light.outputs.fetch_ocean_color }}" = "failure" ] && FAILED="$FAILED ocean_color"
+          [ "${{ needs.light.outputs.fetch_goes_xray }}" = "failure" ] && FAILED="$FAILED goes_xray"
+          [ "${{ needs.light.outputs.fetch_goes_proton }}" = "failure" ] && FAILED="$FAILED goes_proton"
+          [ "${{ needs.light.outputs.fetch_tidal_stress }}" = "failure" ] && FAILED="$FAILED tidal_stress"
+          [ "${{ needs.light.outputs.fetch_particle_flux }}" = "failure" ] && FAILED="$FAILED particle_flux"
+          [ "${{ needs.light.outputs.fetch_dart }}" = "failure" ] && FAILED="$FAILED dart"
+          [ "${{ needs.light.outputs.fetch_ioc_sealevel }}" = "failure" ] && FAILED="$FAILED ioc_sealevel"
+          [ "${{ needs.light.outputs.fetch_ioc_dart }}" = "failure" ] && FAILED="$FAILED ioc_dart"
+          [ "${{ steps.merge.outcome }}" = "failure" ] && FAILED="$FAILED merge"
+          [ "${{ steps.hf_upload.outcome }}" = "failure" ] && FAILED="$FAILED hf_upload"
+          [ "${{ needs.light.outputs.restore_restored }}" = "none" ] && FAILED="$FAILED checkpoint_chain_lost"
+          [ "${{ needs.light.outputs.base_check }}" = "failure" ] && FAILED="$FAILED degraded_base"
+          for jr in "fetch-modis:${{ needs.fetch-modis.result }}" "fetch-so2:${{ needs.fetch-so2.result }}" "fetch-cloud:${{ needs.fetch-cloud.result }}" "fetch-snet:${{ needs.fetch-snet.result }}" "fetch-hinet:${{ needs.fetch-hinet.result }}" "fetch-gnss:${{ needs.fetch-gnss.result }}" "light:${{ needs.light.result }}"; do
+            [ "${jr#*:}" = "failure" ] && FAILED="$FAILED job:${jr%%:*}"
+          done
+          FAILED=$(echo "$FAILED" | xargs)
+          echo "list=${FAILED}" >> "$GITHUB_OUTPUT"
+
       - name: Create issue on failure
         if: >-
           always()
@@ -4417,47 +4466,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          FAILED=""
-          [ "${{ needs.light.outputs.fetch_earthquakes }}" = "failure" ] && FAILED="$FAILED earthquakes"
-          [ "${{ needs.light.outputs.fetch_tec_event }}" = "failure" ] && FAILED="$FAILED tec_event"
-          [ "${{ needs.light.outputs.fetch_tec_random }}" = "failure" ] && FAILED="$FAILED tec_random"
-          [ "${{ needs.light.outputs.fetch_kp }}" = "failure" ] && FAILED="$FAILED kp"
-          [ "${{ needs.light.outputs.fetch_cmt }}" = "failure" ] && FAILED="$FAILED cmt"
-          [ "${{ needs.fetch-snet.outputs.fetch_snet_waveform }}" = "failure" ] && FAILED="$FAILED snet_waveform"
-          [ "${{ needs.fetch-snet.outputs.fetch_fnet_waveform }}" = "failure" ] && FAILED="$FAILED fnet_waveform"
-          [ "${{ needs.fetch-gnss.outputs.fetch_gnss_tec }}" = "failure" ] && FAILED="$FAILED gnss_tec"
-          [ "${{ needs.fetch-modis.outputs.fetch_modis_lst }}" = "failure" ] && FAILED="$FAILED modis_lst"
-          [ "${{ needs.light.outputs.fetch_ulf }}" = "failure" ] && FAILED="$FAILED ulf"
-          [ "${{ needs.light.outputs.fetch_cosmic_ray }}" = "failure" ] && FAILED="$FAILED cosmic_ray"
-          [ "${{ needs.light.outputs.fetch_iss_lis }}" = "failure" ] && FAILED="$FAILED iss_lis"
-          [ "${{ needs.light.outputs.fetch_wwlln_thunder_hour }}" = "failure" ] && FAILED="$FAILED wwlln_thunder_hour"
-          [ "${{ needs.light.outputs.fetch_lis_otd_monthly }}" = "failure" ] && FAILED="$FAILED lis_otd_monthly"
-          [ "${{ needs.light.outputs.fetch_geomag }}" = "failure" ] && FAILED="$FAILED geomag"
-          [ "${{ needs.light.outputs.fetch_olr }}" = "failure" ] && FAILED="$FAILED olr"
-          [ "${{ needs.light.outputs.fetch_iers }}" = "failure" ] && FAILED="$FAILED iers"
-          [ "${{ needs.light.outputs.fetch_solar_wind }}" = "failure" ] && FAILED="$FAILED solar_wind"
-          [ "${{ needs.light.outputs.fetch_grace }}" = "failure" ] && FAILED="$FAILED grace"
-          [ "${{ needs.fetch-so2.outputs.fetch_so2 }}" = "failure" ] && FAILED="$FAILED so2"
-          [ "${{ needs.fetch-cloud.outputs.fetch_cloud }}" = "failure" ] && FAILED="$FAILED cloud"
-          [ "${{ needs.light.outputs.fetch_nightlight }}" = "failure" ] && FAILED="$FAILED nightlight"
-          [ "${{ needs.light.outputs.fetch_tide_gauge }}" = "failure" ] && FAILED="$FAILED tide_gauge"
-          [ "${{ needs.light.outputs.fetch_soil_moisture }}" = "failure" ] && FAILED="$FAILED soil_moisture"
-          [ "${{ needs.light.outputs.fetch_ocean_color }}" = "failure" ] && FAILED="$FAILED ocean_color"
-          [ "${{ needs.light.outputs.fetch_goes_xray }}" = "failure" ] && FAILED="$FAILED goes_xray"
-          [ "${{ needs.light.outputs.fetch_goes_proton }}" = "failure" ] && FAILED="$FAILED goes_proton"
-          [ "${{ needs.light.outputs.fetch_tidal_stress }}" = "failure" ] && FAILED="$FAILED tidal_stress"
-          [ "${{ needs.light.outputs.fetch_particle_flux }}" = "failure" ] && FAILED="$FAILED particle_flux"
-          [ "${{ needs.light.outputs.fetch_dart }}" = "failure" ] && FAILED="$FAILED dart"
-          [ "${{ needs.light.outputs.fetch_ioc_sealevel }}" = "failure" ] && FAILED="$FAILED ioc_sealevel"
-          [ "${{ needs.light.outputs.fetch_ioc_dart }}" = "failure" ] && FAILED="$FAILED ioc_dart"
-          [ "${{ steps.merge.outcome }}" = "failure" ] && FAILED="$FAILED merge"
-          [ "${{ steps.hf_upload.outcome }}" = "failure" ] && FAILED="$FAILED hf_upload"
-          [ "${{ needs.light.outputs.restore_restored }}" = "none" ] && FAILED="$FAILED checkpoint_chain_lost"
-          [ "${{ needs.light.outputs.base_check }}" = "failure" ] && FAILED="$FAILED degraded_base"
-          for jr in "fetch-modis:${{ needs.fetch-modis.result }}" "fetch-so2:${{ needs.fetch-so2.result }}" "fetch-cloud:${{ needs.fetch-cloud.result }}" "fetch-snet:${{ needs.fetch-snet.result }}" "fetch-hinet:${{ needs.fetch-hinet.result }}" "fetch-gnss:${{ needs.fetch-gnss.result }}" "light:${{ needs.light.result }}"; do
-            [ "${jr#*:}" = "failure" ] && FAILED="$FAILED job:${jr%%:*}"
-          done
-          FAILED=$(echo "$FAILED" | xargs)
+          FAILED="${{ steps.failed.outputs.list }}"
 
           if [ -f data/geohazard.db ]; then
             COVERAGE=$(python3 -c "
@@ -4528,6 +4537,32 @@ jobs:
           Check the run log for error details and fix the underlying issue.
           ISSUE_EOF
           )"
+
+      # A clean run closes the open auto-filed failure issues: before this,
+      # an issue stayed open after the next run succeeded (issues 205-214).
+      # Clean = no failed step or job (the list above is empty), light
+      # completed, merge and upload succeeded, checkpoint chain and base check
+      # healthy. Only issues this workflow files are touched (label backfill,
+      # title "Backfill failure:"), each with a comment naming this run.
+      - name: Close resolved failure issues
+        if: >-
+          always()
+          && steps.failed.outcome == 'success'
+          && steps.failed.outputs.list == ''
+          && needs.light.result == 'success'
+          && steps.merge.outcome == 'success'
+          && steps.hf_upload.outcome != 'failure'
+          && needs.light.outputs.restore_restored != 'none'
+          && needs.light.outputs.base_check != 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for n in $(gh issue list --repo "${{ github.repository }}" --state open --label backfill --limit 100 \
+                       --json number,title --jq '.[] | select(.title | startswith("Backfill failure:")) | .number'); do
+            gh issue close "$n" --repo "${{ github.repository }}" --reason completed \
+              --comment "Backfill run #${{ github.run_number }} completed with no failed step: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+              || echo "could not close #$n"
+          done
 
   # =====================================================================
   # DIAGNOSTIC-CLOUD -- one-shot investigation of cloud.db "database disk
