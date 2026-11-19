@@ -8,6 +8,8 @@
 >
 > 本リポジトリは個人の研究および開発の記録です。地震の予知・予測・予報・警報その他の運用情報ではなく、いかなる警報も発信しません。記載の数値は公開カタログを用いた事後的な研究指標であり、探索段階のもので、誤りを含む可能性があり、実運用に向けた検証は行っていません。安全確保・避難・事業判断その他の防災上の判断に、本リポジトリの内容を用いないでください。日本の地震・火山の公式情報は気象庁（https://www.jma.go.jp/）および各自治体の発表をご確認ください。本リポジトリの内容は現状のまま無保証で提供され、利用により生じたいかなる損害についても作者は責任を負いません。データの権利は Data Attribution 節に記載の各提供元に帰属します。
 
+> **Note on the 0.90-0.92 figures in older entries (added 2026-11-19).** The AUCs of about 0.90-0.92 in earlier updates (mostly 55-116, e.g. 0.907265, 0.9207) are *pooled* figures. Most of their skill comes from aftershock positives, so they do not measure skill at forecasting sudden (isolated) mainshocks. Since update 189 the main yardstick is the SUDDEN-ALL axis, where the current working series reads **0.787474** (honest axis 0.778). The goal of 0.90 has not been reached. The older entries are kept unedited.
+
 Every research narrative entry from the README, moved here unchanged on 2026-08-23 when the file passed 2,000 lines.  The entries are in the order they were written, oldest first; the index below is newest first.  Nothing has been edited: each entry is the line that was published, byte for byte, with a heading added above it so it can be linked to.
 
 ## Index
