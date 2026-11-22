@@ -1177,3 +1177,13 @@ more than twenty further non-catalogue sources, none at its gate (26 of 1,885 re
 nulls against about 94 by chance); the quiet-looking 70% of cells holds 0.306 of firing cells,
 ordering every stratum perfectly gives 0.8821, 343 of 634 quiet firing cell-windows have no
 small-event information, and three more arms are frozen for the 2027 fits (update 195).
+
+The headline stays at 0.778 on the honest axis (0.777844; main axis 0.787474, on which verdicts are read).
+A campaign toward 0.80 (at most eight arms, each only after a declared look-ahead room of +0.003) used 0
+of 8 slots: rooms on the catalogue base are small or look-ahead only (regional firing counts +0.0076 at 8
+regions, not predictable from the past or from climate indices), and transforms, trees, outside and
+spatial-pattern compounds, a learned cell-graph model and three-way products show no room at this size;
+eight more non-catalogue sources (full dv/v, ocean-bottom pressure, salinity, CO2, cloud fraction, radio
+occultation, methane, ocean currents) fail at this size, 35 of 2,174 readings since pilot 960 pass their
+nulls against about 109 by chance, and the ISC-dependent arms are fitted in 2027 through hash-line copies
+(update 196).

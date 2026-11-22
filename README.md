@@ -16,7 +16,7 @@ Real-time monitoring dashboard for Japan's geophysical activity — earthquakes,
 
 ## Sudden-earthquake axis at a glance
 
-> **Note on the 0.90-0.92 figures in older entries (added 2026-11-19).** The AUCs of about 0.90-0.92 in earlier updates (mostly 55-116, e.g. 0.907265, 0.9207) are *pooled* figures. Most of their skill comes from aftershock positives, so they do not measure skill at forecasting sudden (isolated) mainshocks. Since update 189 the main yardstick is the SUDDEN-ALL axis, where the current working series reads **0.787474** (honest axis 0.778). The goal of 0.90 has not been reached. The older entries are kept unedited.
+> **Note on the 0.90-0.92 figures in older entries (added 2026-11-19).** The AUCs of about 0.90-0.92 in earlier updates (mostly 55-116, e.g. 0.907265, 0.9207) are *pooled* figures. Most of their skill comes from aftershock positives, so they do not measure skill at forecasting sudden (isolated) mainshocks. Since update 189 the main yardstick is the SUDDEN-ALL axis, where the current working series reads **0.778** on the honest axis (dropped rows counted as negatives) and 0.787474 on the main axis, on which verdicts are read. The goal of 0.90 has not been reached. The older entries are kept unedited.
 
 The main research question is whether isolated mainshocks (earthquakes with no foreshock sequence and no recent
 precedent in their cell) can be forecast with genuine skill. The main yardstick is the SUDDEN-ALL axis: days of all

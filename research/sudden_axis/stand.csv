@@ -1,5 +1,6 @@
 arena,detail,auc,note
-Day-level model DMBHFI,"2,280 cells, 25 seen windows",0.787474,"current base (round 909); honest axis, dropped rows as negatives: 0.778"
+Day-level model DMBHFI (honest axis),"2,280 cells, 25 seen windows",0.777844,"headline: dropped rows counted as negatives (round 909)"
+Day-level model DMBHFI (main axis),"2,280 cells, 25 seen windows",0.787474,"main axis, on which verdicts are read (round 909)"
 Cell-year model ANEHL,"2,280 cells, 25 seen windows",0.783541,"one score per cell and window (round 824)"
 Cell-year model ANEHL,"early arena, 1978-1989",0.740990,"same model, 12 older windows (round 824)"
 Starting point N0,"2,280 cells, 25 seen windows",0.752753,"per-cell climatology, the first all-cell base (round 470)"

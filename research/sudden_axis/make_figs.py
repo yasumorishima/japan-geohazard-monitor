@@ -65,9 +65,12 @@ def fig1():
     ax.set_xlim(0.5, 1.0)
     ax.set_ylim(-0.75, len(rows) - 0.35)
     ax.set_xlabel("AUC (0.5 = no skill)", fontsize=14)
-    hi = max(r["auc"] for r in rows)
+    honest = [r for r in rows if "(honest axis)" in r["arena"]]
+    main = [r for r in rows if "(main axis)" in r["arena"]]
+    assert len(honest) == 1 and len(main) == 1, "stand.csv needs one honest-axis and one main-axis row"
     fig.suptitle("Sudden axis (SUDDEN-ALL): isolated M>=6 within 34 days, all 2,280 cells\n"
-                 "best so far %.3f; the goal is %.2f" % (hi, GOAL), fontsize=16, x=0.01, ha="left", color=INK)
+                 "now %.3f on the honest axis (main axis %.3f); the goal is %.2f"
+                 % (honest[0]["auc"], main[0]["auc"], GOAL), fontsize=16, x=0.01, ha="left", color=INK)
     style(ax)
     fig.text(0.01, 0.01, "Positive day: an isolated M>=6 follows within 34 days; negative: no M>=5 within 34 days.\n"
              "Seen windows were used for selection; the early arena is a second reading.", fontsize=10.5, color=MUTED)
