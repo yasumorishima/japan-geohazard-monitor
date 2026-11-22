@@ -35,3 +35,17 @@ group,round,source,domain,form,c,s,s_upper,passes,readings,verdict,log
 1035,1035,volcanic thermal unrest,volcanic and gas,day,0.072,+0.053,0.112,0,42,PILOT FAILS,mvc1035.log
 1036,1036,seismic noise H/V and spectral slope,seismic-waveform-derived,existence,0.117,+0.066,0.206,0,84,EFFECT OF ORDER 0.3 NOT FOUND AT THIS SIZE,hv1036.log
 1042,1042,seismic velocity change dv/v,seismic-waveform-derived,existence,0.1228,+0.132,0.330,0,5,NOT FOUND AT THIS SIZE,dvv1042.log
+1048,1048,seismic velocity change dv/v (full run),seismic-waveform-derived,day,0.018,-0.148,0.240,4,57,PILOT FAILS,dvv1048_read.log
+1049AE,1049,ECCO ocean-bottom pressure,ocean interior,cell-year,0.922,+0.036,0.101,0,4,FAILS AT THIS SIZE,pilot1049.log
+1049AS,1049,OISSS sea-surface salinity,ocean surface,cell-year,0.843,-0.026,0.095,0,4,FAILS AT THIS SIZE,pilot1049.log
+1049AC,1049,OCO-2 column CO2,atmosphere,cell-year,1.000,+0.035,0.112,0,4,FAILS AT THIS SIZE,pilot1049.log
+1049BE,1049,ECCO ocean-bottom pressure,ocean interior,day,0.067,-0.067,0.122,1,15,PILOT FAILS,pilot1049.log
+1049BS,1049,OISSS sea-surface salinity,ocean surface,day,0.028,-0.056,0.145,0,15,PILOT FAILS,pilot1049.log
+1049BC,1049,OCO-2 column CO2,atmosphere,day,0.042,-0.097,0.202,2,15,PILOT FAILS,pilot1049.log
+1055A,1055,ISCCP-H cloud fraction,atmosphere,cell-year,0.689,-0.018,0.095,0,20,FAILS AT THIS SIZE,cld1055.log
+1055B,1055,ISCCP-H cloud fraction,atmosphere,day,0.466,+0.033,0.084,2,48,PILOT FAILS,cld1055.log
+1056A,1056,COSMIC-1 NmF2 / hmF2,ionosphere / space,cell-year,0.144,-0.073,0.227,0,20,FAILS AT THIS SIZE,ro1056.log
+1056B,1056,COSMIC-1 NmF2 / hmF2,ionosphere / space,day,0.028,-0.079,0.165,0,48,PILOT FAILS,ro1056.log
+1057B,1057,TROPOMI column methane,atmosphere,day,0.002,+0.238,0.532,0,24,PILOT FAILS,ch4_1057.log
+1064A,1064,ocean currents / eddy energy,ocean surface,cell-year,0.709,-0.081,0.161,1,9,FAILS AT THIS SIZE,eke1064_A.log
+1064B,1064,ocean currents / eddy energy,ocean surface,day,0.053,-0.081,0.144,1,27,PILOT FAILS,eke1064_B.log
