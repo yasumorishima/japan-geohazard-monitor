@@ -1187,3 +1187,12 @@ eight more non-catalogue sources (full dv/v, ocean-bottom pressure, salinity, CO
 occultation, methane, ocean currents) fail at this size, 35 of 2,174 readings since pilot 960 pass their
 nulls against about 109 by chance, and the ISC-dependent arms are fitted in 2027 through hash-line copies
 (update 196).
+
+The headline stays at 0.778 on the honest axis (0.777844; main axis 0.787474, on which verdicts are read;
+0.122 from 0.90). The 0.0096 between the axes was decomposed (dropped rows are 0.0367 of the honest negatives;
+those inside open Gardner-Knopoff windows are ranked above the positives) and read with six causal designs, the
+best realising 0.135 of the room; one prospective test was frozen. Sources published only as pictures or sound
+are now digitised and validated: GIBS satellite pictures (ten layers), JMA borehole-strain figures and WGLC
+lightning fail at this size or have no verdict; IMS hydrophones and airglow pictures are declared and running.
+Searched redos of guessed model settings moved 0 of 6 readings to a gain, and four gate redesigns pass their
+gates and find nothing at this size (update 197).

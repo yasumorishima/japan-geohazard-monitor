@@ -49,3 +49,14 @@ group,round,source,domain,form,c,s,s_upper,passes,readings,verdict,log
 1057B,1057,TROPOMI column methane,atmosphere,day,0.002,+0.238,0.532,0,24,PILOT FAILS,ch4_1057.log
 1064A,1064,ocean currents / eddy energy,ocean surface,cell-year,0.709,-0.081,0.161,1,9,FAILS AT THIS SIZE,eke1064_A.log
 1064B,1064,ocean currents / eddy energy,ocean surface,day,0.053,-0.081,0.144,1,27,PILOT FAILS,eke1064_B.log
+1075L,1075,WGLC lightning,atmosphere,day,0.043,+0.048,0.146,0,15,PILOT FAILS,gibs1075.log
+1075BTT,1075,GIBS night brightness temperature (MODIS Terra),atmosphere,day,0.097,+0.032,0.076,0,15,PILOT FAILS,gibs1075.log
+1075BTA,1075,GIBS night brightness temperature (MODIS Aqua),atmosphere,day,0.093,+0.032,0.068,0,15,PILOT FAILS,gibs1075.log
+1075NO2,1075,GIBS tropospheric NO2 (OMI),atmosphere,day,0.060,+0.056,0.114,0,15,PILOT FAILS,gibs1075.log
+1075CTT,1075,GIBS night cloud-top temperature (MODIS Terra),atmosphere,day,0.085,-0.024,0.073,0,15,PILOT FAILS,gibs1075.log
+1075AOD,1075,GIBS aerosol optical depth (MODIS Terra 3 km),atmosphere,day,0.009,+0.204,0.629,0,15,PILOT FAILS,gibs1075.log
+1095AM5,1095,GIBS AMSU-A channel 5 brightness temperature,atmosphere,day,0.086,-0.053,0.099,4,15,NO VERDICT (frozen gate),gibs1095.log
+1095AM9,1095,GIBS AMSU-A channel 9 brightness temperature,atmosphere,day,0.102,+0.058,0.102,2,15,NO VERDICT (frozen gate),gibs1095.log
+1095CLW,1095,GIBS ocean cloud liquid water (SSM/I),atmosphere,day,0.029,-0.050,0.126,0,15,PILOT FAILS,gibs1095.log
+1095CER,1095,GIBS cloud effective radius (MODIS Terra),atmosphere,day,0.066,+0.079,0.128,0,15,PILOT FAILS,gibs1095.log
+1095COT,1095,GIBS cloud optical thickness (MODIS Terra),atmosphere,day,0.060,+0.069,0.134,2,15,PILOT FAILS,gibs1095.log
