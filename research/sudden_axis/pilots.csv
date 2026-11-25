@@ -55,8 +55,15 @@ group,round,source,domain,form,c,s,s_upper,passes,readings,verdict,log
 1075NO2,1075,GIBS tropospheric NO2 (OMI),atmosphere,day,0.060,+0.056,0.114,0,15,PILOT FAILS,gibs1075.log
 1075CTT,1075,GIBS night cloud-top temperature (MODIS Terra),atmosphere,day,0.085,-0.024,0.073,0,15,PILOT FAILS,gibs1075.log
 1075AOD,1075,GIBS aerosol optical depth (MODIS Terra 3 km),atmosphere,day,0.009,+0.204,0.629,0,15,PILOT FAILS,gibs1075.log
-1095AM5,1095,GIBS AMSU-A channel 5 brightness temperature,atmosphere,day,0.086,-0.053,0.099,4,15,NO VERDICT (frozen gate),gibs1095.log
-1095AM9,1095,GIBS AMSU-A channel 9 brightness temperature,atmosphere,day,0.102,+0.058,0.102,2,15,NO VERDICT (frozen gate),gibs1095.log
+1095AM5,1095,GIBS AMSU-A channel 5 brightness temperature,atmosphere,day,0.086,-0.053,0.099,4,15,PILOT FAILS (rerun 1103),gibs1103.log
+1095AM9,1095,GIBS AMSU-A channel 9 brightness temperature,atmosphere,day,0.102,+0.058,0.102,2,15,PILOT FAILS (rerun 1103),gibs1103.log
 1095CLW,1095,GIBS ocean cloud liquid water (SSM/I),atmosphere,day,0.029,-0.050,0.126,0,15,PILOT FAILS,gibs1095.log
 1095CER,1095,GIBS cloud effective radius (MODIS Terra),atmosphere,day,0.066,+0.079,0.128,0,15,PILOT FAILS,gibs1095.log
 1095COT,1095,GIBS cloud optical thickness (MODIS Terra),atmosphere,day,0.060,+0.069,0.134,2,15,PILOT FAILS,gibs1095.log
+1074,1074,IMS hydrophone T-phase rate,seismic-waveform-derived,day,0.007,+0.219,0.409,10,42,PILOT FAILS,ims1074_read.log
+1101,1101,GridSat-B1 night IR (masked),atmosphere,cell-year,0.990,-0.040,0.093,0,96,FAILS AT THIS SIZE,gs1101.log
+1104,1104,MSU / AMSU satellite temperature,atmosphere,cell-year,0.964,-0.069,0.112,0,96,FAILS AT THIS SIZE,msu1104.log
+1114,1114,DMSP SSIES night plasma NI / RN,ionosphere / space,day,0.940,+0.053,0.095,1,24,PILOT FAILS,amd1114.log
+1116,1116,POES / MetOp precipitating electrons,ionosphere / space,day,0.075,-0.075,0.125,0,24,PILOT FAILS,poes1116.log
+1117,1117,TIMED / SABER limb TS / OH / NO,ionosphere / space,day,0.631,+0.072,0.108,5,36,PILOT FAILS,amd1117.log
+1131,1131,ground GNSS ROTI,ionosphere / space,day,0.015,+0.162,0.275,0,42,NOT FOUND AT THIS SIZE,gnss1131.log

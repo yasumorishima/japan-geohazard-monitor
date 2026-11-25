@@ -1196,3 +1196,14 @@ are now digitised and validated: GIBS satellite pictures (ten layers), JMA boreh
 lightning fail at this size or have no verdict; IMS hydrophones and airglow pictures are declared and running.
 Searched redos of guessed model settings moved 0 of 6 readings to a gain, and four gate redesigns pass their
 gates and find nothing at this size (update 197).
+
+The headline stays at 0.778 on the honest axis (0.777844; main axis 0.787474, on which verdicts are read;
+0.122 from 0.90). Eight more non-catalogue sources were read behind a label-free validation stage (IMS
+hydrophones, GridSat-B1 infrared, MSU / AMSU temperature, SMOS, DMSP plasma, TIMED / SABER, POES electrons,
+ground GNSS ROTI): none reaches the pilot gate, SMOS has no verdict, and the hydrophone rate is the first ocean
+source with a consistent positive sign at coverage 0.07. Perfect timing of the first mainshock inside its cell
+would add +0.0163 on the honest axis; no causal quantity orders it at this size, and a season-matched null
+removes the 36 within-cell passes of cached space-weather columns. An ETAS starting score shows no room, reruns
+of no-verdict readings find nothing, secondary readings (within-cell AUC, log-score, PR-AUC, area skill score,
+N / S tests) are printed in every report, and four prospective tests and a state-space b-value arm were frozen;
+the passive-microwave pilot is in progress (update 198).
