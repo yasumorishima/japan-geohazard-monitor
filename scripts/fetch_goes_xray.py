@@ -163,7 +163,10 @@ async def fetch_swpc_json(session: aiohttp.ClientSession, n_days: int = 7) -> li
                 else:
                     logger.warning("SWPC xrays-%d-day: HTTP %d (attempt %d)",
                                    n_days, resp.status, attempt)
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
+            # ValueError covers json.JSONDecodeError: SWPC sometimes serves a
+            # truncated / malformed body while the file is being rewritten
+            # (run 46028624843); retry instead of crashing the step.
             if attempt == MAX_RETRIES:
                 logger.warning("SWPC xrays-%d-day: %s", n_days, type(e).__name__)
                 return []
@@ -431,7 +434,8 @@ async def fetch_swpc_flare_events(session: aiohttp.ClientSession) -> list[dict]:
                 else:
                     logger.warning("SWPC flare events: HTTP %d (attempt %d)",
                                    resp.status, attempt)
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
+            # ValueError: malformed JSON body (see fetch_swpc_json).
             if attempt == MAX_RETRIES:
                 logger.warning("SWPC flare events: %s", type(e).__name__)
                 return []
