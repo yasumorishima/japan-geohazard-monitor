@@ -319,7 +319,14 @@ jobs:
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
               log "  copied (${DB_SIZE}) -- checking integrity"
-              timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
+              # Full checkpoints (43+ GB) never finished PRAGMA quick_check inside 1200 s
+              # (runs #1855-#1866: always rc=124 after 20 min, then accepted unchecked).
+              # Above 10 GB use --mode=header instead: seconds, and it does fail on a
+              # truncated / padded / non-SQLite copy or an unreadable table. Page-level
+              # integrity stays gated at Snapshot DB, merge and the weekly audit.
+              IC_MODE=quick
+              [ "$(stat -c %s data/geohazard.db)" -gt 10000000000 ] && IC_MODE=header
+              timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=$IC_MODE
               ic_rc=$?
               # --- Own-overlay fast path (per-table overlay restore) ---
               # Strict: accept only a clean (rc=0) own-overlay whose owned table(s) hold
@@ -755,7 +762,14 @@ jobs:
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
               log "  copied (${DB_SIZE}) -- checking integrity"
-              timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
+              # Full checkpoints (43+ GB) never finished PRAGMA quick_check inside 1200 s
+              # (runs #1855-#1866: always rc=124 after 20 min, then accepted unchecked).
+              # Above 10 GB use --mode=header instead: seconds, and it does fail on a
+              # truncated / padded / non-SQLite copy or an unreadable table. Page-level
+              # integrity stays gated at Snapshot DB, merge and the weekly audit.
+              IC_MODE=quick
+              [ "$(stat -c %s data/geohazard.db)" -gt 10000000000 ] && IC_MODE=header
+              timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=$IC_MODE
               ic_rc=$?
               # --- Own-overlay fast path (per-table overlay restore) ---
               # Strict: accept only a clean (rc=0) own-overlay whose owned table(s) hold
@@ -1226,7 +1240,14 @@ jobs:
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
               log "  copied (${DB_SIZE}) -- checking integrity"
-              timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
+              # Full checkpoints (43+ GB) never finished PRAGMA quick_check inside 1200 s
+              # (runs #1855-#1866: always rc=124 after 20 min, then accepted unchecked).
+              # Above 10 GB use --mode=header instead: seconds, and it does fail on a
+              # truncated / padded / non-SQLite copy or an unreadable table. Page-level
+              # integrity stays gated at Snapshot DB, merge and the weekly audit.
+              IC_MODE=quick
+              [ "$(stat -c %s data/geohazard.db)" -gt 10000000000 ] && IC_MODE=header
+              timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=$IC_MODE
               ic_rc=$?
               # --- Own-overlay fast path (per-table overlay restore) ---
               # Strict: accept only a clean (rc=0) own-overlay whose owned table(s) hold
@@ -1690,7 +1711,14 @@ jobs:
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
               log "  copied (${DB_SIZE}) -- checking integrity"
-              timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
+              # Full checkpoints (43+ GB) never finished PRAGMA quick_check inside 1200 s
+              # (runs #1855-#1866: always rc=124 after 20 min, then accepted unchecked).
+              # Above 10 GB use --mode=header instead: seconds, and it does fail on a
+              # truncated / padded / non-SQLite copy or an unreadable table. Page-level
+              # integrity stays gated at Snapshot DB, merge and the weekly audit.
+              IC_MODE=quick
+              [ "$(stat -c %s data/geohazard.db)" -gt 10000000000 ] && IC_MODE=header
+              timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=$IC_MODE
               ic_rc=$?
               # --- Own-overlay fast path (per-table overlay restore) ---
               # Strict: accept only a clean (rc=0) own-overlay whose owned table(s) hold
@@ -2173,7 +2201,14 @@ jobs:
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
               log "  copied (${DB_SIZE}) -- checking integrity"
-              timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
+              # Full checkpoints (43+ GB) never finished PRAGMA quick_check inside 1200 s
+              # (runs #1855-#1866: always rc=124 after 20 min, then accepted unchecked).
+              # Above 10 GB use --mode=header instead: seconds, and it does fail on a
+              # truncated / padded / non-SQLite copy or an unreadable table. Page-level
+              # integrity stays gated at Snapshot DB, merge and the weekly audit.
+              IC_MODE=quick
+              [ "$(stat -c %s data/geohazard.db)" -gt 10000000000 ] && IC_MODE=header
+              timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=$IC_MODE
               ic_rc=$?
               # --- Own-overlay fast path (per-table overlay restore) ---
               # Strict: accept only a clean (rc=0) own-overlay whose owned table(s) hold
@@ -2661,7 +2696,14 @@ jobs:
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
               log "  copied (${DB_SIZE}) -- checking integrity"
-              timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
+              # Full checkpoints (43+ GB) never finished PRAGMA quick_check inside 1200 s
+              # (runs #1855-#1866: always rc=124 after 20 min, then accepted unchecked).
+              # Above 10 GB use --mode=header instead: seconds, and it does fail on a
+              # truncated / padded / non-SQLite copy or an unreadable table. Page-level
+              # integrity stays gated at Snapshot DB, merge and the weekly audit.
+              IC_MODE=quick
+              [ "$(stat -c %s data/geohazard.db)" -gt 10000000000 ] && IC_MODE=header
+              timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=$IC_MODE
               ic_rc=$?
               # --- Own-overlay fast path (per-table overlay restore) ---
               # Strict: accept only a clean (rc=0) own-overlay whose owned table(s) hold
@@ -3422,7 +3464,14 @@ jobs:
               rm -f data/geohazard.db-wal data/geohazard.db-shm
               DB_SIZE=$(du -h data/geohazard.db | cut -f1)
               log "  copied (${DB_SIZE}) -- checking integrity"
-              timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=quick
+              # Full checkpoints (43+ GB) never finished PRAGMA quick_check inside 1200 s
+              # (runs #1855-#1866: always rc=124 after 20 min, then accepted unchecked).
+              # Above 10 GB use --mode=header instead: seconds, and it does fail on a
+              # truncated / padded / non-SQLite copy or an unreadable table. Page-level
+              # integrity stays gated at Snapshot DB, merge and the weekly audit.
+              IC_MODE=quick
+              [ "$(stat -c %s data/geohazard.db)" -gt 10000000000 ] && IC_MODE=header
+              timeout 1200 python3 scripts/check_db_integrity.py data/geohazard.db --mode=$IC_MODE
               ic_rc=$?
               # --- Own-overlay fast path (per-table overlay restore) ---
               # Strict: accept only a clean (rc=0) own-overlay whose owned table(s) hold
