@@ -3261,12 +3261,15 @@ jobs:
                           raise
                       print(f'journal_mode locked, retrying: {e}')
                       time.sleep(2)
-              r = src.execute('PRAGMA integrity_check').fetchone()[0]
+              # No full PRAGMA integrity_check here (it took 33-43 min on the 45 GB DB,
+              # runs #1855-#1866). light.db is consumed only by the merge job, which
+              # uses it as the byte-copied base and runs a full integrity_check over
+              # the merged result (merge_checkpoints.py:_verify) before any checkpoint
+              # is written, so a corrupt light.db still never becomes a checkpoint.
+              # The cheap structural check below (header mode) still refuses a
+              # non-SQLite / truncated file or an unreadable table at once.
               src.close()
               rm_sidefiles('data/geohazard.db')
-              if r != 'ok':
-                  print(f'REFUSING to upload corrupt DB: {r[:200]}')
-                  sys.exit(1)
               with open('data/geohazard.db', 'rb') as f:
                   hdr = f.read(100)
               ps_raw = struct.unpack('>H', hdr[16:18])[0]
@@ -3277,11 +3280,12 @@ jobs:
               if actual != expected:
                   print(f'REFUSING to upload size-mismatched DB: header={expected} actual={actual} extra={actual-expected}')
                   sys.exit(1)
-              print(f'Snapshot finalised in place (integrity ok, size={actual} matches header pc*ps={expected})')
+              print(f'Snapshot finalised in place (size={actual} matches header pc*ps={expected}; full integrity is checked at merge)')
           except Exception as e:
               print(f'Snapshot failed: {e}')
               sys.exit(1)
-          "
+          " || exit 1
+          python3 scripts/check_db_integrity.py data/geohazard.db --mode=header || exit 1
 
 
       - name: Upload light.db artifact
